@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Awesome Downloader Integration",
+  "version": "0.1.0",
+  "description": "Send links and detected direct video downloads to Awesome Downloader for Windows.",
+  "permissions": ["nativeMessaging", "storage", "activeTab", "contextMenus", "webRequest", "downloads"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "icons": {"16":"icons/icon16.png","32":"icons/icon32.png","48":"icons/icon48.png","128":"icons/icon128.png"},
+  "action": {"default_popup": "popup.html", "default_title": "Awesome Downloader", "default_icon":{"16":"icons/icon16.png","32":"icons/icon32.png"}},
+  "content_scripts": [
+    {"matches":["https://www.youtube.com/*","https://youtube.com/*","https://m.youtube.com/*"],"js":["youtube-media.js","youtube-page.js"],"world":"MAIN","run_at":"document_start"},
+    {"matches":["https://www.youtube.com/*","https://youtube.com/*","https://m.youtube.com/*"],"js":["youtube-relay.js"],"run_at":"document_start"},
+    {"matches": ["http://*/*", "https://*/*"], "js": ["media-choices.js", "content.js"], "all_frames": true, "run_at": "document_idle"}]
+}
