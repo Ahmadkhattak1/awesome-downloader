@@ -10,13 +10,15 @@ without sharing session tokens or signed media links.
 
 ## Just want to use it?
 
-See the [installation and usage guide](docs/INSTALL.md). The planned download is
-**Awesome-Downloader-Setup.exe**: a normal Windows installer with Start-menu and
+Download **Awesome-Downloader-Setup.exe** from the project's
+[latest GitHub release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/latest),
+then see the [installation and usage guide](docs/INSTALL.md). It is a normal
+Windows installer with Start-menu and
 desktop shortcuts. No GitHub account, Node.js, or developer tools are needed for
 the desktop app.
 
-**First public installer release is pending.** Browser video buttons currently
-require one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
+The installer is currently an unsigned preview. Browser video buttons require
+one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
 
 ## Features
 

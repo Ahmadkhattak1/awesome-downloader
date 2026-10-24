@@ -5,8 +5,8 @@
 Windows 10/11, 64-bit Intel/AMD PCs are the intended target. Native ARM builds
 are not provided. This is preview software; YouTube speed and compatibility vary.
 
-Once the first release is published, open the project's **Releases** page and
-download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
+Open the project's [latest release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/latest)
+and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
 account, Git, Node.js, or a terminal to install the application. Do not download
 the automatically generated "Source code" archives to install it.
 
