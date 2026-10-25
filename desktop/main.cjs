@@ -4,11 +4,13 @@ const fs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
 const { showProgress, closeCancelledProgress } = require('./progress-window.cjs');
 const { copyIfChanged } = require('./resource-copy.cjs');
+
 const {
   prepareNativeHost,
   connectInstalledBrowsers,
   registerBrowser,
 } = require('./browser-registration.cjs');
+
 const { openExtensions } = require('./browser-setup.cjs');
 const { runNativeHost } = require('../integration/native-host.cjs');
 
@@ -28,6 +30,7 @@ if (process.argv.includes('--native-host')) {
     Notification,
     // eslint-disable-next-line global-require -- the --native-host mode runs as plain Node, where Electron's module does not exist.
   } = require('electron');
+
   app.setName('Awesome Downloader');
   const isWindows = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
@@ -44,6 +47,7 @@ if (process.argv.includes('--native-host')) {
   let quitting = false;
   const progressWindows = new Map();
   const progressWindowSizes = new WeakMap();
+
   if (!locked) {
     app.quit();
   } else {
@@ -51,10 +55,12 @@ if (process.argv.includes('--native-host')) {
       window?.show();
       window?.focus();
     });
+
     app
       .whenReady()
       .then(async () => {
         const history = path.join(sharedDataDirectory, 'downloads.json');
+
         try {
           await fs.copyFile(
             path.join(app.getPath('appData'), 'Awesome Downloader', 'downloads.json'),
@@ -66,53 +72,71 @@ if (process.argv.includes('--native-host')) {
             throw error;
           }
         }
+
         const { DownloadEngine } = await import('../dist/core/engine.mjs');
         const { startBridge } = await import('../dist/core/bridge.mjs');
+
         engine = await new DownloadEngine({
           dataDirectory: app.getPath('userData'),
           downloadDirectory: app.getPath('downloads'),
         }).init();
+
         let desktopReady;
+
         const readyForDownloads = new Promise((resolve) => {
           desktopReady = resolve;
         });
+
         try {
           bridge = await startBridge(engine, {
             dataDirectory: app.getPath('userData'),
             onDownload: async (payload) => {
               await readyForDownloads;
+
               const reviewOnly =
                 payload.startNow !== true && engine.settings.confirmBrowserDownloads;
+
               const ids = await engine.add({ ...payload, reviewOnly, reuseActive: true });
-              const needsReview = engine.downloads.find((d) => d.id === ids[0])?.needsReview;
+
+              const needsReview = engine.downloads.find(
+                (download) => download.id === ids[0],
+              )?.needsReview;
+
               if (!needsReview) {
                 await openProgress({ id: ids[0] });
               }
+
               if (needsReview && window && !window.isDestroyed()) {
                 showProgress(window);
+
                 window.webContents.send('downloader:command', {
                   command: 'reviewDownload',
                   id: ids[0],
                 });
               }
+
               return ids;
             },
           });
         } catch (error) {
           dialog.showErrorBox('Browser connection unavailable', error.message);
         }
+
         const root = path.join(__dirname, '..');
         const appIconPath = path.join(root, 'assets', 'app-icon.png');
         let integrationRoot = root;
+
         if (app.isPackaged) {
           integrationRoot = path.join(sharedDataDirectory, 'BrowserIntegration');
           await fs.mkdir(integrationRoot, { recursive: true });
+
           // Extensions must be real files on disk, not paths inside the application's ASAR.
           await fs.cp(
             path.join(process.resourcesPath, 'browser', 'extension'),
             path.join(integrationRoot, 'extension'),
             { recursive: true },
           );
+
           await fs.cp(
             path.join(process.resourcesPath, 'browser', 'integration'),
             path.join(integrationRoot, 'integration'),
@@ -123,7 +147,9 @@ if (process.argv.includes('--native-host')) {
               filter: copyIfChanged,
             },
           );
+
           const quoteBatch = (value) => String(value).replaceAll('%', '%%');
+
           if (isWindows) {
             await fs.writeFile(
               path.join(integrationRoot, 'integration', 'native-host.cmd'),
@@ -131,6 +157,7 @@ if (process.argv.includes('--native-host')) {
             );
           }
         }
+
         // Use the bundled runtime even in development; browsers need not inherit Node's PATH.
         if (!app.isPackaged && isWindows) {
           await fs.writeFile(
@@ -138,27 +165,33 @@ if (process.argv.includes('--native-host')) {
             `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`,
           );
         }
+
         let connectedBrowsers = [];
         let connectionError = '';
         await prepareNativeHost(integrationRoot, app.getPath('exe'));
+
         await fs.writeFile(
           path.join(integrationRoot, 'integration', 'desktop-launch.json'),
           JSON.stringify({ executable: app.getPath('exe'), args: app.isPackaged ? [] : [root] }),
         );
+
         const connectBrowsers = async () => {
           try {
             connectedBrowsers = await connectInstalledBrowsers({
               dataDirectory: app.getPath('userData'),
               integrationRoot,
             });
+
             connectionError = '';
           } catch (error) {
             connectionError = error.message;
           }
         };
+
         await connectBrowsers();
         const browserScan = setInterval(connectBrowsers, 15000);
         browserScan.unref();
+
         const integrationInfo = () => ({
           port: bridge?.port || null,
           connectedBrowsers,
@@ -168,30 +201,38 @@ if (process.argv.includes('--native-host')) {
           packaged: app.isPackaged,
           executable: app.getPath('exe'),
         });
+
         const integration = async () => {
           await connectBrowsers();
           return integrationInfo();
         };
+
         const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
+
         const findDownload = (id) => {
-          const d = engine.downloads.find((item) => item.id === id);
-          if (!d) {
+          const download = engine.downloads.find((item) => item.id === id);
+
+          if (!download) {
             throw new Error('Download not found.');
           }
-          return d;
+
+          return download;
         };
+
         async function openProgress({ id }) {
-          const d = findDownload(id);
+          const download = findDownload(id);
+
           if (progressWindows.has(id)) {
             showProgress(progressWindows.get(id));
             return;
           }
+
           const progress = new BrowserWindow({
             width: 565,
             height: 485,
             minWidth: 540,
             minHeight: 440,
-            title: d.filename,
+            title: download.filename,
             icon: appIconPath,
             backgroundColor: '#f0f0f0',
             autoHideMenuBar: true,
@@ -202,39 +243,49 @@ if (process.argv.includes('--native-host')) {
               sandbox: true,
             },
           });
+
           progress.setMenu(null);
           progressWindows.set(id, progress);
           progressWindowSizes.set(progress, { expanded: { width: 565, height: 485 } });
-          if (d.status === 'complete') {
+
+          if (download.status === 'complete') {
             progress.setMinimumSize(470, 270);
             progress.setSize(480, 280);
             progress.setTitle('Download complete');
           }
+
           progress.on('closed', () => progressWindows.delete(id));
           progress.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
           progress.webContents.on('will-navigate', (event) => event.preventDefault());
+
           await progress.loadFile(path.join(root, 'renderer', 'index.html'), {
             query: { progress: id },
           });
+
           showProgress(progress);
         }
-        const requireFinished = (d) => {
-          if (d.status !== 'complete' || !d.path) {
+
+        const requireFinished = (download) => {
+          if (download.status !== 'complete' || !download.path) {
             throw new Error('This download has not finished.');
           }
         };
-        async function openDownload(d) {
-          requireFinished(d);
+
+        async function openDownload(download) {
+          requireFinished(download);
           // Opening a potentially executable file always requires an explicit user action.
-          const result = await shell.openPath(d.path);
-          if (result) {
-            throw new Error(result);
+          const openError = await shell.openPath(download.path);
+
+          if (openError) {
+            throw new Error(openError);
           }
         }
-        async function openDownloadWith(d) {
-          requireFinished(d);
+
+        async function openDownloadWith(download) {
+          requireFinished(download);
           let program;
           let args;
+
           if (isMac) {
             // macOS has no system "Open With" window; let the user pick an application.
             const choice = await dialog.showOpenDialog(window, {
@@ -243,89 +294,107 @@ if (process.argv.includes('--native-host')) {
               filters: [{ name: 'Applications', extensions: ['app'] }],
               properties: ['openFile'],
             });
+
             if (choice.canceled) {
               return;
             }
-            [program, args] = ['/usr/bin/open', ['-a', choice.filePaths[0], d.path]];
+
+            [program, args] = ['/usr/bin/open', ['-a', choice.filePaths[0], download.path]];
           } else {
             [program, args] = [
               path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'OpenWith.exe'),
-              [d.path],
+              [download.path],
             ];
           }
+
           await new Promise((resolve, reject) => {
             execFile(program, args, { windowsHide: true }, (error) =>
               error ? reject(error) : resolve(),
             );
           });
         }
-        async function revealDownload(d) {
-          if (d.path) {
-            shell.showItemInFolder(d.path);
+
+        async function revealDownload(download) {
+          if (download.path) {
+            shell.showItemInFolder(download.path);
           } else {
-            await shell.openPath(d.directory);
+            await shell.openPath(download.directory);
           }
         }
+
         const handlers = {
           snapshot,
           openProgress,
           add: (data) => engine.add(data),
           review: (data) => engine.reviewDownload(data),
           action: async ({ id, action }) => {
-            const d = findDownload(id);
+            const download = findDownload(id);
+
             if (action === 'open') {
-              return openDownload(d);
+              return openDownload(download);
             }
+
             if (action === 'openWith') {
-              return openDownloadWith(d);
+              return openDownloadWith(download);
             }
+
             if (action === 'reveal') {
-              return revealDownload(d);
+              return revealDownload(download);
             }
+
             return engine.action(id, action);
           },
           settings: (data) => engine.updateSettings(data),
           chooseDirectory: async () => {
-            const result = await dialog.showOpenDialog(window, {
+            const selection = await dialog.showOpenDialog(window, {
               properties: ['openDirectory', 'createDirectory'],
             });
-            return result.canceled ? null : result.filePaths[0];
+
+            return selection.canceled ? null : selection.filePaths[0];
           },
           clipboard: () => clipboard.readText(),
           integration,
         };
+
         handlers.registerBrowser = (data) =>
           registerBrowser(data, {
             dataDirectory: app.getPath('userData'),
             integrationRoot,
           });
+
         handlers.browserSetup = async ({ action, browser } = {}) => {
           if (action === 'open') {
             await openExtensions(browser);
           } else if (action === 'copy') {
             clipboard.writeText(path.join(integrationRoot, 'extension'));
           } else if (action === 'folder') {
-            const error = await shell.openPath(path.join(integrationRoot, 'extension'));
-            if (error) {
-              throw new Error(error);
+            const openError = await shell.openPath(path.join(integrationRoot, 'extension'));
+
+            if (openError) {
+              throw new Error(openError);
             }
           } else {
             throw new Error('Unknown browser setup action.');
           }
         };
+
         // Only this app's own windows may call the download service.
         const fromOwnWindow = (event) =>
           [window, ...progressWindows.values()].some(
-            (w) => !w.isDestroyed() && event.senderFrame === w.webContents.mainFrame,
+            (ownWindow) =>
+              !ownWindow.isDestroyed() && event.senderFrame === ownWindow.webContents.mainFrame,
           );
+
         for (const [name, handler] of Object.entries(handlers)) {
           ipcMain.handle(`downloader:${name}`, (event, data) => {
             if (!fromOwnWindow(event)) {
               throw new Error('Untrusted renderer.');
             }
+
             return handler(data);
           });
         }
+
         ipcMain.handle('downloader:closeProgress', (event) => {
           for (const progress of progressWindows.values()) {
             if (event.senderFrame === progress.webContents.mainFrame) {
@@ -334,15 +403,19 @@ if (process.argv.includes('--native-host')) {
             }
           }
         });
+
         ipcMain.handle('downloader:resizeProgress', (event, { expanded } = {}) => {
           for (const progress of progressWindows.values()) {
             if (event.senderFrame === progress.webContents.mainFrame) {
               const remembered = progressWindowSizes.get(progress) || {
                 expanded: { width: 565, height: 485 },
               };
+
               const [width, height] = progress.getSize();
+
               if (expanded) {
                 progress.setMinimumSize(540, 440);
+
                 progress.setSize(
                   Math.max(540, remembered.expanded.width),
                   Math.max(440, remembered.expanded.height),
@@ -352,14 +425,17 @@ if (process.argv.includes('--native-host')) {
                 if (height > 360) {
                   remembered.expanded = { width, height };
                 }
+
                 progressWindowSizes.set(progress, remembered);
                 progress.setMinimumSize(540, 325);
                 progress.setSize(Math.max(540, width), 340, true);
               }
+
               return;
             }
           }
         });
+
         window = new BrowserWindow({
           width: 805,
           height: 465,
@@ -376,11 +452,13 @@ if (process.argv.includes('--native-host')) {
             sandbox: true,
           },
         });
+
         window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         window.webContents.on('will-navigate', (event) => event.preventDefault());
         await window.loadFile(path.join(root, 'renderer', 'index.html'));
         desktopReady();
         const command = (name) => () => window.webContents.send('downloader:command', name);
+
         Menu.setApplicationMenu(
           Menu.buildFromTemplate([
             // macOS expects the app menu first, and text fields need the Edit menu for ⌘C/⌘V.
@@ -398,21 +476,23 @@ if (process.argv.includes('--native-host')) {
                     {
                       label: 'To text file…',
                       click: async () => {
-                        const result = await dialog.showSaveDialog(window, {
+                        const saveChoice = await dialog.showSaveDialog(window, {
                           defaultPath: 'downloads.txt',
                           filters: [{ name: 'URL list', extensions: ['txt'] }],
                         });
-                        if (result.canceled) {
+
+                        if (saveChoice.canceled) {
                           return;
                         }
+
                         try {
                           await fs.writeFile(
-                            result.filePath,
-                            engine.downloads.map((d) => d.url).join('\r\n'),
+                            saveChoice.filePath,
+                            engine.downloads.map((download) => download.url).join('\r\n'),
                             'utf8',
                           );
-                        } catch (e) {
-                          dialog.showErrorBox('Could not export downloads', e.message);
+                        } catch (error) {
+                          dialog.showErrorBox('Could not export downloads', error.message);
                         }
                       },
                     },
@@ -424,29 +504,34 @@ if (process.argv.includes('--native-host')) {
                     {
                       label: 'From text file…',
                       click: async () => {
-                        const result = await dialog.showOpenDialog(window, {
+                        const openChoice = await dialog.showOpenDialog(window, {
                           filters: [{ name: 'URL list', extensions: ['txt'] }],
                           properties: ['openFile'],
                         });
-                        if (result.canceled) {
+
+                        if (openChoice.canceled) {
                           return;
                         }
+
                         try {
-                          if ((await fs.stat(result.filePaths[0])).size > 2 * 1024 * 1024) {
+                          if ((await fs.stat(openChoice.filePaths[0])).size > 2 * 1024 * 1024) {
                             throw new Error('URL list must be smaller than 2 MiB.');
                           }
-                          const urls = (await fs.readFile(result.filePaths[0], 'utf8'))
+
+                          const urls = (await fs.readFile(openChoice.filePaths[0], 'utf8'))
                             .split(/\r?\n/)
-                            .map((u) => u.trim())
+                            .map((line) => line.trim())
                             .filter(Boolean);
+
                           await engine.add({ urls, queueOnly: true });
+
                           await dialog.showMessageBox(window, {
                             message: `Imported ${urls.length} downloads.`,
                             detail:
                               'The imported downloads are paused. Select Start Queue to begin.',
                           });
-                        } catch (e) {
-                          dialog.showErrorBox('Could not import downloads', e.message);
+                        } catch (error) {
+                          dialog.showErrorBox('Could not import downloads', error.message);
                         }
                       },
                     },
@@ -516,25 +601,32 @@ if (process.argv.includes('--native-host')) {
             },
           ]),
         );
+
         engine.on('change', () => {
-          const data = snapshot();
+          const currentSnapshot = snapshot();
+
           if (!window.isDestroyed()) {
-            window.webContents.send('downloader:change', data);
+            window.webContents.send('downloader:change', currentSnapshot);
           }
+
           for (const [id, progress] of progressWindows) {
-            const d = data.downloads.find((item) => item.id === id);
-            if (!closeCancelledProgress(progress, d)) {
+            const download = currentSnapshot.downloads.find((item) => item.id === id);
+
+            if (!closeCancelledProgress(progress, download)) {
               progress.setTitle(
-                d.status === 'complete'
+                download.status === 'complete'
                   ? 'Download complete'
-                  : `${d.total ? `${Math.floor((d.downloaded / d.total) * 100)}% ` : ''}${d.filename}`,
+                  : `${download.total ? `${Math.floor((download.downloaded / download.total) * 100)}% ` : ''}${download.filename}`,
               );
-              progress.webContents.send('downloader:change', data);
+
+              progress.webContents.send('downloader:change', currentSnapshot);
             }
           }
         });
-        engine.on('complete', (d) => {
-          const progress = progressWindows.get(d.id);
+
+        engine.on('complete', (download) => {
+          const progress = progressWindows.get(download.id);
+
           if (progress && !progress.isDestroyed()) {
             if (engine.settings.hideCompletionDialog) {
               progress.close();
@@ -544,29 +636,36 @@ if (process.argv.includes('--native-host')) {
               progress.setTitle('Download complete');
             }
           }
+
           if (engine.settings.notifyOnComplete && Notification.isSupported()) {
-            new Notification({ title: 'Download complete', body: d.filename }).show();
+            new Notification({ title: 'Download complete', body: download.filename }).show();
           }
-          if (engine.settings.revealOnComplete && d.path) {
-            shell.showItemInFolder(d.path);
+
+          if (engine.settings.revealOnComplete && download.path) {
+            shell.showItemInFolder(download.path);
           }
         });
+
         const icon = nativeImage.createFromPath(appIconPath).resize({ width: 16, height: 16 });
         tray = new Tray(icon);
         tray.setToolTip('Awesome Downloader');
+
         tray.setContextMenu(
           Menu.buildFromTemplate([
             { label: 'Show downloads', click: () => window.show() },
             { label: 'Quit', click: () => app.quit() },
           ]),
         );
+
         tray.on('double-click', () => window.show());
+
         window.on('close', (event) => {
           if (!quitting) {
             event.preventDefault();
             window.hide();
           }
         });
+
         app.on('activate', () => window.show());
       })
       .catch((error) => {
@@ -574,12 +673,15 @@ if (process.argv.includes('--native-host')) {
         quitting = true;
         app.quit();
       });
+
     app.on('before-quit', (event) => {
       if (quitting) {
         return;
       }
+
       event.preventDefault();
       quitting = true;
+
       Promise.resolve()
         .then(() => bridge?.close())
         .then(() => engine?.close())

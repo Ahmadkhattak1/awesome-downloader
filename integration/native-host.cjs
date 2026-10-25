@@ -17,21 +17,28 @@ class MessageDecoder extends Transform {
   _transform(chunk, encoding, done) {
     try {
       this.pending = Buffer.concat([this.pending, chunk]);
+
       while (this.pending.length >= 4) {
         const length = this.pending.readUInt32LE(0);
+
         if (!length || length > MAX_MESSAGE) {
           throw new Error('Native message size is invalid.');
         }
+
         if (this.pending.length < length + 4) {
           break;
         }
+
         const message = JSON.parse(this.pending.subarray(4, length + 4).toString('utf8'));
+
         if (!message || typeof message !== 'object' || Array.isArray(message)) {
           throw new Error('Native message must be an object.');
         }
+
         this.pending = this.pending.subarray(length + 4);
         this.push(message);
       }
+
       done();
     } catch (error) {
       done(error);
@@ -43,44 +50,59 @@ class MessageDecoder extends Transform {
     done(this.pending.length ? new Error('Truncated native message.') : undefined);
   }
 }
+
 function encodeMessage(value) {
   const body = Buffer.from(JSON.stringify(value));
+
   if (body.length > MAX_MESSAGE) {
     throw new Error('Response is too large.');
   }
+
   const header = Buffer.alloc(4);
   header.writeUInt32LE(body.length);
   return Buffer.concat([header, body]);
 }
+
 function validateUrl(value) {
   if (typeof value !== 'string' || value.length > 16384) {
     throw new Error('Invalid download URL.');
   }
+
   const url = new URL(value);
+
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
     throw new Error('Only HTTP(S) URLs without embedded credentials are supported.');
   }
+
   return url.href;
 }
+
 function boundedInteger(value, max = Number.MAX_SAFE_INTEGER) {
   const number = Number(value);
+
   if (!Number.isSafeInteger(number) || number < 0 || number > max) {
     throw new Error('Invalid SABR number.');
   }
+
   return number;
 }
+
 function boundedText(value, max, pattern) {
   if (typeof value !== 'string' || value.length > max || (pattern && !pattern.test(value))) {
     throw new Error('Invalid SABR text.');
   }
+
   return value;
 }
+
 function sanitizeSabr(value, downloadUrl) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Invalid SABR session.');
   }
+
   const serverAbrStreamingUrl = validateUrl(value.serverAbrStreamingUrl);
   const stream = new URL(serverAbrStreamingUrl);
+
   if (
     stream.href !== downloadUrl ||
     !(stream.hostname === 'googlevideo.com' || stream.hostname.endsWith('.googlevideo.com')) ||
@@ -89,30 +111,38 @@ function sanitizeSabr(value, downloadUrl) {
   ) {
     throw new Error('Invalid SABR stream URL.');
   }
+
   const videoId = boundedText(value.videoId, 11, /^[\w-]{11}$/);
+
   const videoPlaybackUstreamerConfig = boundedText(
     value.videoPlaybackUstreamerConfig,
     131072,
     /^[A-Za-z0-9_+/=.-]+$/,
   );
+
   const rawFormats = value.formats;
+
   if (!Array.isArray(rawFormats) || !rawFormats.length || rawFormats.length > 150) {
     throw new Error('Invalid SABR formats.');
   }
+
   const formats = rawFormats.map((raw) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
       throw new Error('Invalid SABR format.');
     }
+
     const format = {
       itag: boundedInteger(raw.itag, 99999),
       mimeType: boundedText(raw.mimeType, 200, /^(?:audio|video)\/(?:mp4|webm)(?:;[^\r\n\0]*)?$/i),
       bitrate: boundedInteger(raw.bitrate || 0),
     };
+
     for (const key of ['width', 'height', 'fps', 'averageBitrate', 'audioChannels']) {
       if (raw[key] !== undefined) {
         format[key] = boundedInteger(raw[key], 1000000000);
       }
     }
+
     for (const [key, max, pattern] of [
       ['lastModified', 32, /^\d*$/],
       ['contentLength', 32, /^\d*$/],
@@ -126,19 +156,24 @@ function sanitizeSabr(value, downloadUrl) {
         format[key] = boundedText(String(raw[key]), max, pattern);
       }
     }
+
     if (raw.targetDurationSec !== undefined) {
-      const n = Number(raw.targetDurationSec);
-      if (!Number.isFinite(n) || n < 0 || n > 86400) {
+      const duration = Number(raw.targetDurationSec);
+
+      if (!Number.isFinite(duration) || duration < 0 || duration > 86400) {
         throw new Error('Invalid SABR duration.');
       }
-      format.targetDurationSec = n;
+
+      format.targetDurationSec = duration;
     }
+
     if (raw.audioTrack) {
       format.audioTrack = {
         id: boundedText(String(raw.audioTrack.id || ''), 100, /^[^\r\n\0]*$/),
         audioIsDefault: raw.audioTrack.audioIsDefault === true,
       };
     }
+
     if (raw.colorInfo?.transferCharacteristics) {
       format.colorInfo = {
         transferCharacteristics: boundedText(
@@ -148,29 +183,38 @@ function sanitizeSabr(value, downloadUrl) {
         ),
       };
     }
+
     format.isDrc = raw.isDrc === true;
     format.isVb = raw.isVb === true;
     return format;
   });
+
   const audioItag = boundedInteger(value.audioItag, 99999);
+
   const videoItag =
     value.videoItag === undefined ? undefined : boundedInteger(value.videoItag, 99999);
+
   if (
-    !formats.some((f) => f.itag === audioItag && /^audio\/mp4/i.test(f.mimeType)) ||
+    !formats.some((format) => format.itag === audioItag && /^audio\/mp4/i.test(format.mimeType)) ||
     (videoItag !== undefined &&
-      !formats.some((f) => f.itag === videoItag && /^video\/mp4/i.test(f.mimeType)))
+      !formats.some((format) => format.itag === videoItag && /^video\/mp4/i.test(format.mimeType)))
   ) {
     throw new Error('Selected SABR format is unavailable.');
   }
+
   const client = value.clientInfo || {};
+
   const clientInfo = {
     clientName: boundedInteger(client.clientName || 1, 10000),
     clientVersion: boundedText(String(client.clientVersion || ''), 80, /^[\w.-]*$/),
   };
+
   let requestBody;
+
   if (value.requestBody !== undefined) {
     requestBody = boundedText(value.requestBody, 350000, /^[A-Za-z0-9+/]*={0,2}$/);
     const decoded = Buffer.from(requestBody, 'base64');
+
     if (
       !decoded.length ||
       decoded.length > 262144 ||
@@ -179,6 +223,7 @@ function sanitizeSabr(value, downloadUrl) {
       throw new Error('Invalid SABR request body.');
     }
   }
+
   return {
     videoId,
     serverAbrStreamingUrl,
@@ -190,23 +235,32 @@ function sanitizeSabr(value, downloadUrl) {
     requestBody,
   };
 }
+
 function sanitizeRequest(message) {
   if (!message || !['download', 'formats'].includes(message.action)) {
     throw new Error('Unsupported native action.');
   }
-  const result = { url: validateUrl(message.url) };
+
+  const sanitized = { url: validateUrl(message.url) };
+
   if (message.action === 'formats') {
-    const u = new URL(result.url);
+    const watchUrl = new URL(sanitized.url);
+
     if (
-      u.protocol !== 'https:' ||
-      !['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(u.hostname) ||
-      u.pathname !== '/watch' ||
-      !/^[\w-]{11}$/.test(u.searchParams.get('v') || '')
+      watchUrl.protocol !== 'https:' ||
+      !['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(watchUrl.hostname) ||
+      watchUrl.pathname !== '/watch' ||
+      !/^[\w-]{11}$/.test(watchUrl.searchParams.get('v') || '')
     ) {
       throw new Error('A YouTube watch URL is required.');
     }
-    return { action: 'formats', url: `https://www.youtube.com/watch?v=${u.searchParams.get('v')}` };
+
+    return {
+      action: 'formats',
+      url: `https://www.youtube.com/watch?v=${watchUrl.searchParams.get('v')}`,
+    };
   }
+
   if (message.youtubeFormat !== undefined) {
     if (
       typeof message.youtubeFormat !== 'string' ||
@@ -215,26 +269,34 @@ function sanitizeRequest(message) {
     ) {
       throw new Error('Invalid YouTube format.');
     }
-    result.youtubeFormat = message.youtubeFormat;
+
+    sanitized.youtubeFormat = message.youtubeFormat;
   }
+
   if (message.sabr !== undefined) {
-    result.sabr = sanitizeSabr(message.sabr, result.url);
+    sanitized.sabr = sanitizeSabr(message.sabr, sanitized.url);
   }
+
   if (message.startNow === true) {
-    result.startNow = true;
+    sanitized.startNow = true;
   }
+
   if (message.audioUrl) {
-    result.audioUrl = validateUrl(message.audioUrl);
+    sanitized.audioUrl = validateUrl(message.audioUrl);
   }
+
   if (message.outputFormat !== undefined) {
     if (!['mp4', 'mp3'].includes(message.outputFormat)) {
       throw new Error('Invalid output format.');
     }
-    result.outputFormat = message.outputFormat;
+
+    sanitized.outputFormat = message.outputFormat;
   }
-  if (/\.mpd(?:[?#]|$)/i.test(result.url)) {
+
+  if (/\.mpd(?:[?#]|$)/i.test(sanitized.url)) {
     throw new Error('DASH manifests are not supported.');
   }
+
   if (message.filename) {
     if (
       typeof message.filename !== 'string' ||
@@ -245,30 +307,38 @@ function sanitizeRequest(message) {
     ) {
       throw new Error('Invalid filename.');
     }
-    result.filename = message.filename;
+
+    sanitized.filename = message.filename;
   }
+
   if (message.referer) {
-    result.referer = validateUrl(message.referer);
+    sanitized.referer = validateUrl(message.referer);
   }
+
   if (
     message.requestHeaders &&
     typeof message.requestHeaders === 'object' &&
     !Array.isArray(message.requestHeaders)
   ) {
-    result.headers = {};
+    sanitized.headers = {};
+
     for (const name of ['cookie', 'authorization', 'user-agent', 'origin', 'referer']) {
       const value = message.requestHeaders[name];
+
       if (typeof value === 'string' && value.length <= 16384 && !/[\r\n\0]/.test(value)) {
-        result.headers[name] = value;
+        sanitized.headers[name] = value;
       }
     }
   }
+
   // Unknown headers and filesystem paths are never forwarded.
-  return result;
+  return sanitized;
 }
+
 function readBridge(configPath) {
   const file = configPath || path.join(os.homedir(), '.awesome-downloader', 'bridge.json');
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+
   if (
     !Number.isInteger(config.port) ||
     config.port < 1024 ||
@@ -278,11 +348,14 @@ function readBridge(configPath) {
   ) {
     throw new Error('Desktop bridge configuration is invalid.');
   }
+
   return config;
 }
+
 function submitDownload(payload, config) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
+
     const request = http.request(
       {
         host: '127.0.0.1',
@@ -298,18 +371,24 @@ function submitDownload(payload, config) {
       },
       (response) => {
         let result = '';
+
         response.on('data', (chunk) => {
           result += chunk;
+
           if (result.length > MAX_MESSAGE) {
             response.destroy(new Error('Desktop response too large.'));
           }
         });
+
         response.on('error', reject);
+
         response.on('end', () => {
           if (response.statusCode < 200 || response.statusCode >= 300) {
             let reason = '';
+
             try {
               const data = JSON.parse(result);
+
               if (typeof data.error === 'string') {
                 reason = data.error
                   .replace(/https?:\/\/\S+/g, '[URL]')
@@ -320,6 +399,7 @@ function submitDownload(payload, config) {
             } catch {
               // A body that is not JSON falls back to the generic message below.
             }
+
             reject(
               new Error(
                 reason
@@ -327,13 +407,17 @@ function submitDownload(payload, config) {
                   : `Desktop request failed (${response.statusCode}).`,
               ),
             );
+
             return;
           }
+
           try {
             const data = JSON.parse(result);
+
             if (!data || typeof data !== 'object' || data.ok === false) {
               throw new Error(data?.error || 'Desktop rejected download.');
             }
+
             resolve(
               payload.action === 'formats'
                 ? { ok: true, items: data.items }
@@ -345,51 +429,64 @@ function submitDownload(payload, config) {
         });
       },
     );
+
     request.on('timeout', () => request.destroy(new Error('Desktop connection timed out.')));
     request.on('error', reject);
     request.end(body);
   });
 }
+
 function runNativeHost({ input = process.stdin, output = process.stdout, configPath } = {}) {
   const decoder = new MessageDecoder();
   let chain = Promise.resolve();
   let pendingCount = 0;
+
   decoder.on('data', (message) => {
     if (pendingCount >= 32) {
       output.write(encodeMessage({ ok: false, error: 'Native bridge queue is full. Try again.' }));
       return;
     }
+
     pendingCount += 1;
+
     chain = chain.then(async () => {
       try {
         const payload = sanitizeRequest(message);
         let result;
+
         try {
           result = await submitDownload(payload, readBridge(configPath));
         } catch (error) {
           if (!['ENOENT', 'ECONNREFUSED'].includes(error.code)) {
             throw error;
           }
+
           const launch = JSON.parse(
             fs.readFileSync(path.join(__dirname, 'desktop-launch.json'), 'utf8'),
           );
+
           if (!path.isAbsolute(launch.executable) || !Array.isArray(launch.args)) {
             throw new Error('Desktop launch configuration is invalid.');
           }
+
           const env = { ...process.env };
           delete env.ELECTRON_RUN_AS_NODE;
+
           const child = spawn(launch.executable, launch.args, {
             env,
             detached: true,
             windowsHide: true,
             stdio: 'ignore',
           });
+
           child.on('error', () => {});
           child.unref();
-          for (let i = 0; i < 40; i += 1) {
+
+          for (let attempt = 0; attempt < 40; attempt += 1) {
             await new Promise((resolve) => {
               setTimeout(resolve, 250);
             });
+
             try {
               result = await submitDownload(payload, readBridge(configPath));
               break;
@@ -399,10 +496,12 @@ function runNativeHost({ input = process.stdin, output = process.stdout, configP
               }
             }
           }
+
           if (!result) {
             throw new Error('The download manager could not start. Open it once and try again.');
           }
         }
+
         output.write(encodeMessage(result));
       } catch (error) {
         output.write(
@@ -419,17 +518,21 @@ function runNativeHost({ input = process.stdin, output = process.stdout, configP
       }
     });
   });
+
   decoder.on('error', (error) => {
     output.write(encodeMessage({ ok: false, error: error.message }));
     input.unpipe(decoder);
     input.pause();
   });
+
   input.pipe(decoder);
   return decoder;
 }
+
 if (require.main === module) {
   runNativeHost();
 }
+
 module.exports = {
   MessageDecoder,
   encodeMessage,

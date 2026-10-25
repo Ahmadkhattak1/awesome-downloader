@@ -29,3 +29,4 @@ dist/
 !.yarn/releases
 !.yarn/versions
 .pnp.*
+.DS_Store

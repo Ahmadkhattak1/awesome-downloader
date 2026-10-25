@@ -30,6 +30,7 @@
   "devDependencies": {
     "@eslint/eslintrc": "3.3.1",
     "@eslint/js": "9.36.0",
+    "@stylistic/eslint-plugin": "5.4.0",
     "@types/node": "22.19.1",
     "electron": "44.9.0",
     "electron-builder": "^26.15.3",

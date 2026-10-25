@@ -62,6 +62,7 @@ interface Job {
 }
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
+
 const CATEGORY = {
   Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i,
   Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i,
@@ -69,6 +70,7 @@ const CATEGORY = {
   Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i,
   Programs: /\.(exe|msi|msix)$/i,
 };
+
 export function safeFilename(value: unknown) {
   let name = path.win32
     .basename(String(value || 'download'))
@@ -76,40 +78,53 @@ export function safeFilename(value: unknown) {
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
     .replace(/[. ]+$/, '')
     .slice(0, 180);
+
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) {
     name = `download_${name || 'file'}`;
   }
+
   return name;
 }
+
 // A new or just-confirmed download is held, scheduled for later, or queued.
 function initialStatus(hold: boolean, when: number | null): DownloadStatus {
   if (hold) {
     return 'paused';
   }
+
   return when && when > Date.now() ? 'scheduled' : 'queued';
 }
+
 function suggestedName(url: string, disposition?: string) {
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition || '');
   const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition || '');
+
   try {
     if (utf) {
       return safeFilename(decodeURIComponent(utf[1]));
     }
+
     if (plain) {
       return safeFilename((plain[1] || plain[2]).trim());
     }
+
     return safeFilename(decodeURIComponent(new URL(url).pathname.split('/').pop()!) || 'download');
   } catch {
     return 'download';
   }
 }
+
 const categoryFor = (name: string) =>
   (Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] as Category | undefined) ||
   'Other';
+
 // Prefer the failure that caused sibling transfers to abort over their AbortErrors.
 function firstFailure(outcomes: PromiseSettledResult<unknown>[]) {
-  const rejected = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
-  return rejected.find((o) => o.reason.name !== 'AbortError') || rejected[0];
+  const rejected = outcomes.filter(
+    (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+  );
+
+  return rejected.find((outcome) => outcome.reason.name !== 'AbortError') || rejected[0];
 }
 
 export class DownloadEngine extends EventEmitter {
@@ -152,6 +167,7 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
+
     this.settings = {
       defaultDirectory: downloadDirectory,
       maxConcurrent: 3,
@@ -162,6 +178,7 @@ export class DownloadEngine extends EventEmitter {
       revealOnComplete: false,
       confirmBrowserDownloads: true,
     };
+
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
@@ -173,20 +190,24 @@ export class DownloadEngine extends EventEmitter {
 
   async init() {
     await fs.mkdir(this.partsDirectory, { recursive: true });
+
     try {
       const state = JSON.parse(await fs.readFile(this.statePath, 'utf8'));
       this.updateSettings(state.settings || {}, false);
-      this.downloads = (state.downloads || []).map((d: Download) => ({
-        ...d,
-        status: TRANSIENT.has(d.status) ? 'paused' : d.status,
+
+      this.downloads = (state.downloads || []).map((download: Download) => ({
+        ...download,
+        status: TRANSIENT.has(download.status) ? 'paused' : download.status,
         speed: 0,
       }));
     } catch (error) {
       const { code, message } = error as NodeJS.ErrnoException;
+
       if (code !== 'ENOENT') {
         throw new Error(`Could not load download history: ${message}`);
       }
     }
+
     this.timer = setInterval(() => this.tick(), this.tickMs);
     this.timer.unref();
     this.tick();
@@ -195,18 +216,19 @@ export class DownloadEngine extends EventEmitter {
 
   snapshot() {
     return {
-      downloads: this.downloads.map(({ segments, headers, validator, sabr, ...d }) => ({
-        ...d,
-        streamProgress: d.kind === 'hls' ? streamProgress(segments || []) : undefined,
-        connectionsProgress: (segments || []).map((s) => ({
-          start: s.start,
-          end: s.end,
-          downloaded: s.downloaded,
-          total: s.end === null ? null : s.end - s.start + 1,
+      downloads: this.downloads.map(({ segments, headers, validator, sabr, ...download }) => ({
+        ...download,
+        streamProgress: download.kind === 'hls' ? streamProgress(segments || []) : undefined,
+        connectionsProgress: (segments || []).map((segment) => ({
+          start: segment.start,
+          end: segment.end,
+          downloaded: segment.downloaded,
+          total: segment.end === null ? null : segment.end - segment.start + 1,
           status:
-            s.done || (s.end !== null && s.downloaded === s.end - s.start + 1)
+            segment.done ||
+            (segment.end !== null && segment.downloaded === segment.end - segment.start + 1)
               ? 'complete'
-              : d.status,
+              : download.status,
         })),
       })),
       settings: { ...this.settings },
@@ -218,11 +240,16 @@ export class DownloadEngine extends EventEmitter {
       {
         version: 1,
         settings: this.settings,
-        downloads: this.downloads.map((d) => ({ ...d, headers: undefined, sabr: undefined })),
+        downloads: this.downloads.map((download) => ({
+          ...download,
+          headers: undefined,
+          sabr: undefined,
+        })),
       },
       null,
       2,
     );
+
     this.persistChain = this.persistChain
       .catch(() => {})
       .then(async () => {
@@ -230,6 +257,7 @@ export class DownloadEngine extends EventEmitter {
         await fs.writeFile(temp, content, { mode: 0o600 });
         await fs.rename(temp, this.statePath);
       });
+
     return this.persistChain;
   }
 
@@ -242,26 +270,33 @@ export class DownloadEngine extends EventEmitter {
     if (!patch || typeof patch !== 'object') {
       throw new Error('Invalid settings.');
     }
+
     const next = { ...this.settings };
+
     for (const [key, max] of [
       ['maxConcurrent', 16],
       ['connections', 32],
       ['speedLimitKbps', 1048576],
     ] as const) {
       if (patch[key] !== undefined) {
-        const n = Number(patch[key]);
-        if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : 1) || n > max) {
+        const value = Number(patch[key]);
+
+        if (!Number.isInteger(value) || value < (key === 'speedLimitKbps' ? 0 : 1) || value > max) {
           throw new Error(`Invalid ${key}.`);
         }
-        next[key] = n;
+
+        next[key] = value;
       }
     }
+
     if (patch.defaultDirectory !== undefined) {
       if (typeof patch.defaultDirectory !== 'string' || !path.isAbsolute(patch.defaultDirectory)) {
         throw new Error('Choose an absolute download folder.');
       }
+
       next.defaultDirectory = path.resolve(patch.defaultDirectory);
     }
+
     if (patch.categoryDirectories !== undefined) {
       if (
         !patch.categoryDirectories ||
@@ -270,7 +305,9 @@ export class DownloadEngine extends EventEmitter {
       ) {
         throw new Error('Invalid category folders.');
       }
+
       next.categoryDirectories = {};
+
       for (const [category, folder] of Object.entries(patch.categoryDirectories)) {
         if (
           ![...Object.keys(CATEGORY), 'Other'].includes(category) ||
@@ -279,9 +316,11 @@ export class DownloadEngine extends EventEmitter {
         ) {
           throw new Error('Invalid category folder.');
         }
+
         next.categoryDirectories[category as Category] = path.resolve(folder);
       }
     }
+
     for (const key of [
       'notifyOnComplete',
       'revealOnComplete',
@@ -289,20 +328,26 @@ export class DownloadEngine extends EventEmitter {
       'hideCompletionDialog',
     ] as const) {
       const value = patch[key];
+
       if (value !== undefined) {
         if (typeof value !== 'boolean') {
           throw new Error(`Invalid ${key}.`);
         }
+
         next[key] = value;
       }
     }
+
     if (next.speedLimitKbps !== this.settings.speedLimitKbps) {
       this.rateNext = 0;
     }
+
     this.settings = next;
+
     if (!save) {
       return undefined;
     }
+
     return this.persist().then(() => {
       this.changed();
       this.tick();
@@ -329,74 +374,91 @@ export class DownloadEngine extends EventEmitter {
     reuseActive = false,
   }: AddOptions = {}) {
     const source = urls || (url ? [url] : []);
+
     if (!Array.isArray(source) || !source.length || source.length > 500) {
       throw new Error('Add between 1 and 500 download URLs.');
     }
+
     const normalized = source.map(validUrl);
+
     if (
       youtubeFormat !== undefined &&
       (!/^(?:audio:)?[\w-]+(?:\+[\w-]+)?$/.test(youtubeFormat) ||
         youtubeFormat.length > 80 ||
-        normalized.some((u) => !youtubeUrl(u)))
+        normalized.some((normalizedUrl) => !youtubeUrl(normalizedUrl)))
     ) {
       throw new Error('Invalid YouTube format.');
     }
+
     if (outputFormat !== undefined && !['mp4', 'mp3'].includes(outputFormat)) {
       throw new Error('Invalid output format.');
     }
+
     const sabrSession = sabr === undefined ? undefined : normalizeSabrSession(sabr);
+
     if (sabrSession && normalized.length !== 1) {
       throw new Error('A SABR session requires exactly one YouTube stream.');
     }
+
     const audio = audioUrl ? validUrl(audioUrl) : undefined;
+
     if (audio && normalized.length !== 1) {
       throw new Error('A separate audio track requires exactly one video.');
     }
+
     const when = scheduledAt ? new Date(scheduledAt).getTime() : null;
+
     if (when !== null && !Number.isFinite(when)) {
       throw new Error('Invalid scheduled time.');
     }
-    if (normalized.some((u) => /\.mpd(?:[?#]|$)/i.test(u))) {
+
+    if (normalized.some((normalizedUrl) => /\.mpd(?:[?#]|$)/i.test(normalizedUrl))) {
       throw new Error(
         'DASH streams need a muxing engine; direct files and non-encrypted HLS VOD are supported.',
       );
     }
+
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) {
       throw new Error('Choose an absolute save folder.');
     }
+
     if (category !== undefined && ![...Object.keys(CATEGORY), 'Other'].includes(category)) {
       throw new Error('Invalid category.');
     }
+
     if (
       description !== undefined &&
       (typeof description !== 'string' || description.length > 4096)
     ) {
       throw new Error('Description is too long.');
     }
+
     if (reuseActive && normalized.length === 1) {
       const existing = this.downloads.find(
-        (d) =>
-          !['complete', 'cancelled', 'error'].includes(d.status) &&
-          d.outputFormat === outputFormat &&
+        (download) =>
+          !['complete', 'cancelled', 'error'].includes(download.status) &&
+          download.outputFormat === outputFormat &&
           (sabrSession
-            ? d.sabr?.videoId === sabrSession.videoId &&
-              d.sabr?.videoItag === sabrSession.videoItag &&
-              d.sabr?.audioItag === sabrSession.audioItag
-            : !d.sabr &&
-              d.url === normalized[0] &&
-              d.audioUrl === audio &&
-              d.youtubeFormat === youtubeFormat),
+            ? download.sabr?.videoId === sabrSession.videoId &&
+              download.sabr?.videoItag === sabrSession.videoItag &&
+              download.sabr?.audioItag === sabrSession.audioItag
+            : !download.sabr &&
+              download.url === normalized[0] &&
+              download.audioUrl === audio &&
+              download.youtubeFormat === youtubeFormat),
       );
+
       if (existing) {
         return [existing.id];
       }
     }
-    const added = normalized.map((u): Download => {
-      const name = safeFilename(filename || suggestedName(u));
+
+    const added = normalized.map((normalizedUrl): Download => {
+      const name = safeFilename(filename || suggestedName(normalizedUrl));
       const selectedCategory = category || categoryFor(name);
       return {
         id: randomUUID(),
-        url: u,
+        url: normalizedUrl,
         audioUrl: audio,
         outputFormat,
         youtubeFormat,
@@ -425,11 +487,12 @@ export class DownloadEngine extends EventEmitter {
         headers: cleanHeaders({ ...headers, ...(referer ? { referer } : {}) }),
       };
     });
+
     this.downloads.push(...added);
     await this.persist();
     this.changed();
     this.tick();
-    return added.map((d) => d.id);
+    return added.map((download) => download.id);
   }
 
   async reviewDownload({
@@ -441,87 +504,109 @@ export class DownloadEngine extends EventEmitter {
     queueOnly = false,
     scheduledAt,
   }: ReviewOptions = {}) {
-    const d = this.downloads.find((item) => item.id === id);
-    if (!d?.needsReview || this.jobs.has(d.id)) {
+    const download = this.downloads.find((item) => item.id === id);
+
+    if (!download?.needsReview || this.jobs.has(download.id)) {
       throw new Error('This download is not waiting for confirmation.');
     }
+
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) {
       throw new Error('Choose an absolute save folder.');
     }
+
     if (category !== undefined && ![...Object.keys(CATEGORY), 'Other'].includes(category)) {
       throw new Error('Invalid category.');
     }
+
     if (typeof description !== 'string' || description.length > 4096) {
       throw new Error('Description is too long.');
     }
+
     const when = scheduledAt ? new Date(scheduledAt).getTime() : null;
+
     if (when !== null && !Number.isFinite(when)) {
       throw new Error('Invalid scheduled time.');
     }
+
     if (filename) {
-      d.explicitFilename ||= filename !== d.filename;
-      d.filename = safeFilename(filename);
+      download.explicitFilename ||= filename !== download.filename;
+      download.filename = safeFilename(filename);
     }
+
     if (category) {
-      d.category = category;
-      d.explicitCategory = true;
+      download.category = category;
+      download.explicitCategory = true;
     }
+
     if (directory) {
-      d.directory = path.resolve(directory);
+      download.directory = path.resolve(directory);
     }
-    d.description = description;
-    d.needsReview = false;
-    d.scheduledAt = when ? new Date(when).toISOString() : null;
-    d.status = initialStatus(queueOnly, when);
+
+    download.description = description;
+    download.needsReview = false;
+    download.scheduledAt = when ? new Date(when).toISOString() : null;
+    download.status = initialStatus(queueOnly, when);
     await this.persist();
     this.changed();
     this.tick();
-    return [d.id];
+    return [download.id];
   }
 
   async action(id: string, action: string) {
-    const d = this.downloads.find((item) => item.id === id);
-    if (!d) {
+    const download = this.downloads.find((item) => item.id === id);
+
+    if (!download) {
       throw new Error('Download not found.');
     }
+
     if (!['pause', 'resume', 'retry', 'cancel', 'remove'].includes(action)) {
       throw new Error('Unknown download action.');
     }
+
     if (action === 'pause' || action === 'cancel' || action === 'remove') {
       const job = this.jobs.get(id);
+
       if (job) {
         job.controller.abort();
         await job.promise;
       }
-      if (action === 'pause' && d.status !== 'complete') {
-        d.status = 'paused';
+
+      if (action === 'pause' && download.status !== 'complete') {
+        download.status = 'paused';
       }
-      if (action === 'cancel' && d.status !== 'complete') {
-        d.status = 'cancelled';
-        d.needsReview = false;
+
+      if (action === 'cancel' && download.status !== 'complete') {
+        download.status = 'cancelled';
+        download.needsReview = false;
       }
+
       if (action === 'remove') {
-        this.downloads = this.downloads.filter((x) => x.id !== id);
+        this.downloads = this.downloads.filter((item) => item.id !== id);
       }
+
       if (action !== 'pause') {
         await fs.rm(path.join(this.partsDirectory, id), { recursive: true, force: true });
-        d.segments = [];
-        if (d.status !== 'complete') {
-          d.downloaded = 0;
+        download.segments = [];
+
+        if (download.status !== 'complete') {
+          download.downloaded = 0;
         }
       }
     } else {
-      if (d.needsReview) {
+      if (download.needsReview) {
         throw new Error('Confirm this browser download in Download File Info first.');
       }
-      if (this.jobs.has(id) || d.status === 'complete') {
+
+      if (this.jobs.has(id) || download.status === 'complete') {
         return;
       }
-      d.error = null;
-      d.status = 'queued';
-      d.scheduledAt = null;
+
+      download.error = null;
+      download.status = 'queued';
+      download.scheduledAt = null;
     }
-    d.speed = 0;
+
+    download.speed = 0;
     await this.persist();
     this.changed();
     this.tick();
@@ -531,36 +616,46 @@ export class DownloadEngine extends EventEmitter {
     if (this.closing) {
       return;
     }
-    for (const d of this.downloads) {
-      if (d.status === 'scheduled' && new Date(d.scheduledAt ?? 0).getTime() <= Date.now()) {
-        d.status = 'queued';
-      }
+
+    for (const download of this.downloads) {
       if (
-        d.status === 'queued' &&
-        !this.jobs.has(d.id) &&
+        download.status === 'scheduled' &&
+        new Date(download.scheduledAt ?? 0).getTime() <= Date.now()
+      ) {
+        download.status = 'queued';
+      }
+
+      if (
+        download.status === 'queued' &&
+        !this.jobs.has(download.id) &&
         this.jobs.size < this.settings.maxConcurrent
       ) {
         const controller = new AbortController();
         const job: Job = { controller, promise: Promise.resolve() };
-        this.jobs.set(d.id, job);
-        job.promise = this.run(d, controller.signal)
+        this.jobs.set(download.id, job);
+
+        job.promise = this.run(download, controller.signal)
           .catch((error) => {
-            d.status = controller.signal.aborted ? 'paused' : 'error';
-            d.error = controller.signal.aborted ? null : error.message;
+            download.status = controller.signal.aborted ? 'paused' : 'error';
+            download.error = controller.signal.aborted ? null : error.message;
           })
           .finally(async () => {
-            d.speed = 0;
+            download.speed = 0;
+
             // Keep the job owned until all cleanup and its final checkpoint finish.
             try {
               await this.persist();
             } catch (error) {
-              d.status = 'error';
-              d.error = `History checkpoint failed: ${(error as Error).message}`;
+              download.status = 'error';
+              download.error = `History checkpoint failed: ${(error as Error).message}`;
             }
-            this.jobs.delete(d.id);
+
+            this.jobs.delete(download.id);
+
             if (!this.jobs.size) {
               this.rateNext = 0;
             }
+
             this.changed();
             this.tick();
           });
@@ -572,147 +667,191 @@ export class DownloadEngine extends EventEmitter {
     if (!this.settings.speedLimitKbps) {
       return;
     }
+
     const wait = Math.max(0, this.rateNext - Date.now());
+
     this.rateNext =
       Math.max(Date.now(), this.rateNext) + (bytes * 1000) / (this.settings.speedLimitKbps * 1024);
+
     if (wait) {
       await delay(wait, undefined, { signal });
     }
   }
 
-  async run(d: Download, signal: AbortSignal) {
-    d.status = 'probing';
-    d.error = null;
+  async run(download: Download, signal: AbortSignal) {
+    download.status = 'probing';
+    download.error = null;
     this.changed();
-    if (d.sabr) {
-      await this.runSabr(d, cleanHeaders(d.headers), signal);
+
+    if (download.sabr) {
+      await this.runSabr(download, cleanHeaders(download.headers), signal);
       return;
     }
-    if (youtubeUrl(d.url)) {
-      const dir = path.join(this.partsDirectory, d.id);
+
+    if (youtubeUrl(download.url)) {
+      const dir = path.join(this.partsDirectory, download.id);
       await fs.mkdir(dir, { recursive: true });
-      d.kind = 'youtube';
-      d.resumable = true;
-      d.connections = 1;
+      download.kind = 'youtube';
+      download.resumable = true;
+      download.connections = 1;
+
       const result = await downloadYoutube({
-        url: d.url,
-        formatKey: d.youtubeFormat,
+        url: download.url,
+        formatKey: download.youtubeFormat,
         directory: dir,
         signal,
         speedLimitKbps: this.settings.speedLimitKbps,
         onMetadata: (choice) => {
-          d.filename = safeFilename(`${choice.title}.${choice.outputFormat}`);
-          d.duration = choice.duration;
+          download.filename = safeFilename(`${choice.title}.${choice.outputFormat}`);
+          download.duration = choice.duration;
           this.changed();
         },
-        onProgress: (p) => {
-          Object.assign(d, p);
-          d.segments = [{ start: 0, end: p.total ? p.total - 1 : null, downloaded: p.downloaded }];
+        onProgress: (progress) => {
+          Object.assign(download, progress);
+
+          download.segments = [
+            {
+              start: 0,
+              end: progress.total ? progress.total - 1 : null,
+              downloaded: progress.downloaded,
+            },
+          ];
+
           this.changed();
         },
       });
-      d.filename = safeFilename(`${result.choice.title}.${result.choice.outputFormat}`);
-      d.duration = result.choice.duration;
-      d.category = result.choice.outputFormat === 'mp3' ? 'Audio' : 'Video';
-      d.total = result.size;
-      d.downloaded = result.size;
-      d.estimated = false;
-      d.segments = [{ start: 0, end: result.size - 1, downloaded: result.size, done: true }];
-      await this.assemble(d, dir, signal, [result.output], true);
+
+      download.filename = safeFilename(`${result.choice.title}.${result.choice.outputFormat}`);
+      download.duration = result.choice.duration;
+      download.category = result.choice.outputFormat === 'mp3' ? 'Audio' : 'Video';
+      download.total = result.size;
+      download.downloaded = result.size;
+      download.estimated = false;
+      download.segments = [{ start: 0, end: result.size - 1, downloaded: result.size, done: true }];
+      await this.assemble(download, dir, signal, [result.output], true);
       return;
     }
-    const headers = cleanHeaders(d.headers);
-    if (/\.m3u8(?:[?#]|$)/i.test(d.url)) {
-      await this.runHls(d, headers, signal);
+
+    const headers = cleanHeaders(download.headers);
+
+    if (/\.m3u8(?:[?#]|$)/i.test(download.url)) {
+      await this.runHls(download, headers, signal);
       return;
     }
-    if (d.audioUrl) {
-      await this.runPairedTracks(d, headers, signal);
+
+    if (download.audioUrl) {
+      await this.runPairedTracks(download, headers, signal);
       return;
     }
-    const info = await probe(d.url, headers, signal);
-    const mime = String(info.headers['content-type'] || '');
+
+    const resourceInfo = await probe(download.url, headers, signal);
+    const mime = String(resourceInfo.headers['content-type'] || '');
+
     if (/mpegurl/i.test(mime)) {
-      await this.runHls(d, headers, signal);
+      await this.runHls(download, headers, signal);
       return;
     }
+
     if (/dash\+xml/i.test(mime)) {
       throw new Error('DASH streams need a muxing engine, which is not included yet.');
     }
-    if (!d.explicitFilename) {
-      d.filename = suggestedName(info.url, info.headers['content-disposition']);
-      if (!d.explicitCategory) {
-        d.category = categoryFor(d.filename);
+
+    if (!download.explicitFilename) {
+      download.filename = suggestedName(
+        resourceInfo.url,
+        resourceInfo.headers['content-disposition'],
+      );
+
+      if (!download.explicitCategory) {
+        download.category = categoryFor(download.filename);
       }
     }
-    const dir = path.join(this.partsDirectory, d.id);
+
+    const dir = path.join(this.partsDirectory, download.id);
     await fs.mkdir(dir, { recursive: true });
+
     // Resume only when both resource identity and range support can be established.
     if (
-      !info.ranges ||
-      !info.validator ||
-      d.validator !== info.validator ||
-      d.total !== info.total
+      !resourceInfo.ranges ||
+      !resourceInfo.validator ||
+      download.validator !== resourceInfo.validator ||
+      download.total !== resourceInfo.total
     ) {
       await fs.rm(dir, { recursive: true, force: true });
       await fs.mkdir(dir, { recursive: true });
-      d.segments = [];
+      download.segments = [];
     }
-    d.total = info.total;
-    d.validator = info.validator;
-    d.resumable = Boolean(info.ranges && info.validator);
+
+    download.total = resourceInfo.total;
+    download.validator = resourceInfo.validator;
+    download.resumable = Boolean(resourceInfo.ranges && resourceInfo.validator);
+
     const count =
-      info.ranges && info.total !== null && info.total > 1024 * 1024
-        ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024)))
+      resourceInfo.ranges && resourceInfo.total !== null && resourceInfo.total > 1024 * 1024
+        ? Math.min(this.settings.connections, Math.ceil(resourceInfo.total / (512 * 1024)))
         : 1;
-    if (!d.segments.length) {
-      d.segments = Array.from({ length: count }, (_, i) => ({
-        start: info.total === null ? 0 : Math.floor((info.total * i) / count),
-        end: info.total === null ? null : Math.floor((info.total * (i + 1)) / count) - 1,
+
+    if (!download.segments.length) {
+      download.segments = Array.from({ length: count }, (_, segmentIndex) => ({
+        start:
+          resourceInfo.total === null ? 0 : Math.floor((resourceInfo.total * segmentIndex) / count),
+        end:
+          resourceInfo.total === null
+            ? null
+            : Math.floor((resourceInfo.total * (segmentIndex + 1)) / count) - 1,
         downloaded: 0,
       }));
     }
-    for (let i = 0; i < d.segments.length; i += 1) {
+
+    for (let segmentIndex = 0; segmentIndex < download.segments.length; segmentIndex += 1) {
       let size = 0;
+
       try {
-        size = (await fs.stat(path.join(dir, `${i}.part`))).size;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-          throw e;
+        size = (await fs.stat(path.join(dir, `${segmentIndex}.part`))).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error;
         }
       }
-      const s = d.segments[i];
-      if (s.end !== null && size > s.end - s.start + 1) {
+
+      const segment = download.segments[segmentIndex];
+
+      if (segment.end !== null && size > segment.end - segment.start + 1) {
         throw new Error(
           'Partial file is larger than its segment. Remove and re-add this download.',
         );
       }
-      s.downloaded = size;
+
+      segment.downloaded = size;
     }
-    d.downloaded = d.segments.reduce((n, s) => n + s.downloaded, 0);
-    d.connections = d.segments.length;
-    d.status = 'downloading';
+
+    download.downloaded = download.segments.reduce((sum, segment) => sum + segment.downloaded, 0);
+    download.connections = download.segments.length;
+    download.status = 'downloading';
     await this.persist();
     this.changed();
-    let lastBytes = d.downloaded;
+    let lastBytes = download.downloaded;
     let lastAt = Date.now();
+
     const progress = setInterval(() => {
       const now = Date.now();
-      d.speed = ((d.downloaded - lastBytes) * 1000) / (now - lastAt);
-      lastBytes = d.downloaded;
+      download.speed = ((download.downloaded - lastBytes) * 1000) / (now - lastAt);
+      lastBytes = download.downloaded;
       lastAt = now;
       this.changed();
     }, this.tickMs);
+
     const siblings = new AbortController();
     const transferSignal = AbortSignal.any([signal, siblings.signal]);
+
     try {
       const outcomes = await Promise.allSettled(
-        d.segments.map((segment, i) =>
+        download.segments.map((segment, segmentIndex) =>
           this.transfer(
-            d,
-            info,
+            download,
+            resourceInfo,
             segment,
-            path.join(dir, `${i}.part`),
+            path.join(dir, `${segmentIndex}.part`),
             headers,
             transferSignal,
           ).catch((error) => {
@@ -721,337 +860,432 @@ export class DownloadEngine extends EventEmitter {
           }),
         ),
       );
+
       const failure = firstFailure(outcomes);
+
       if (failure) {
         throw failure.reason;
       }
     } finally {
       clearInterval(progress);
     }
-    await this.assemble(d, dir, signal);
+
+    await this.assemble(download, dir, signal);
   }
 
   async assemble(
-    d: Download,
+    download: Download,
     dir: string,
     signal: AbortSignal,
-    files = d.segments.map((_, i) => path.join(dir, `${i}.part`)),
+    files = download.segments.map((_, segmentIndex) => path.join(dir, `${segmentIndex}.part`)),
     converted = false,
   ): Promise<void> {
     signal.throwIfAborted();
-    d.status = 'assembling';
-    d.speed = 0;
+    download.status = 'assembling';
+    download.speed = 0;
     this.changed();
-    if (d.outputFormat && !converted) {
+
+    if (download.outputFormat && !converted) {
       const { convertMedia } = await import('./mux.mjs');
-      const output = await convertMedia(dir, files, d.outputFormat, signal);
-      d.filename = safeFilename(`${d.filename.replace(/\.[^.]+$/, '')}.${d.outputFormat}`);
-      if (!d.explicitCategory) {
-        d.category = d.outputFormat === 'mp3' ? 'Audio' : 'Video';
+      const output = await convertMedia(dir, files, download.outputFormat, signal);
+
+      download.filename = safeFilename(
+        `${download.filename.replace(/\.[^.]+$/, '')}.${download.outputFormat}`,
+      );
+
+      if (!download.explicitCategory) {
+        download.category = download.outputFormat === 'mp3' ? 'Audio' : 'Video';
       }
-      await this.assemble(d, dir, signal, [output], true);
+
+      await this.assemble(download, dir, signal, [output], true);
       return;
     }
-    await fs.mkdir(d.directory, { recursive: true });
+
+    await fs.mkdir(download.directory, { recursive: true });
     // Exclusive creation prevents collision with user files or another download.
     let destination = '';
-    let out: FileHandle | undefined;
-    for (let n = 0; n < 10000; n += 1) {
-      const ext = path.extname(d.filename);
-      const base = path.basename(d.filename, ext);
-      destination = path.join(d.directory, n ? `${base} (${n})${ext}` : d.filename);
+    let destinationFile: FileHandle | undefined;
+
+    for (let suffix = 0; suffix < 10000; suffix += 1) {
+      const extension = path.extname(download.filename);
+      const base = path.basename(download.filename, extension);
+
+      destination = path.join(
+        download.directory,
+        suffix ? `${base} (${suffix})${extension}` : download.filename,
+      );
+
       try {
-        out = await fs.open(destination, 'wx');
+        destinationFile = await fs.open(destination, 'wx');
         break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') {
-          throw e;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+          throw error;
         }
       }
     }
-    if (!out) {
+
+    if (!destinationFile) {
       throw new Error('Could not choose a free output filename.');
     }
+
     let complete = false;
+
     try {
       for (const file of files) {
         const input = await fs.open(file, 'r');
+
         try {
           for await (const chunk of input.createReadStream()) {
             signal.throwIfAborted();
-            await out.writeFile(chunk);
+            await destinationFile.writeFile(chunk);
           }
         } finally {
           await input.close();
         }
       }
-      await out.sync();
+
+      await destinationFile.sync();
       complete = true;
     } finally {
-      await out.close();
+      await destinationFile.close();
+
       if (!complete) {
         await fs.unlink(destination);
       }
     }
-    d.path = destination;
-    d.filename = path.basename(destination);
-    d.status = 'complete';
-    d.completedAt = new Date().toISOString();
+
+    download.path = destination;
+    download.filename = path.basename(destination);
+    download.status = 'complete';
+    download.completedAt = new Date().toISOString();
     await this.persist();
+
     try {
       await fs.rm(dir, { recursive: true, force: true });
     } catch (error) {
-      d.cleanupError = `Downloaded file is complete; temporary segments could not be removed: ${(error as Error).message}`;
+      download.cleanupError = `Downloaded file is complete; temporary segments could not be removed: ${(error as Error).message}`;
     }
-    this.emit('complete', { ...d });
+
+    this.emit('complete', { ...download });
   }
 
-  async runHls(d: Download, headers: HeaderMap, signal: AbortSignal) {
-    const plan = await resolveHls(d.url, headers, signal);
-    if (d.audioUrl) {
-      plan.audio = await resolveHls(d.audioUrl, scopedHeaders(headers, d.url, d.audioUrl), signal);
+  async runHls(download: Download, headers: HeaderMap, signal: AbortSignal) {
+    const plan = await resolveHls(download.url, headers, signal);
+
+    if (download.audioUrl) {
+      plan.audio = await resolveHls(
+        download.audioUrl,
+        scopedHeaders(headers, download.url, download.audioUrl),
+        signal,
+      );
     }
+
     const videoCount = plan.urls.length;
+
     if (plan.audio) {
       plan.urls.push(...plan.audio.urls);
       plan.identity += `:${plan.audio.identity}`;
       plan.extension = '.mp4';
     }
-    const dir = path.join(this.partsDirectory, d.id);
-    if (d.playlistIdentity !== plan.identity) {
+
+    const dir = path.join(this.partsDirectory, download.id);
+
+    if (download.playlistIdentity !== plan.identity) {
       await fs.rm(dir, { recursive: true, force: true });
-      d.segments = [];
+      download.segments = [];
     }
+
     await fs.mkdir(dir, { recursive: true });
-    d.playlistIdentity = plan.identity;
-    d.duration = plan.duration;
-    d.resumable = true;
-    d.kind = 'hls';
-    if (!d.explicitFilename && !d.hlsFilenameResolved) {
-      d.filename = safeFilename(d.filename.replace(/\.(m3u8|mpd)$/i, '') + plan.extension);
-      d.hlsFilenameResolved = true;
+    download.playlistIdentity = plan.identity;
+    download.duration = plan.duration;
+    download.resumable = true;
+    download.kind = 'hls';
+
+    if (!download.explicitFilename && !download.hlsFilenameResolved) {
+      download.filename = safeFilename(
+        download.filename.replace(/\.(m3u8|mpd)$/i, '') + plan.extension,
+      );
+
+      download.hlsFilenameResolved = true;
     }
-    if (!d.explicitCategory) {
-      d.category = 'Video';
+
+    if (!download.explicitCategory) {
+      download.category = 'Video';
     }
-    d.total = null;
-    d.downloaded = 0;
-    d.segments = await Promise.all(
-      plan.urls.map(async (url, i) => {
+
+    download.total = null;
+    download.downloaded = 0;
+
+    download.segments = await Promise.all(
+      plan.urls.map(async (url, segmentIndex) => {
         let size = 0;
         let done = false;
+
         try {
-          size = (await fs.stat(path.join(dir, `${i}.part`))).size;
+          size = (await fs.stat(path.join(dir, `${segmentIndex}.part`))).size;
           done = true;
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
-            throw e;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw error;
           }
         }
-        d.downloaded += size;
+
+        download.downloaded += size;
         return { url, start: 0, end: null, downloaded: size, done };
       }),
     );
-    d.connections = Math.min(this.settings.connections, d.segments.length);
-    d.status = 'downloading';
+
+    download.connections = Math.min(this.settings.connections, download.segments.length);
+    download.status = 'downloading';
     await this.persist();
     this.changed();
     let index = 0;
-    let lastBytes = d.downloaded;
+    let lastBytes = download.downloaded;
     let lastTime = Date.now();
+
     const progress = setInterval(() => {
       const now = Date.now();
-      d.speed = ((d.downloaded - lastBytes) * 1000) / Math.max(1, now - lastTime);
-      lastBytes = d.downloaded;
+      download.speed = ((download.downloaded - lastBytes) * 1000) / Math.max(1, now - lastTime);
+      lastBytes = download.downloaded;
       lastTime = now;
       this.changed();
     }, this.tickMs);
+
     const siblings = new AbortController();
     const groupSignal = AbortSignal.any([signal, siblings.signal]);
+
     // Fetches one segment into its .part file, retrying with backoff.
-    const fetchSegment = async (segment: Segment, i: number) => {
+    const fetchSegment = async (segment: Segment, segmentIndex: number) => {
       // Every HLS segment is created above with its playlist URL.
       const url = segment.url!;
-      const temp = path.join(dir, `${i}.receiving`);
+      const receivingPath = path.join(dir, `${segmentIndex}.receiving`);
+
       for (let attempt = 0; attempt < 4; attempt += 1) {
-        d.downloaded -= segment.downloaded;
+        download.downloaded -= segment.downloaded;
         segment.downloaded = 0;
-        const out = await fs.open(temp, 'w');
+        const partFile = await fs.open(receivingPath, 'w');
         let response: HttpResponse | undefined;
+
         try {
           response = await request(url, {
             headers: scopedHeaders(headers, plan.source, url),
             signal: groupSignal,
           });
+
           if (response.statusCode !== 200) {
             throw new Error(`HLS segment returned HTTP ${response.statusCode}.`);
           }
+
           const expected = Number(response.headers['content-length']);
+
           for await (const chunk of response) {
             groupSignal.throwIfAborted();
             await this.throttle(chunk.length, groupSignal);
-            await out.writeFile(chunk);
+            await partFile.writeFile(chunk);
             segment.downloaded += chunk.length;
-            d.downloaded += chunk.length;
+            download.downloaded += chunk.length;
           }
+
           if (Number.isFinite(expected) && expected !== segment.downloaded) {
             throw new Error('Incomplete HLS segment.');
           }
-          await out.sync();
-          await out.close();
-          await fs.rename(temp, path.join(dir, `${i}.part`));
+
+          await partFile.sync();
+          await partFile.close();
+          await fs.rename(receivingPath, path.join(dir, `${segmentIndex}.part`));
           segment.done = true;
           await this.persist();
           return;
         } catch (error) {
-          await out.close();
+          await partFile.close();
+
           if (groupSignal.aborted || attempt === 3) {
             throw error;
           }
+
           await delay(250 * 2 ** attempt, undefined, { signal: groupSignal });
         } finally {
           response?.destroy();
         }
       }
     };
+
     const worker = async () => {
-      while (index < d.segments.length) {
+      while (index < download.segments.length) {
         groupSignal.throwIfAborted();
-        const i = index;
+        const segmentIndex = index;
         index += 1;
-        const segment = d.segments[i];
+        const segment = download.segments[segmentIndex];
+
         if (!segment.done) {
-          await fetchSegment(segment, i);
+          await fetchSegment(segment, segmentIndex);
         }
       }
     };
+
     try {
       const outcomes = await Promise.allSettled(
-        Array.from({ length: d.connections }, () =>
+        Array.from({ length: download.connections }, () =>
           worker().catch((error) => {
             siblings.abort();
             throw error;
           }),
         ),
       );
+
       const error = firstFailure(outcomes);
+
       if (error) {
         throw error.reason;
       }
     } finally {
       clearInterval(progress);
     }
-    d.total = d.downloaded;
+
+    download.total = download.downloaded;
+
     if (plan.audio) {
-      d.status = 'assembling';
-      d.speed = 0;
+      download.status = 'assembling';
+      download.speed = 0;
       this.changed();
       const { muxTracks } = await import('./mux.mjs');
       const combined = await muxTracks(dir, videoCount, plan.urls.length, signal);
-      d.filename = safeFilename(`${d.filename.replace(/\.[^.]+$/, '')}.mp4`);
-      await this.assemble(d, dir, signal, [combined]);
+      download.filename = safeFilename(`${download.filename.replace(/\.[^.]+$/, '')}.mp4`);
+      await this.assemble(download, dir, signal, [combined]);
     } else {
-      await this.assemble(d, dir, signal);
+      await this.assemble(download, dir, signal);
     }
   }
 
-  async runPairedTracks(d: Download, headers: HeaderMap, signal: AbortSignal) {
+  async runPairedTracks(download: Download, headers: HeaderMap, signal: AbortSignal) {
     // Only called when d.audioUrl is set.
-    const urls = [d.url, d.audioUrl!];
-    const trackHeaders = urls.map((url) => scopedHeaders(headers, d.url, url));
-    const infos = await Promise.all(urls.map((url, i) => probe(url, trackHeaders[i], signal)));
-    const dir = path.join(this.partsDirectory, d.id);
+    const urls = [download.url, download.audioUrl!];
+    const trackHeaders = urls.map((url) => scopedHeaders(headers, download.url, url));
+
+    const trackInfos = await Promise.all(
+      urls.map((url, trackIndex) => probe(url, trackHeaders[trackIndex], signal)),
+    );
+
+    const dir = path.join(this.partsDirectory, download.id);
     await fs.mkdir(dir, { recursive: true });
     // Direct adaptive tracks are separate files; concatenating them corrupts MP4.
-    d.kind = 'paired';
-    d.resumable = false;
-    d.downloaded = 0;
-    d.total = infos.every((i) => i.total !== null) ? infos.reduce((n, i) => n + i.total!, 0) : null;
-    d.segments = infos.map((i) => ({
+    download.kind = 'paired';
+    download.resumable = false;
+    download.downloaded = 0;
+
+    download.total = trackInfos.every((track) => track.total !== null)
+      ? trackInfos.reduce((sum, track) => sum + track.total!, 0)
+      : null;
+
+    download.segments = trackInfos.map((track) => ({
       start: 0,
-      end: i.total === null ? null : i.total - 1,
+      end: track.total === null ? null : track.total - 1,
       downloaded: 0,
     }));
-    d.status = 'downloading';
-    d.connections = 2;
+
+    download.status = 'downloading';
+    download.connections = 2;
     this.changed();
     let last = 0;
     let at = Date.now();
+
     const timer = setInterval(() => {
       const now = Date.now();
-      d.speed = ((d.downloaded - last) * 1000) / Math.max(1, now - at);
-      last = d.downloaded;
+      download.speed = ((download.downloaded - last) * 1000) / Math.max(1, now - at);
+      last = download.downloaded;
       at = now;
       this.changed();
     }, this.tickMs);
+
     const siblings = new AbortController();
     const group = AbortSignal.any([signal, siblings.signal]);
+
     try {
       const outcomes = await Promise.allSettled(
-        urls.map(async (url, i) => {
+        urls.map(async (url, trackIndex) => {
           try {
-            const file = path.join(dir, `${i}.part`);
+            const file = path.join(dir, `${trackIndex}.part`);
             await fs.writeFile(file, Buffer.alloc(0));
-            await this.transfer(d, infos[i], d.segments[i], file, trackHeaders[i], group, url);
+
+            await this.transfer(
+              download,
+              trackInfos[trackIndex],
+              download.segments[trackIndex],
+              file,
+              trackHeaders[trackIndex],
+              group,
+              url,
+            );
           } catch (error) {
             siblings.abort();
             throw error;
           }
         }),
       );
+
       const failed = firstFailure(outcomes);
+
       if (failed) {
         throw failed.reason;
       }
     } finally {
       clearInterval(timer);
     }
+
     signal.throwIfAborted();
-    d.status = 'assembling';
-    d.speed = 0;
+    download.status = 'assembling';
+    download.speed = 0;
     this.changed();
     const { muxTracks } = await import('./mux.mjs');
     const combined = await muxTracks(dir, 1, 2, signal);
-    d.total = (await fs.stat(combined)).size;
-    d.downloaded = d.total;
-    await this.assemble(d, dir, signal, [combined], true);
+    download.total = (await fs.stat(combined)).size;
+    download.downloaded = download.total;
+    await this.assemble(download, dir, signal, [combined], true);
   }
 
-  async runSabr(d: Download, headers: HeaderMap, signal: AbortSignal) {
-    const dir = path.join(this.partsDirectory, d.id);
+  async runSabr(download: Download, headers: HeaderMap, signal: AbortSignal) {
+    const dir = path.join(this.partsDirectory, download.id);
     await fs.rm(dir, { recursive: true, force: true });
     await fs.mkdir(dir, { recursive: true });
-    d.kind = 'sabr';
-    d.resumable = false;
-    d.downloaded = 0;
-    const selected = normalizeSabrSession(d.sabr);
+    download.kind = 'sabr';
+    download.resumable = false;
+    download.downloaded = 0;
+    const selected = normalizeSabrSession(download.sabr);
     const hasVideo = selected.videoItag !== undefined;
+
     const picked = selected.formats.filter(
-      (f) => f.itag === selected.audioItag || f.itag === selected.videoItag,
+      (format) => format.itag === selected.audioItag || format.itag === selected.videoItag,
     );
-    d.total = picked.every((f) => Number(f.contentLength) > 0)
-      ? picked.reduce((sum, f) => sum + Number(f.contentLength), 0)
+
+    download.total = picked.every((format) => Number(format.contentLength) > 0)
+      ? picked.reduce((sum, format) => sum + Number(format.contentLength), 0)
       : null;
-    d.segments = picked.map((f) => ({
+
+    download.segments = picked.map((format) => ({
       start: 0,
-      end: Number(f.contentLength) > 0 ? Number(f.contentLength) - 1 : null,
+      end: Number(format.contentLength) > 0 ? Number(format.contentLength) - 1 : null,
       downloaded: 0,
     }));
-    d.connections = picked.length;
-    d.status = 'downloading';
+
+    download.connections = picked.length;
+    download.status = 'downloading';
     await this.persist();
     this.changed();
     let networkDownloaded = 0;
     let last = 0;
     let at = Date.now();
+
     const timer = setInterval(() => {
       const now = Date.now();
-      d.speed = ((networkDownloaded - last) * 1000) / Math.max(1, now - at);
+      download.speed = ((networkDownloaded - last) * 1000) / Math.max(1, now - at);
       last = networkDownloaded;
       at = now;
       this.changed();
     }, this.tickMs);
+
     let result: Awaited<ReturnType<typeof downloadSabr>>;
+
     try {
       result = await downloadSabr({
         session: selected,
@@ -1060,25 +1294,31 @@ export class DownloadEngine extends EventEmitter {
         audioPath: path.join(dir, hasVideo ? '1.part' : '0.part'),
         signal,
         onProgress: (progress) => {
-          d.downloaded = progress.downloaded;
+          download.downloaded = progress.downloaded;
+
           if (progress.total !== null) {
-            d.total = progress.total;
+            download.total = progress.total;
           }
+
           networkDownloaded = progress.networkDownloaded;
-          for (let i = 0; i < d.segments.length; i += 1) {
-            d.segments[i].downloaded = progress.tracks[picked[i].itag] || 0;
+
+          for (let trackIndex = 0; trackIndex < download.segments.length; trackIndex += 1) {
+            download.segments[trackIndex].downloaded =
+              progress.tracks[picked[trackIndex].itag] || 0;
           }
         },
       });
     } finally {
       clearInterval(timer);
     }
+
     signal.throwIfAborted();
-    d.status = 'assembling';
-    d.speed = 0;
-    d.duration = result.duration || undefined;
+    download.status = 'assembling';
+    download.speed = 0;
+    download.duration = result.duration || undefined;
     this.changed();
     let output: string;
+
     if (hasVideo) {
       const { muxTracks } = await import('./mux.mjs');
       output = await muxTracks(dir, 1, 2, signal);
@@ -1086,62 +1326,79 @@ export class DownloadEngine extends EventEmitter {
       const { convertMedia } = await import('./mux.mjs');
       output = await convertMedia(dir, [path.join(dir, '0.part')], 'mp3', signal);
     }
-    d.total = (await fs.stat(output)).size;
-    d.downloaded = d.total;
-    d.segments = [{ start: 0, end: d.total - 1, downloaded: d.total, done: true }];
-    await this.assemble(d, dir, signal, [output], true);
+
+    download.total = (await fs.stat(output)).size;
+    download.downloaded = download.total;
+
+    download.segments = [
+      { start: 0, end: download.total - 1, downloaded: download.total, done: true },
+    ];
+
+    await this.assemble(download, dir, signal, [output], true);
   }
 
   async transfer(
-    d: Download,
-    info: ProbeInfo,
+    download: Download,
+    resourceInfo: ProbeInfo,
     segment: Segment,
     file: string,
     headers: HeaderMap,
     signal: AbortSignal,
-    url = d.url,
+    url = download.url,
   ) {
     const expected = segment.end === null ? null : segment.end - segment.start + 1;
+
     if (expected !== null && segment.downloaded === expected) {
       await fs.appendFile(file, Buffer.alloc(0));
       return;
     }
+
     for (let attempt = 0; attempt < 4; attempt += 1) {
       signal.throwIfAborted();
+
       try {
-        const ranged = info.ranges && info.total !== null;
+        const ranged = resourceInfo.ranges && resourceInfo.total !== null;
+
         if (!ranged && segment.downloaded) {
-          d.downloaded -= segment.downloaded;
+          download.downloaded -= segment.downloaded;
           segment.downloaded = 0;
           await fs.writeFile(file, Buffer.alloc(0));
         }
+
         const start = segment.start + segment.downloaded;
-        const h: HeaderMap = { ...headers };
+        const requestHeaders: HeaderMap = { ...headers };
+
         if (ranged) {
-          h.Range = `bytes=${start}-${segment.end}`;
-          if (info.validator) {
-            h['If-Range'] = info.validator;
+          requestHeaders.Range = `bytes=${start}-${segment.end}`;
+
+          if (resourceInfo.validator) {
+            requestHeaders['If-Range'] = resourceInfo.validator;
           }
         }
-        const response = await request(url, { headers: h, signal });
+
+        const response = await request(url, { headers: requestHeaders, signal });
+
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           response.destroy();
           throw new Error(
             `Server returned HTTP ${response.statusCode}${ranged ? ' instead of a byte range' : ''}.`,
           );
         }
+
         if (ranged) {
           const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers['content-range'] || '');
+
           if (
             !match ||
             Number(match[1]) !== start ||
             Number(match[2]) !== segment.end ||
-            Number(match[3]) !== info.total
+            Number(match[3]) !== resourceInfo.total
           ) {
             response.destroy();
             throw new Error('Server returned an inconsistent byte range.');
           }
         }
+
         if (
           response.headers['content-encoding'] &&
           response.headers['content-encoding'] !== 'identity'
@@ -1149,31 +1406,39 @@ export class DownloadEngine extends EventEmitter {
           response.destroy();
           throw new Error('Server ignored identity encoding; refusing to save corrupt ranges.');
         }
-        const out = await fs.open(file, 'a');
+
+        const partFile = await fs.open(file, 'a');
+
         try {
           for await (const chunk of response) {
             signal.throwIfAborted();
+
             if (expected !== null && segment.downloaded + chunk.length > expected) {
               throw new Error('Server sent more bytes than requested.');
             }
+
             await this.throttle(chunk.length, signal);
-            await out.writeFile(chunk);
+            await partFile.writeFile(chunk);
             segment.downloaded += chunk.length;
-            d.downloaded += chunk.length;
+            download.downloaded += chunk.length;
           }
-          await out.sync();
+
+          await partFile.sync();
         } finally {
-          await out.close();
+          await partFile.close();
           response.destroy();
         }
+
         if (expected !== null && segment.downloaded !== expected) {
           throw new Error('Connection ended before the segment finished.');
         }
+
         return;
       } catch (error) {
         if (signal.aborted || attempt === 3) {
           throw error;
         }
+
         await delay(250 * 2 ** attempt, undefined, { signal });
       }
     }
@@ -1183,6 +1448,7 @@ export class DownloadEngine extends EventEmitter {
     if (this.closePromise) {
       return this.closePromise;
     }
+
     this.closePromise = this.shutdown();
     return this.closePromise;
   }
@@ -1190,10 +1456,12 @@ export class DownloadEngine extends EventEmitter {
   async shutdown() {
     this.closing = true;
     clearInterval(this.timer);
+
     for (const job of this.jobs.values()) {
       job.controller.abort();
     }
-    await Promise.allSettled([...this.jobs.values()].map((j) => j.promise));
+
+    await Promise.allSettled([...this.jobs.values()].map((job) => job.promise));
     await this.persist();
   }
 }

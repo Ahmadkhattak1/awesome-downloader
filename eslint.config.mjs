@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FlatCompat } from '@eslint/eslintrc';
 import js from '@eslint/js';
+import stylistic from '@stylistic/eslint-plugin';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 // eslint-disable-next-line import/no-unresolved -- the package has only an exports map, which this resolver cannot read.
@@ -48,10 +49,8 @@ const exceptions = {
         '$scope',
         'staticContext',
         // This project's download records.
-        'd',
         'download',
         'segment',
-        's',
         'capture',
         'event',
       ],
@@ -154,4 +153,39 @@ export default [
   // Prettier disables Airbnb's `curly: multi-line` because wrapping can break it;
   // always requiring braces keeps the intent and works with Prettier.
   { rules: { curly: ['error', 'all'] } },
+  // Two parts of the Airbnb guide that eslint-config-airbnb-base does not enforce:
+  // descriptive names instead of single letters (23.1), and a blank line after blocks
+  // (19.8), extended to separate every function and multi-line statement.
+  {
+    plugins: { '@stylistic': stylistic },
+    rules: {
+      'id-length': ['error', { min: 2, properties: 'never', exceptions: ['_'] }],
+      '@stylistic/padding-line-between-statements': [
+        'error',
+        { blankLine: 'always', prev: 'directive', next: '*' },
+        {
+          blankLine: 'always',
+          prev: '*',
+          next: [
+            'function',
+            'class',
+            'multiline-block-like',
+            'multiline-const',
+            'multiline-expression',
+          ],
+        },
+        {
+          blankLine: 'always',
+          prev: [
+            'function',
+            'class',
+            'multiline-block-like',
+            'multiline-const',
+            'multiline-expression',
+          ],
+          next: '*',
+        },
+      ],
+    },
+  },
 ];

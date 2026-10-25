@@ -26,24 +26,29 @@ test(
     });
   },
 );
+
 test('YouTube refusals explain rate limiting and verification without raw warnings or URLs', () => {
   const rate = youtubeError(
     'Deprecated Feature: Python\nHTTP Error 429: Too Many Requests\nSign in to confirm you are not a bot',
   );
+
   assert.equal(rate.statusCode, 429);
   assert.equal(rate.code, 'YOUTUBE_RATE_LIMIT');
   assert.doesNotMatch(rate.message, /Python/);
   assert.equal(youtubeError('Sign in to confirm you are not a bot').statusCode, 422);
+
   assert.equal(
     youtubeError('WARNING: old runtime\nERROR: failed https://secret.test/?token=secret').message,
     'ERROR: failed [URL]',
   );
 });
+
 test('YouTube resolver accepts only canonical public video URL shapes', () => {
   assert.equal(
     youtubeUrl('https://youtu.be/wLdZWyLOJCI'),
     'https://www.youtube.com/watch?v=wLdZWyLOJCI',
   );
+
   for (const url of [
     'https://youtube.com.evil.test/watch?v=wLdZWyLOJCI',
     'file:///secret',
@@ -53,6 +58,7 @@ test('YouTube resolver accepts only canonical public video URL shapes', () => {
     assert.equal(youtubeUrl(url), null);
   }
 });
+
 test('YouTube formats pair audio, collapse duplicate quality and omit storyboards/DRM', () => {
   const formats = [
     {
@@ -102,18 +108,22 @@ test('YouTube formats pair audio, collapse duplicate quality and omit storyboard
       protocol: 'mhtml',
     },
   ];
+
   const choices = choicesFromInfo(
     { title: 'Test', formats },
     'https://www.youtube.com/watch?v=wLdZWyLOJCI',
   );
+
   assert.equal(choices.length, 2);
   assert.equal(choices[0].youtubeFormat, '137+140');
   assert.equal(choices[0].estimatedSize, 120);
   assert.equal(choices[1].format, 'MP3');
   assert.throws(() => choicesFromInfo({ formats: [], is_live: true }, ''), /Live/);
 });
+
 test('stream progress uses measured segments without inventing an exact file size', () => {
   assert.equal(streamProgress([{ done: true, downloaded: 10 }]).estimatedBytes, null);
+
   assert.deepEqual(
     streamProgress([
       { done: true, downloaded: 10 },

@@ -24,6 +24,12 @@ Run `yarn format` and `yarn lint` before committing; CI runs both.
 The code follows the [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript),
 enforced by `eslint-config-airbnb-base` in `eslint.config.mjs`. Prettier owns layout, so
 Airbnb's formatting rules are turned off and `curly` is set to always require braces.
+Two parts of the guide that `eslint-config-airbnb-base` does not check are enforced too:
+
+- Descriptive names, never single letters (`id-length`; `_` is allowed for an unused
+  parameter). Name values by what they are: `download`, `segment`, `format`, `index`.
+- A blank line around every function, class, multi-line block and multi-line statement.
+
 These exceptions are deliberate:
 
 - `for...of` loops are allowed, including `for await` over streams. `for...in`, labels
