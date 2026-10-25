@@ -164,7 +164,9 @@
                 event.preventDefault();
                 event.stopPropagation();
                 row.disabled = true;
-                hint.textContent = 'Opening download options…';
+                hint.textContent = item.sabrSelection
+                  ? 'Opening download options… Getting the video stream ready can take a few seconds.'
+                  : 'Opening download options…';
                 try {
                   const response = await send({
                     action: 'download',

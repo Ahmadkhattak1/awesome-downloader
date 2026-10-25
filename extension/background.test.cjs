@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
-function harness() {
+// Pass a previous harness's `data` to simulate Chrome restarting the service worker:
+// memory is lost, storage.session survives. `onTabMessage` sees messages sent to the page.
+function harness(data = {}, { onTabMessage } = {}) {
   const events = {},
     nativeRequests = [];
   const event = (name) => ({
@@ -11,7 +13,6 @@ function harness() {
       events[name] = fn;
     },
   });
-  const data = {};
   const storage = {
     async get(key) {
       return structuredClone({ [key]: data[key] });
@@ -44,9 +45,15 @@ function harness() {
     downloads: { onCreated: event('download') },
     action: {},
   };
-  browser.tabs.sendMessage = async () => ({ ok: true });
+  browser.tabs.sendMessage = async (tabId, message) => {
+    onTabMessage?.(message);
+    return { ok: true };
+  };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'background.js'), 'utf8'), {
     browser,
+    // Retry waits run immediately so tests do not sleep.
+    setTimeout: (fn) => setImmediate(fn),
+    clearTimeout() {},
     URL,
     URLSearchParams,
     Uint8Array,
@@ -109,61 +116,74 @@ test('YouTube menu uses captured player formats without a desktop discovery requ
   );
   assert.equal(other.items.length, 0);
 });
-test('captured SABR request context is handed to the desktop with the selected tracks', async () => {
-  const h = harness(),
-    sender = {
-      id: 'extension-id',
-      tab: { id: 8, url: 'https://www.youtube.com/watch?v=wLdZWyLOJCI' },
-    };
-  const stream = 'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
-  await h.request(
-    {
-      action: 'playerResponse',
-      data: {
-        videoId: 'wLdZWyLOJCI',
-        title: 'Captured',
-        sabr: true,
-        sabrUrl: stream,
-        ustreamerConfig: 'AQID',
-        clientName: 1,
-        clientVersion: '2.20261022.00.00',
-        formats: [
-          {
-            itag: 137,
-            mimeType: 'video/mp4; codecs="avc1"',
-            height: 1080,
-            qualityLabel: '1080p',
-            bitrate: 3000000,
-            lastModified: '1',
-            approxDurationMs: '10000',
-          },
-          {
-            itag: 140,
-            mimeType: 'audio/mp4; codecs="mp4a.40.2"',
-            audioQuality: 'AUDIO_QUALITY_MEDIUM',
-            bitrate: 128000,
-            lastModified: '1',
-            approxDurationMs: '10000',
-          },
-        ],
+const sabrStream = (videoId = 'wLdZWyLOJCI') =>
+  `https://r1.googlevideo.com/videoplayback?id=${videoId}-asset&sabr=1&expire=9999999999`;
+const sabrSender = (videoId = 'wLdZWyLOJCI') => ({
+  id: 'extension-id',
+  tab: { id: 8, url: `https://www.youtube.com/watch?v=${videoId}` },
+});
+const sabrPlayer = (videoId = 'wLdZWyLOJCI') => ({
+  action: 'playerResponse',
+  data: {
+    videoId,
+    title: 'Captured',
+    sabr: true,
+    sabrUrl: sabrStream(videoId),
+    ustreamerConfig: 'AQID',
+    clientName: 1,
+    clientVersion: '2.20261022.00.00',
+    formats: [
+      {
+        itag: 137,
+        mimeType: 'video/mp4; codecs="avc1"',
+        height: 1080,
+        qualityLabel: '1080p',
+        bitrate: 3000000,
+        lastModified: '1',
+        approxDurationMs: '10000',
       },
-    },
-    sender,
-  );
+      {
+        itag: 140,
+        mimeType: 'audio/mp4; codecs="mp4a.40.2"',
+        audioQuality: 'AUDIO_QUALITY_MEDIUM',
+        bitrate: 128000,
+        lastModified: '1',
+        approxDurationMs: '10000',
+      },
+    ],
+  },
+});
+// What the page's SABR POST looks like to webRequest while a video plays.
+function observeSabrRequest(
+  h,
+  { requestId = 'success', videoId = 'wLdZWyLOJCI', body = [1, 2, 3] } = {},
+) {
   h.events.beforeRequest({
-    requestId: 'success',
+    requestId,
     tabId: 8,
-    url: stream,
-    requestBody: { raw: [{ bytes: Uint8Array.from([1, 2, 3]).buffer }] },
+    url: sabrStream(videoId),
+    requestBody: { raw: [{ bytes: Uint8Array.from(body).buffer }] },
   });
   h.events.response({
-    requestId: 'success',
+    requestId,
     tabId: 8,
-    url: stream,
+    url: sabrStream(videoId),
     statusCode: 200,
     type: 'xmlhttprequest',
     responseHeaders: [{ name: 'Content-Type', value: 'application/vnd.yt-ump' }],
   });
+}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const sabrItem = async (h, sender) =>
+  (await h.request({ action: 'listForFrame' }, sender)).items.find(
+    (value) => value.quality === '1080p',
+  );
+test('captured SABR request context is handed to the desktop with the selected tracks', async () => {
+  const h = harness(),
+    sender = sabrSender(),
+    stream = sabrStream();
+  await h.request(sabrPlayer(), sender);
+  observeSabrRequest(h);
   // A later in-flight or rejected request must not replace the successful body.
   h.events.beforeRequest({
     requestId: 'pending',
@@ -190,6 +210,138 @@ test('captured SABR request context is handed to the desktop with the selected t
   );
   assert.equal(rejected.ok, false);
   assert.equal(h.nativeRequests.length, 2);
+});
+test('a SABR capture survives Chrome stopping the idle service worker', async () => {
+  const playing = harness(),
+    sender = sabrSender();
+  await playing.request(sabrPlayer(), sender);
+  observeSabrRequest(playing);
+  await settle();
+  // Paused video, ~30 s idle: Chrome stops the worker. Opening the menu wakes a new one,
+  // and the page's player data is sent again, but no new SABR request is made.
+  const restarted = harness(playing.data);
+  await restarted.request(sabrPlayer(), sender);
+  const item = await sabrItem(restarted, sender);
+  const result = await restarted.request(
+    { action: 'download', item: { ...item, startNow: true } },
+    sender,
+  );
+  assert.equal(result.ok, true);
+  assert.equal(restarted.nativeRequests[0].sabr.requestBody, 'AQID');
+  assert.equal(restarted.nativeRequests[0].sabr.serverAbrStreamingUrl, sabrStream());
+});
+test('a missing capture is recovered automatically by priming the page player', async () => {
+  const sent = [];
+  const h = harness(
+    {},
+    {
+      onTabMessage(message) {
+        sent.push(message.action);
+        // The page's player answers the nudge with a fresh streaming request.
+        if (message.action === 'primeStream') observeSabrRequest(h);
+      },
+    },
+  );
+  const sender = sabrSender();
+  await h.request(sabrPlayer(), sender);
+  const item = await sabrItem(h, sender);
+  const result = await h.request({ action: 'download', item: { ...item, startNow: true } }, sender);
+  assert.equal(result.ok, true);
+  assert.ok(sent.includes('primeStream'));
+  assert.equal(h.nativeRequests[0].sabr.requestBody, 'AQID');
+});
+test('a streaming request copied by the page is used when Chrome hides its body', async () => {
+  const sent = [];
+  const h = harness({}, { onTabMessage: (message) => sent.push(message.action) }),
+    sender = sabrSender();
+  await h.request(sabrPlayer(), sender);
+  // What Chrome reports today: the request is visible, its body is not.
+  h.events.beforeRequest({ requestId: 'hidden', tabId: 8, url: sabrStream() });
+  const copied = await h.request(
+    { action: 'sabrRequest', data: { url: sabrStream(), body: 'AQID' } },
+    sender,
+  );
+  assert.equal(copied.ok, true);
+  const item = await sabrItem(h, sender);
+  const result = await h.request({ action: 'download', item: { ...item, startNow: true } }, sender);
+  assert.equal(result.ok, true);
+  assert.equal(h.nativeRequests[0].sabr.requestBody, 'AQID');
+  assert.equal(h.nativeRequests[0].sabr.serverAbrStreamingUrl, sabrStream());
+  assert.ok(!sent.includes('primeStream'));
+});
+test('page-copied streaming requests are accepted only from YouTube for SABR URLs', async () => {
+  const h = harness();
+  for (const [sender, data] of [
+    [
+      { id: 'extension-id', tab: { id: 8, url: 'https://example.com/watch?v=wLdZWyLOJCI' } },
+      { url: sabrStream(), body: 'AQID' },
+    ],
+    [sabrSender(), { url: 'https://example.com/videoplayback?sabr=1', body: 'AQID' }],
+    [sabrSender(), { url: sabrStream(), body: 'not base64!' }],
+  ])
+    assert.equal((await h.request({ action: 'sabrRequest', data }, sender)).ok, false);
+  assert.doesNotMatch(JSON.stringify(h.data), /AQID/);
+});
+test('an ad played in between keeps the main video capture', async () => {
+  const sent = [];
+  const h = harness({}, { onTabMessage: (message) => sent.push(message.action) });
+  const sender = sabrSender();
+  await h.request(sabrPlayer(), sender);
+  observeSabrRequest(h, { requestId: 'main', body: [1, 2, 3] });
+  // A mid-roll ad brings its own player data and streaming requests into the same tab.
+  await h.request(sabrPlayer('adVideo0001'), sender);
+  observeSabrRequest(h, { requestId: 'ad', videoId: 'adVideo0001', body: [9, 9, 9] });
+  await h.request(sabrPlayer(), sender);
+  const item = await sabrItem(h, sender);
+  const result = await h.request({ action: 'download', item: { ...item, startNow: true } }, sender);
+  assert.equal(result.ok, true);
+  assert.equal(h.nativeRequests[0].sabr.requestBody, 'AQID');
+  assert.equal(h.nativeRequests[0].sabr.serverAbrStreamingUrl, sabrStream());
+  assert.ok(!sent.includes('primeStream'));
+});
+test('when recovery fails the message says what the extension saw', async () => {
+  const h = harness(),
+    sender = sabrSender();
+  await h.request(sabrPlayer(), sender);
+  // A streaming request whose body Chrome did not expose cannot be captured.
+  h.events.beforeRequest({ requestId: 'no-body', tabId: 8, url: sabrStream() });
+  const item = await sabrItem(h, sender);
+  const rejected = await h.request(
+    { action: 'download', item: { ...item, startNow: true } },
+    sender,
+  );
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /requests seen in this tab: 1; without a readable body: 1/);
+  assert.equal(h.nativeRequests.length, 0);
+});
+test('a stored SABR capture is never reused for a different video', async () => {
+  const playing = harness();
+  await playing.request(sabrPlayer(), sabrSender());
+  observeSabrRequest(playing);
+  await settle();
+  // After a restart, an in-page navigation to another video reports new player data
+  // without a previous player to compare against.
+  const restarted = harness(playing.data),
+    other = sabrSender('abcdefghijk');
+  await restarted.request(sabrPlayer('abcdefghijk'), other);
+  const item = await sabrItem(restarted, other);
+  const rejected = await restarted.request(
+    { action: 'download', item: { ...item, startNow: true } },
+    other,
+  );
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /Could not capture this YouTube video's stream/);
+  assert.equal(restarted.nativeRequests.length, 0);
+});
+test('closing or reloading a tab removes its stored SABR capture', async () => {
+  const playing = harness();
+  await playing.request(sabrPlayer(), sabrSender());
+  observeSabrRequest(playing);
+  await settle();
+  assert.match(JSON.stringify(playing.data), /AQID/);
+  playing.events.updated(8, { status: 'loading' });
+  await settle();
+  assert.doesNotMatch(JSON.stringify(playing.data), /AQID/);
 });
 test('observing a video-only leaf never erases its master audio pairing', async () => {
   const h = harness(),

@@ -22,12 +22,18 @@
   }
   async function onPlayer(event) {
     if (!connected()) return;
-    if (
-      event.source !== window ||
-      event.origin !== location.origin ||
-      event.data?.type !== 'awesome-player-response'
-    )
+    if (event.source !== window || event.origin !== location.origin) return;
+    if (event.data?.type === 'awesome-sabr-request') {
+      const { url, body } = event.data.data || {};
+      if (typeof url !== 'string' || typeof body !== 'string' || body.length > 350000) return;
+      try {
+        await api.runtime.sendMessage({ action: 'sabrRequest', data: { url, body } });
+      } catch (error) {
+        if (/extension context invalidated/i.test(error?.message || '')) shutdown();
+      }
       return;
+    }
+    if (event.data?.type !== 'awesome-player-response') return;
     const data = event.data.data;
     if (
       !data ||
@@ -46,7 +52,13 @@
   }
   addEventListener('message', onPlayer);
   function onMessage(message, sender, respond) {
-    if (!connected() || sender.id !== api.runtime.id || message.action !== 'refreshPlayer') return;
+    if (!connected() || sender.id !== api.runtime.id) return;
+    if (message.action === 'primeStream') {
+      dispatchEvent(new Event('awesome-prime-stream'));
+      respond({ ok: true });
+      return;
+    }
+    if (message.action !== 'refreshPlayer') return;
     let timer;
     const done = (ok = true) => {
       clearTimeout(timer);
