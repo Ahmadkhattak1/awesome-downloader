@@ -1019,6 +1019,7 @@ tableScroll.addEventListener('pointerdown', (event) => {
     startX: point.x,
     startY: point.y,
     row,
+    toggle: event.ctrlKey || event.metaKey,
     base: event.ctrlKey || event.metaKey ? new Set(selectedIds) : new Set(),
     moved: false,
   };
@@ -1064,20 +1065,28 @@ tableScroll.addEventListener('pointermove', (event) => {
 });
 function finishMarquee(event) {
   if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
-  const moved = selectionDrag.moved,
-    row = selectionDrag.row;
+  const { moved, row, toggle } = selectionDrag;
   try {
     tableScroll.releasePointerCapture(event.pointerId);
   } catch {}
   selectionDrag = null;
   selectionRectangle.hidden = true;
-  if (moved) {
+  // With the pointer captured, Chromium delivers the following click to the list rather
+  // than the row, so a plain click selects its row here and the row's own handler is skipped.
+  if (moved || row) {
+    if (!moved) selectDownload(row.dataset.id, { additive: toggle, toggle });
     suppressRowClick = true;
     setTimeout(() => {
       suppressRowClick = false;
     }, 0);
-  } else if (!row) selectDownload(null);
+  } else selectDownload(null);
 }
+// The double-click reaches the list for the same reason; find the row under the pointer.
+tableScroll.addEventListener('dblclick', (event) => {
+  if (event.target.closest('.download-row')) return;
+  const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('.download-row');
+  if (row) showDetails(row.dataset.id);
+});
 tableScroll.addEventListener('pointerup', finishMarquee);
 tableScroll.addEventListener('pointercancel', finishMarquee);
 $('#table-scroll').addEventListener('keydown', (event) => {
