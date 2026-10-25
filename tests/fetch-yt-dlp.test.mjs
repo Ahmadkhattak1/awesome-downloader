@@ -34,7 +34,11 @@ test('the pinned yt-dlp is saved as an executable and reused when it matches', a
 
   assert.equal(first.downloaded, true);
   assert.deepEqual(await fs.readFile(path.join(vendorDirectory, 'yt-dlp')), binary);
-  assert.equal((await fs.stat(first.target)).mode.toString(8).slice(-3), '755');
+
+  // Windows has no Unix execute bits; Node reports every file there as 666.
+  if (process.platform !== 'win32') {
+    assert.equal((await fs.stat(first.target)).mode.toString(8).slice(-3), '755');
+  }
 
   const second = await fetchYtDlp({ ...options, download: fakeDownload(binary, requested) });
 
