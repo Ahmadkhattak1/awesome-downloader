@@ -1,7 +1,25 @@
-import { validUrl, request } from './http.mjs';
+import { validUrl, request, type HeaderMap } from './http.mjs';
 import { createHash } from 'node:crypto';
 
-export function scopedHeaders(headers, source, target) {
+interface Variant {
+  url: string;
+  bandwidth: number;
+  resolution: string | null;
+  audioGroup: string | undefined;
+  audioUrl?: string;
+}
+interface MediaPlaylist {
+  urls: string[];
+  duration: number;
+  extension: '.mp4' | '.ts';
+}
+export interface HlsPlan extends MediaPlaylist {
+  source: string;
+  identity: string;
+  audio?: HlsPlan;
+}
+
+export function scopedHeaders(headers: HeaderMap, source: string, target: string): HeaderMap {
   const next = { ...headers };
   if (new URL(source).origin !== new URL(target).origin) {
     delete next.cookie;
@@ -10,26 +28,26 @@ export function scopedHeaders(headers, source, target) {
   }
   return next;
 }
-function attrs(line) {
-  const fields = {};
+function attrs(line: string) {
+  const fields: Record<string, string> = {};
   for (const match of line.matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g))
     fields[match[1]] = match[2].replace(/^"|"$/g, '');
   return fields;
 }
-export function parseHls(text, base) {
+export function parseHls(text: string, base: string): { variants: Variant[] } | MediaPlaylist {
   if (!text.trimStart().startsWith('#EXTM3U'))
     throw new Error('The server did not return an HLS playlist.');
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
-  const variants = [],
-    segments = [];
-  let variant = null,
+  const variants: Variant[] = [],
+    segments: string[] = [];
+  let variant: Record<string, string> | null = null,
     duration = 0,
-    map = null,
+    map: string | null = null,
     encrypted = false;
-  const audio = new Map();
+  const audio = new Map<string | undefined, string>();
   for (const line of lines) {
     if (line.startsWith('#EXT-X-MEDIA:')) {
       const a = attrs(line);
@@ -79,12 +97,12 @@ export function parseHls(text, base) {
     throw new Error('HLS playlist has no segments or exceeds the 20,000 segment limit.');
   return { urls: map ? [map, ...segments] : segments, duration, extension: map ? '.mp4' : '.ts' };
 }
-export async function fetchPlaylist(url, headers, signal) {
+export async function fetchPlaylist(url: string, headers: HeaderMap, signal: AbortSignal) {
   const response = await request(url, { headers, signal });
   try {
     if (response.statusCode !== 200)
       throw new Error(`Playlist returned HTTP ${response.statusCode}.`);
-    const buffers = [];
+    const buffers: Buffer[] = [];
     let length = 0;
     for await (const chunk of response) {
       length += chunk.length;
@@ -96,11 +114,17 @@ export async function fetchPlaylist(url, headers, signal) {
     response.destroy();
   }
 }
-export async function resolveHls(url, headers, signal, depth = 0, source = url) {
+export async function resolveHls(
+  url: string,
+  headers: HeaderMap,
+  signal: AbortSignal,
+  depth = 0,
+  source = url,
+): Promise<HlsPlan> {
   if (depth > 3) throw new Error('Too many nested HLS playlists.');
   const playlist = await fetchPlaylist(url, scopedHeaders(headers, source, url), signal);
   const plan = parseHls(playlist.text, playlist.url);
-  if (plan.variants) {
+  if ('variants' in plan) {
     const chosen = plan.variants[0];
     const video = await resolveHls(chosen.url, headers, signal, depth + 1, source);
     if (chosen.audioUrl)

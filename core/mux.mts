@@ -1,13 +1,26 @@
-import ffmpegPath from 'ffmpeg-static';
+import ffmpegStatic from 'ffmpeg-static';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-export async function muxTracks(directory, videoCount, count, signal) {
+// ffmpeg-static is CommonJS (module.exports = path) but its typings declare an ES default export.
+const ffmpegPath = ffmpegStatic as unknown as string | null;
+
+export function ffmpegExecutable() {
+  if (!ffmpegPath) throw new Error('FFmpeg is not available for this platform.');
+  return ffmpegPath.replace('app.asar', 'app.asar.unpacked');
+}
+
+export async function muxTracks(
+  directory: string,
+  videoCount: number,
+  count: number,
+  signal: AbortSignal,
+) {
   for (const [name, start, end] of [
     ['video', 0, videoCount],
     ['audio', videoCount, count],
-  ]) {
+  ] as const) {
     const output = await fs.open(path.join(directory, name + '.track'), 'w');
     try {
       for (let i = start; i < end; i++) {
@@ -26,8 +39,8 @@ export async function muxTracks(directory, videoCount, count, signal) {
     }
   }
   const output = path.join(directory, 'combined.mp4');
-  const executable = ffmpegPath.replace('app.asar', 'app.asar.unpacked');
-  await new Promise((resolve, reject) => {
+  const executable = ffmpegExecutable();
+  await new Promise<void>((resolve, reject) => {
     const child = spawn(
       executable,
       [
@@ -73,7 +86,12 @@ export async function muxTracks(directory, videoCount, count, signal) {
   return output;
 }
 
-export async function convertMedia(directory, files, format, signal) {
+export async function convertMedia(
+  directory: string,
+  files: string[],
+  format: string,
+  signal: AbortSignal,
+) {
   if (!['mp4', 'mp3'].includes(format)) throw new Error('Unsupported output format.');
   const source = path.join(directory, 'conversion-source.track');
   const out = await fs.open(source, 'w');
@@ -93,7 +111,7 @@ export async function convertMedia(directory, files, format, signal) {
     await out.close();
   }
   const output = path.join(directory, 'converted.' + format);
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const args = [
       '-nostdin',
       '-v',
@@ -110,7 +128,7 @@ export async function convertMedia(directory, files, format, signal) {
         : ['-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart']),
       output,
     );
-    const child = spawn(ffmpegPath.replace('app.asar', 'app.asar.unpacked'), args, {
+    const child = spawn(ffmpegExecutable(), args, {
       windowsHide: true,
       signal,
       stdio: ['ignore', 'ignore', 'pipe'],

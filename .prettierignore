@@ -6,3 +6,4 @@ release-*/
 research/
 coverage/
 test-results/
+dist/

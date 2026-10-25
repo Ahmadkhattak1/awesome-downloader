@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { VideoPlaybackAbrRequest } from 'googlevideo/protos';
-import { normalizeSabrSession } from '../core/sabr.mjs';
+import { normalizeSabrSession } from '../dist/core/sabr.mjs';
 
 test('captured SABR protobuf supplies browser client identity and proof token', () => {
   const body = VideoPlaybackAbrRequest.encode({

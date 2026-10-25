@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DownloadEngine, safeFilename } from '../core/engine.mjs';
-import { startBridge } from '../core/bridge.mjs';
+import { DownloadEngine, safeFilename } from '../dist/core/engine.mjs';
+import { startBridge } from '../dist/core/bridge.mjs';
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-test-'));

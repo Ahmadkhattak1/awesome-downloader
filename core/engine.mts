@@ -1,13 +1,58 @@
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
+import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { validUrl, cleanHeaders, request, probe } from './http.mjs';
+import {
+  validUrl,
+  cleanHeaders,
+  request,
+  probe,
+  type HeaderMap,
+  type HttpResponse,
+  type ProbeInfo,
+} from './http.mjs';
 import { resolveHls, scopedHeaders } from './hls.mjs';
 import { youtubeUrl, downloadYoutube } from './youtube.mjs';
 import { streamProgress } from './stream-progress.mjs';
 import { downloadSabr, normalizeSabrSession } from './sabr.mjs';
+import type { Category, Download, OutputFormat, Segment, Settings } from './types.mjs';
+
+export type * from './types.mjs';
+
+export interface AddOptions {
+  urls?: string[];
+  url?: string;
+  audioUrl?: string;
+  outputFormat?: OutputFormat;
+  youtubeFormat?: string;
+  sabr?: unknown;
+  filename?: string;
+  scheduledAt?: string | number | null;
+  referer?: string;
+  headers?: Record<string, unknown>;
+  directory?: string;
+  category?: Category;
+  description?: string;
+  queueOnly?: boolean;
+  reviewOnly?: boolean;
+  reuseActive?: boolean;
+}
+export interface ReviewOptions {
+  id?: string;
+  filename?: string;
+  directory?: string;
+  category?: Category;
+  description?: string;
+  queueOnly?: boolean;
+  scheduledAt?: string | number | null;
+}
+export type Snapshot = ReturnType<DownloadEngine['snapshot']>;
+interface Job {
+  controller: AbortController;
+  promise: Promise<void>;
+}
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
 const CATEGORY = {
@@ -17,7 +62,7 @@ const CATEGORY = {
   Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i,
   Programs: /\.(exe|msi|msix)$/i,
 };
-export function safeFilename(value) {
+export function safeFilename(value: unknown) {
   let name = path.win32
     .basename(String(value || 'download'))
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
@@ -27,7 +72,7 @@ export function safeFilename(value) {
     name = `download_${name || 'file'}`;
   return name;
 }
-function suggestedName(url, disposition) {
+function suggestedName(url: string, disposition?: string) {
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition || '');
   const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition || '');
   try {
@@ -36,17 +81,45 @@ function suggestedName(url, disposition) {
         ? decodeURIComponent(utf[1])
         : plain
           ? (plain[1] || plain[2]).trim()
-          : decodeURIComponent(new URL(url).pathname.split('/').pop()) || 'download',
+          : decodeURIComponent(new URL(url).pathname.split('/').pop()!) || 'download',
     );
   } catch {
     return 'download';
   }
 }
-const categoryFor = (name) =>
-  Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
+const categoryFor = (name: string) =>
+  (Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] as Category | undefined) ||
+  'Other';
+// Prefer the failure that caused sibling transfers to abort over their AbortErrors.
+function firstFailure(outcomes: PromiseSettledResult<unknown>[]) {
+  const rejected = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
+  return rejected.find((o) => o.reason.name !== 'AbortError') || rejected[0];
+}
 
 export class DownloadEngine extends EventEmitter {
-  constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
+  dataDirectory: string;
+  statePath: string;
+  partsDirectory: string;
+  settings: Settings;
+  downloads: Download[];
+  jobs: Map<string, Job>;
+  persistChain: Promise<void>;
+  tickMs: number;
+  closing: boolean;
+  rateTail: Promise<void>;
+  rateNext: number;
+  timer?: NodeJS.Timeout;
+  closePromise?: Promise<void>;
+
+  constructor({
+    dataDirectory,
+    downloadDirectory,
+    tickMs = 500,
+  }: {
+    dataDirectory: string;
+    downloadDirectory: string;
+    tickMs?: number;
+  }) {
     super();
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
@@ -74,14 +147,14 @@ export class DownloadEngine extends EventEmitter {
     try {
       const state = JSON.parse(await fs.readFile(this.statePath, 'utf8'));
       this.updateSettings(state.settings || {}, false);
-      this.downloads = (state.downloads || []).map((d) => ({
+      this.downloads = (state.downloads || []).map((d: Download) => ({
         ...d,
         status: TRANSIENT.has(d.status) ? 'paused' : d.status,
         speed: 0,
       }));
     } catch (error) {
-      if (error.code !== 'ENOENT')
-        throw new Error(`Could not load download history: ${error.message}`);
+      const { code, message } = error as NodeJS.ErrnoException;
+      if (code !== 'ENOENT') throw new Error(`Could not load download history: ${message}`);
     }
     this.timer = setInterval(() => this.tick(), this.tickMs);
     this.timer.unref();
@@ -129,14 +202,15 @@ export class DownloadEngine extends EventEmitter {
   changed() {
     this.emit('change', this.snapshot());
   }
-  updateSettings(patch, save = true) {
+  // Patches arrive untyped over IPC, so every field is validated here.
+  updateSettings(patch: Record<string, unknown>, save = true): Promise<Snapshot> | undefined {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
     const next = { ...this.settings };
     for (const [key, max] of [
       ['maxConcurrent', 16],
       ['connections', 32],
       ['speedLimitKbps', 1048576],
-    ]) {
+    ] as const) {
       if (patch[key] !== undefined) {
         const n = Number(patch[key]);
         if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : 1) || n > max)
@@ -164,7 +238,7 @@ export class DownloadEngine extends EventEmitter {
           !path.isAbsolute(folder)
         )
           throw new Error('Invalid category folder.');
-        next.categoryDirectories[category] = path.resolve(folder);
+        next.categoryDirectories[category as Category] = path.resolve(folder);
       }
     }
     for (const key of [
@@ -172,11 +246,13 @@ export class DownloadEngine extends EventEmitter {
       'revealOnComplete',
       'confirmBrowserDownloads',
       'hideCompletionDialog',
-    ])
-      if (patch[key] !== undefined) {
-        if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`);
-        next[key] = patch[key];
+    ] as const) {
+      const value = patch[key];
+      if (value !== undefined) {
+        if (typeof value !== 'boolean') throw new Error(`Invalid ${key}.`);
+        next[key] = value;
       }
+    }
     if (next.speedLimitKbps !== this.settings.speedLimitKbps) this.rateNext = 0;
     this.settings = next;
     if (save)
@@ -203,7 +279,7 @@ export class DownloadEngine extends EventEmitter {
     queueOnly = false,
     reviewOnly = false,
     reuseActive = false,
-  } = {}) {
+  }: AddOptions = {}) {
     const source = urls || (url ? [url] : []);
     if (!Array.isArray(source) || !source.length || source.length > 500)
       throw new Error('Add between 1 and 500 download URLs.');
@@ -251,7 +327,7 @@ export class DownloadEngine extends EventEmitter {
       );
       if (existing) return [existing.id];
     }
-    const added = normalized.map((u) => {
+    const added = normalized.map((u): Download => {
       const name = safeFilename(filename || suggestedName(u));
       const selectedCategory = category || categoryFor(name);
       return {
@@ -300,9 +376,9 @@ export class DownloadEngine extends EventEmitter {
     description = '',
     queueOnly = false,
     scheduledAt,
-  } = {}) {
+  }: ReviewOptions = {}) {
     const d = this.downloads.find((d) => d.id === id);
-    if (!d?.needsReview || this.jobs.has(id))
+    if (!d?.needsReview || this.jobs.has(d.id))
       throw new Error('This download is not waiting for confirmation.');
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory)))
       throw new Error('Choose an absolute save folder.');
@@ -330,7 +406,7 @@ export class DownloadEngine extends EventEmitter {
     this.tick();
     return [d.id];
   }
-  async action(id, action) {
+  async action(id: string, action: string) {
     const d = this.downloads.find((d) => d.id === id);
     if (!d) throw new Error('Download not found.');
     if (!['pause', 'resume', 'retry', 'cancel', 'remove'].includes(action))
@@ -368,7 +444,7 @@ export class DownloadEngine extends EventEmitter {
   tick() {
     if (this.closing) return;
     for (const d of this.downloads) {
-      if (d.status === 'scheduled' && new Date(d.scheduledAt).getTime() <= Date.now())
+      if (d.status === 'scheduled' && new Date(d.scheduledAt ?? 0).getTime() <= Date.now())
         d.status = 'queued';
       if (
         d.status === 'queued' &&
@@ -376,7 +452,7 @@ export class DownloadEngine extends EventEmitter {
         this.jobs.size < this.settings.maxConcurrent
       ) {
         const controller = new AbortController();
-        const job = { controller, promise: null };
+        const job: Job = { controller, promise: Promise.resolve() };
         this.jobs.set(d.id, job);
         job.promise = this.run(d, controller.signal)
           .catch((error) => {
@@ -390,7 +466,7 @@ export class DownloadEngine extends EventEmitter {
               await this.persist();
             } catch (error) {
               d.status = 'error';
-              d.error = `History checkpoint failed: ${error.message}`;
+              d.error = `History checkpoint failed: ${(error as Error).message}`;
             }
             this.jobs.delete(d.id);
             if (!this.jobs.size) this.rateNext = 0;
@@ -400,14 +476,14 @@ export class DownloadEngine extends EventEmitter {
       }
     }
   }
-  async throttle(bytes, signal) {
+  async throttle(bytes: number, signal: AbortSignal) {
     if (!this.settings.speedLimitKbps) return;
     const wait = Math.max(0, this.rateNext - Date.now());
     this.rateNext =
       Math.max(Date.now(), this.rateNext) + (bytes * 1000) / (this.settings.speedLimitKbps * 1024);
     if (wait) await delay(wait, undefined, { signal });
   }
-  async run(d, signal) {
+  async run(d: Download, signal: AbortSignal) {
     d.status = 'probing';
     d.error = null;
     this.changed();
@@ -485,7 +561,7 @@ export class DownloadEngine extends EventEmitter {
     d.validator = info.validator;
     d.resumable = Boolean(info.ranges && info.validator);
     const count =
-      info.ranges && info.total > 1024 * 1024
+      info.ranges && info.total !== null && info.total > 1024 * 1024
         ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024)))
         : 1;
     if (!d.segments.length) {
@@ -500,7 +576,7 @@ export class DownloadEngine extends EventEmitter {
       try {
         size = (await fs.stat(path.join(dir, `${i}.part`))).size;
       } catch (e) {
-        if (e.code !== 'ENOENT') throw e;
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
       const s = d.segments[i];
       if (s.end !== null && size > s.end - s.start + 1)
@@ -541,9 +617,7 @@ export class DownloadEngine extends EventEmitter {
           }),
         ),
       );
-      const failure =
-        outcomes.find((r) => r.status === 'rejected' && r.reason.name !== 'AbortError') ||
-        outcomes.find((r) => r.status === 'rejected');
+      const failure = firstFailure(outcomes);
       if (failure) throw failure.reason;
     } finally {
       clearInterval(progress);
@@ -551,12 +625,12 @@ export class DownloadEngine extends EventEmitter {
     await this.assemble(d, dir, signal);
   }
   async assemble(
-    d,
-    dir,
-    signal,
+    d: Download,
+    dir: string,
+    signal: AbortSignal,
     files = d.segments.map((_, i) => path.join(dir, `${i}.part`)),
     converted = false,
-  ) {
+  ): Promise<void> {
     signal.throwIfAborted();
     d.status = 'assembling';
     d.speed = 0;
@@ -570,7 +644,8 @@ export class DownloadEngine extends EventEmitter {
     }
     await fs.mkdir(d.directory, { recursive: true });
     // Exclusive creation prevents collision with user files or another download.
-    let destination, out;
+    let destination = '',
+      out: FileHandle | undefined;
     for (let n = 0; n < 10000; n++) {
       const ext = path.extname(d.filename),
         base = path.basename(d.filename, ext);
@@ -579,7 +654,7 @@ export class DownloadEngine extends EventEmitter {
         out = await fs.open(destination, 'wx');
         break;
       } catch (e) {
-        if (e.code !== 'EEXIST') throw e;
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       }
     }
     if (!out) throw new Error('Could not choose a free output filename.');
@@ -610,11 +685,11 @@ export class DownloadEngine extends EventEmitter {
     try {
       await fs.rm(dir, { recursive: true, force: true });
     } catch (error) {
-      d.cleanupError = `Downloaded file is complete; temporary segments could not be removed: ${error.message}`;
+      d.cleanupError = `Downloaded file is complete; temporary segments could not be removed: ${(error as Error).message}`;
     }
     this.emit('complete', { ...d });
   }
-  async runHls(d, headers, signal) {
+  async runHls(d: Download, headers: HeaderMap, signal: AbortSignal) {
     const plan = await resolveHls(d.url, headers, signal);
     if (d.audioUrl)
       plan.audio = await resolveHls(d.audioUrl, scopedHeaders(headers, d.url, d.audioUrl), signal);
@@ -649,7 +724,7 @@ export class DownloadEngine extends EventEmitter {
           size = (await fs.stat(path.join(dir, `${i}.part`))).size;
           done = true;
         } catch (e) {
-          if (e.code !== 'ENOENT') throw e;
+          if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
         }
         d.downloaded += size;
         return { url, start: 0, end: null, downloaded: size, done };
@@ -675,17 +750,19 @@ export class DownloadEngine extends EventEmitter {
       while (index < d.segments.length) {
         groupSignal.throwIfAborted();
         const i = index++,
-          segment = d.segments[i];
+          segment = d.segments[i],
+          // Every HLS segment is created above with its playlist URL.
+          url = segment.url!;
         if (segment.done) continue;
         const temp = path.join(dir, `${i}.receiving`);
         for (let attempt = 0; attempt < 4; attempt++) {
           d.downloaded -= segment.downloaded;
           segment.downloaded = 0;
           const out = await fs.open(temp, 'w');
-          let response;
+          let response: HttpResponse | undefined;
           try {
-            response = await request(segment.url, {
-              headers: scopedHeaders(headers, plan.source, segment.url),
+            response = await request(url, {
+              headers: scopedHeaders(headers, plan.source, url),
               signal: groupSignal,
             });
             if (response.statusCode !== 200)
@@ -725,9 +802,7 @@ export class DownloadEngine extends EventEmitter {
           }),
         ),
       );
-      const error =
-        outcomes.find((o) => o.status === 'rejected' && o.reason.name !== 'AbortError') ||
-        outcomes.find((o) => o.status === 'rejected');
+      const error = firstFailure(outcomes);
       if (error) throw error.reason;
     } finally {
       clearInterval(progress);
@@ -743,8 +818,9 @@ export class DownloadEngine extends EventEmitter {
       await this.assemble(d, dir, signal, [combined]);
     } else await this.assemble(d, dir, signal);
   }
-  async runPairedTracks(d, headers, signal) {
-    const urls = [d.url, d.audioUrl];
+  async runPairedTracks(d: Download, headers: HeaderMap, signal: AbortSignal) {
+    // Only called when d.audioUrl is set.
+    const urls = [d.url, d.audioUrl!];
     const trackHeaders = urls.map((url) => scopedHeaders(headers, d.url, url));
     const infos = await Promise.all(urls.map((url, i) => probe(url, trackHeaders[i], signal)));
     const dir = path.join(this.partsDirectory, d.id);
@@ -753,7 +829,7 @@ export class DownloadEngine extends EventEmitter {
     d.kind = 'paired';
     d.resumable = false;
     d.downloaded = 0;
-    d.total = infos.every((i) => i.total !== null) ? infos.reduce((n, i) => n + i.total, 0) : null;
+    d.total = infos.every((i) => i.total !== null) ? infos.reduce((n, i) => n + i.total!, 0) : null;
     d.segments = infos.map((i) => ({
       start: 0,
       end: i.total === null ? null : i.total - 1,
@@ -786,9 +862,7 @@ export class DownloadEngine extends EventEmitter {
           }
         }),
       );
-      const failed =
-        outcomes.find((o) => o.status === 'rejected' && o.reason.name !== 'AbortError') ||
-        outcomes.find((o) => o.status === 'rejected');
+      const failed = firstFailure(outcomes);
       if (failed) throw failed.reason;
     } finally {
       clearInterval(timer);
@@ -802,7 +876,7 @@ export class DownloadEngine extends EventEmitter {
     d.total = d.downloaded = (await fs.stat(combined)).size;
     await this.assemble(d, dir, signal, [combined], true);
   }
-  async runSabr(d, headers, signal) {
+  async runSabr(d: Download, headers: HeaderMap, signal: AbortSignal) {
     const dir = path.join(this.partsDirectory, d.id);
     await fs.rm(dir, { recursive: true, force: true });
     await fs.mkdir(dir, { recursive: true });
@@ -836,7 +910,7 @@ export class DownloadEngine extends EventEmitter {
       at = now;
       this.changed();
     }, this.tickMs);
-    let result;
+    let result: Awaited<ReturnType<typeof downloadSabr>>;
     try {
       result = await downloadSabr({
         session: selected,
@@ -860,7 +934,7 @@ export class DownloadEngine extends EventEmitter {
     d.speed = 0;
     d.duration = result.duration || undefined;
     this.changed();
-    let output;
+    let output: string;
     if (hasVideo) {
       const { muxTracks } = await import('./mux.mjs');
       output = await muxTracks(dir, 1, 2, signal);
@@ -872,7 +946,15 @@ export class DownloadEngine extends EventEmitter {
     d.segments = [{ start: 0, end: d.total - 1, downloaded: d.total, done: true }];
     await this.assemble(d, dir, signal, [output], true);
   }
-  async transfer(d, info, segment, file, headers, signal, url = d.url) {
+  async transfer(
+    d: Download,
+    info: ProbeInfo,
+    segment: Segment,
+    file: string,
+    headers: HeaderMap,
+    signal: AbortSignal,
+    url = d.url,
+  ) {
     const expected = segment.end === null ? null : segment.end - segment.start + 1;
     if (expected !== null && segment.downloaded === expected) {
       await fs.appendFile(file, Buffer.alloc(0));
@@ -888,7 +970,7 @@ export class DownloadEngine extends EventEmitter {
           await fs.writeFile(file, Buffer.alloc(0));
         }
         const start = segment.start + segment.downloaded;
-        const h = { ...headers };
+        const h: HeaderMap = { ...headers };
         if (ranged) {
           h.Range = `bytes=${start}-${segment.end}`;
           if (info.validator) h['If-Range'] = info.validator;

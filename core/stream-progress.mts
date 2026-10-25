@@ -1,4 +1,6 @@
-export function streamProgress(segments) {
+import type { Segment } from './types.mjs';
+
+export function streamProgress(segments: Segment[]) {
   const complete = segments.filter((s) => s.done),
     downloaded = segments.reduce((n, s) => n + s.downloaded, 0);
   const completedBytes = complete.reduce((n, s) => n + s.downloaded, 0);
