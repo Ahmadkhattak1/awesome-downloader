@@ -53,6 +53,11 @@ Do not commit its executable. `npm ci` installs the locked media dependencies.
 
 ## Contribute
 
+**New contributor? Start with the [contributor guide and roadmap](docs/CONTRIBUTOR-START-HERE.md).**
+It explains the current project stage, issue labels, dependency order and how
+to agree on a task before coding. Major goals are delivered through focused,
+reviewed PRs; planned platform support is not yet released support.
+
 Bug reports, tests, documentation and pull requests are welcome. See
 [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 You can fork the project and submit a pull request without repository write access.
