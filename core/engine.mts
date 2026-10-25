@@ -1320,8 +1320,24 @@ export class DownloadEngine extends EventEmitter {
     let output: string;
 
     if (hasVideo) {
-      const { muxTracks } = await import('./mux.mjs');
+      const { muxTracks, videoCodec, convertVideoToH264 } = await import('./mux.mjs');
       output = await muxTracks(dir, 1, 2, signal);
+
+      // The SABR library writes whatever format YouTube's server sends, which can be
+      // AV1 even when H.264 was chosen. Keep the H.264 choice, which every player plays.
+      const requested = selected.formats.find((format) => format.itag === selected.videoItag);
+
+      if (
+        /avc1/i.test(requested?.mimeType ?? '') &&
+        (await videoCodec(output, signal)) !== 'h264'
+      ) {
+        output = await convertVideoToH264(
+          dir,
+          output,
+          signal,
+          requested?.averageBitrate || requested?.bitrate,
+        );
+      }
     } else {
       const { convertMedia } = await import('./mux.mjs');
       output = await convertMedia(dir, [path.join(dir, '0.part')], 'mp3', signal);
