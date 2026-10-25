@@ -10,7 +10,7 @@ without sharing session tokens or signed media links.
 ## Just want to use it?
 
 Download **Awesome-Downloader-Setup.exe** from the project's
-[Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.2),
+[Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.3),
 then see the [installation and usage guide](docs/INSTALL.md). It is a normal
 Windows installer with Start-menu and
 desktop shortcuts. No GitHub account, Node.js, or developer tools are needed for
