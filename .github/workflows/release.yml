@@ -9,11 +9,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - run: corepack enable
+      # Enable Corepack on the Node that setup-node installs, so `yarn` is the Yarn 4
+      # pinned in package.json rather than the runner's global Yarn 1.
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: yarn
+      - run: corepack enable
       - run: yarn install --immutable
       - run: yarn test
       - run: yarn dist
@@ -34,11 +35,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - run: corepack enable
+      # Enable Corepack on the Node that setup-node installs, so `yarn` is the Yarn 4
+      # pinned in package.json rather than the runner's global Yarn 1.
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: yarn
+      - run: corepack enable
       - run: yarn install --immutable
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -61,11 +63,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - run: corepack enable
+      # Enable Corepack on the Node that setup-node installs, so `yarn` is the Yarn 4
+      # pinned in package.json rather than the runner's global Yarn 1.
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: yarn
+      - run: corepack enable
       - run: yarn install --immutable
       - run: yarn test
       - run: yarn dist:mac

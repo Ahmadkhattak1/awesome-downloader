@@ -25,8 +25,8 @@
     "package:extension": "node scripts/package-extension.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint": "tsc && eslint .",
+    "lint:fix": "tsc && eslint . --fix"
   },
   "devDependencies": {
     "@eslint/eslintrc": "3.3.1",
