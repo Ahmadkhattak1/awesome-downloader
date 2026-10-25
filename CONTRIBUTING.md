@@ -5,7 +5,8 @@ finished replacement for every commercial downloader feature.
 
 ## Development
 
-Use Windows x64 or an Apple Silicon Mac, and Node.js 22 or newer. The project uses Yarn 4 through Corepack,
+Use Windows x64 or an Apple Silicon Mac, and Node.js 22 or newer (`.nvmrc` pins the
+major version, so `nvm use` picks it; CI reads the same file). The project uses Yarn 4 through Corepack,
 which ships with Node.js; run `corepack enable` once. Fork this repository, clone
 your fork, and create a branch for one focused change.
 
