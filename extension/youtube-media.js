@@ -196,6 +196,37 @@
     });
   }
 
+  // H.264 plays in QuickTime, Windows players and every browser. AV1 and VP9 need newer
+  // hardware or players (QuickTime plays AV1 only on M3 Macs or newer), so they are
+  // chosen only when a quality has no H.264 version, and are labelled when they are.
+  const isH264 = (format) => /avc1/i.test(format.mimeType);
+
+  function codecName(format) {
+    if (/av01/i.test(format.mimeType)) {
+      return 'AV1';
+    }
+
+    if (/vp0?9/i.test(format.mimeType)) {
+      return 'VP9';
+    }
+
+    return '';
+  }
+
+  function qualityLabel(format) {
+    const fps = format.fps > 30 ? ` ${format.fps}fps` : '';
+    const codec = isH264(format) ? '' : codecName(format);
+
+    return `${format.height}p${fps}${codec ? ` · ${codec}` : ''}`;
+  }
+
+  // Best resolution and frame rate first; within the same one, H.264 before other codecs.
+  const byQuality = (first, second) =>
+    second.height - first.height ||
+    second.fps - first.fps ||
+    Number(isH264(second)) - Number(isH264(first)) ||
+    second.bitrate - first.bitrate;
+
   function choices(data, observed = []) {
     if (!data) {
       return [];
@@ -255,10 +286,7 @@
         (format) =>
           /^video\/mp4/i.test(format.mimeType) && format.height && (audio || isMuxed(format)),
       )
-      .sort(
-        (first, second) =>
-          second.height - first.height || second.fps - first.fps || second.bitrate - first.bitrate,
-      );
+      .sort(byQuality);
 
     for (const video of videos) {
       const key = `${video.height}:${video.fps}`;
@@ -272,7 +300,7 @@
           provider: 'youtube',
           format: 'MP4',
           outputFormat: 'mp4',
-          quality: `${video.height}p${video.fps > 30 ? ` ${video.fps}fps` : ''}`,
+          quality: qualityLabel(video),
           audioState: 'Video + audio',
           title: data.title,
           filename: `${title}.mp4`,
@@ -314,10 +342,7 @@
 
     const sabrVideos = data.formats
       .filter((format) => /^video\/mp4/i.test(format.mimeType) && format.height && !isMuxed(format))
-      .sort(
-        (first, second) =>
-          second.height - first.height || second.fps - first.fps || second.bitrate - first.bitrate,
-      );
+      .sort(byQuality);
 
     for (const video of sabrVideos) {
       const key = `${video.height}:${video.fps}`;
@@ -330,7 +355,7 @@
           provider: 'youtube',
           format: 'MP4',
           outputFormat: 'mp4',
-          quality: `${video.height}p${video.fps > 30 ? ` ${video.fps}fps` : ''}`,
+          quality: qualityLabel(video),
           audioState: 'Video + audio',
           title: data.title,
           filename: `${title}.mp4`,
