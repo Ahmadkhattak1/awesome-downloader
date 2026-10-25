@@ -11,9 +11,12 @@ from its own store or the Chrome Web Store.
 
 ## Prepare the submission
 
-Run `powershell -File integration/package-extension.ps1` from the project root.
-The ZIP in `release-extension` has manifest.json at the archive root and excludes
-tests and the Firefox-specific manifest. It is a store submission package, not a
+Run `yarn package:extension` on any platform. It writes
+`release-extension/Awesome-Downloader-Extension-<version>.zip` with manifest.json at
+the archive root, leaves out tests, the Firefox-specific manifest and hidden files
+such as `.DS_Store`, and refuses to build if the manifest refers to a missing file.
+The "Build release candidates" workflow also builds it, with a checksum, as the
+`browser-extension-store-package` artifact. It is a store submission package, not a
 replacement for a reviewed store listing.
 
 Publish it through the owner's Chrome Web Store developer account. Complete the

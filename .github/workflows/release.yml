@@ -28,6 +28,32 @@ jobs:
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7
+  package-extension:
+    # The Chrome Web Store submission package; the same on every platform.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+      - run: yarn install --immutable
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: yarn package:extension
+      - name: Create SHA-256 file
+        working-directory: release-extension
+        run: sha256sum Awesome-Downloader-Extension-*.zip > SHA256SUMS-extension.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension-store-package
+          path: |
+            release-extension/Awesome-Downloader-Extension-*.zip
+            release-extension/SHA256SUMS-extension.txt
+          if-no-files-found: error
+          retention-days: 7
   build-mac:
     # macos-latest is Apple Silicon, so the x64 app is cross-built. ffmpeg-static only installs
     # the arm64 FFmpeg here; scripts/after-pack.cjs swaps in the x64 one.
