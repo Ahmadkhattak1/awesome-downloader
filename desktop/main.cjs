@@ -17,6 +17,8 @@ if (process.argv.includes('--native-host')) {
     Notification,
   } = require('electron');
   app.setName('Awesome Downloader');
+  const isWindows = process.platform === 'win32',
+    isMac = process.platform === 'darwin';
   // AppData writes can be virtualized when launched by an MSIX development app.
   // Chrome launched normally must see the same connector, bridge, and history.
   const sharedDataDirectory = path.join(app.getPath('home'), '.awesome-downloader');
@@ -107,13 +109,14 @@ if (process.argv.includes('--native-host')) {
             },
           );
           const quoteBatch = (value) => String(value).replaceAll('%', '%%');
-          await fs.writeFile(
-            path.join(integrationRoot, 'integration', 'native-host.cmd'),
-            `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${quoteBatch(app.getPath('exe'))}" "%~dp0native-host.cjs"\r\n`,
-          );
+          if (isWindows)
+            await fs.writeFile(
+              path.join(integrationRoot, 'integration', 'native-host.cmd'),
+              `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${quoteBatch(app.getPath('exe'))}" "%~dp0native-host.cjs"\r\n`,
+            );
         }
         // Use the bundled runtime even in development; browsers need not inherit Node's PATH.
-        if (!app.isPackaged) {
+        if (!app.isPackaged && isWindows) {
           const fs = require('node:fs/promises');
           await fs.writeFile(
             path.join(integrationRoot, 'integration', 'native-host.cmd'),
@@ -214,10 +217,26 @@ if (process.argv.includes('--native-host')) {
             } else if (action === 'openWith') {
               if (d.status !== 'complete' || !d.path)
                 throw new Error('This download has not finished.');
-              await new Promise((resolve, reject) =>
-                require('node:child_process').execFile(
+              let program, args;
+              if (isMac) {
+                // macOS has no system "Open With" window; let the user pick an application.
+                const choice = await dialog.showOpenDialog(window, {
+                  title: 'Open with',
+                  defaultPath: '/Applications',
+                  filters: [{ name: 'Applications', extensions: ['app'] }],
+                  properties: ['openFile'],
+                });
+                if (choice.canceled) return;
+                [program, args] = ['/usr/bin/open', ['-a', choice.filePaths[0], d.path]];
+              } else
+                [program, args] = [
                   path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'OpenWith.exe'),
                   [d.path],
+                ];
+              await new Promise((resolve, reject) =>
+                require('node:child_process').execFile(
+                  program,
+                  args,
                   { windowsHide: true },
                   (error) => (error ? reject(error) : resolve()),
                 ),
@@ -318,6 +337,8 @@ if (process.argv.includes('--native-host')) {
         const command = (name) => () => window.webContents.send('downloader:command', name);
         Menu.setApplicationMenu(
           Menu.buildFromTemplate([
+            // macOS expects the app menu first, and text fields need the Edit menu for ⌘C/⌘V.
+            ...(isMac ? [{ role: 'appMenu' }, { role: 'editMenu' }] : []),
             {
               label: 'Tasks',
               submenu: [
@@ -381,15 +402,20 @@ if (process.argv.includes('--native-host')) {
                     },
                   ],
                 },
-                { type: 'separator' },
-                { label: 'Exit', click: () => app.quit() },
+                ...(isMac
+                  ? []
+                  : [{ type: 'separator' }, { label: 'Exit', click: () => app.quit() }]),
               ],
             },
             {
               label: 'File',
               submenu: [
                 { label: 'Download properties…', click: command('details') },
-                { label: 'Remove selected', accelerator: 'Delete', click: command('remove') },
+                {
+                  label: 'Remove selected',
+                  accelerator: isMac ? 'Cmd+Backspace' : 'Delete',
+                  click: command('remove'),
+                },
                 { label: 'Remove completed downloads', click: command('removeCompleted') },
               ],
             },
@@ -433,7 +459,7 @@ if (process.argv.includes('--native-host')) {
                       title: 'About Awesome Downloader',
                       message: 'Awesome Downloader 0.1.0',
                       detail:
-                        'Windows download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.',
+                        'Download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.',
                     }),
                 },
               ],

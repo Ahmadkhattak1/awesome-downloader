@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Awesome Downloader Integration",
   "version": "0.1.0",
-  "description": "Send links and detected direct video downloads to Awesome Downloader for Windows.",
+  "description": "Send links and detected direct video downloads to Awesome Downloader for Windows and macOS.",
   "permissions": [
     "nativeMessaging",
     "storage",

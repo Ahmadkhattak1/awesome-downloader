@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { youtubeUrl, choicesFromInfo, youtubeError } from '../dist/core/youtube.mjs';
+import { existsSync } from 'node:fs';
+import {
+  youtubeUrl,
+  choicesFromInfo,
+  youtubeError,
+  youtubeFormats,
+} from '../dist/core/youtube.mjs';
+test(
+  'a missing optional yt-dlp explains the browser extension alternative',
+  {
+    // With the tool present this would query YouTube; only check the missing case.
+    skip: ['yt-dlp', 'yt-dlp.exe'].some((name) =>
+      existsSync(new URL(`../vendor/${name}`, import.meta.url)),
+    ),
+  },
+  async () => {
+    await assert.rejects(youtubeFormats('https://www.youtube.com/watch?v=wLdZWyLOJCI'), (error) => {
+      assert.equal(error.code, 'YOUTUBE_EXTRACTOR_MISSING');
+      assert.equal(error.statusCode, 422);
+      assert.match(error.message, /optional yt-dlp tool.*browser extension/);
+      return true;
+    });
+  },
+);
 test('YouTube refusals explain rate limiting and verification without raw warnings or URLs', () => {
   const rate = youtubeError(
     'Deprecated Feature: Python\nHTTP Error 429: Too Many Requests\nSign in to confirm you are not a bot',

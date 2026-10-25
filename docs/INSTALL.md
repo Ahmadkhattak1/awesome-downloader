@@ -2,8 +2,8 @@
 
 ## Download
 
-Windows 10/11, 64-bit Intel/AMD PCs are the intended target. Native ARM builds
-are not provided. This is preview software; YouTube speed and compatibility vary.
+Windows 10/11, 64-bit Intel/AMD PCs are the main target; Windows ARM builds are
+not provided. A macOS preview for Apple Silicon is described [below](#macos-preview). This is preview software; YouTube speed and compatibility vary.
 
 Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.4)
 and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
@@ -17,6 +17,31 @@ of your download and the release's SHA-256 checksum before deciding to run it.
 Run the installer and follow the wizard. Launch **Awesome Downloader** from the
 Start menu. Keep the app installed at its chosen location so browser integration
 can find it.
+
+### macOS (preview)
+
+Apple Silicon Macs (M1 or newer) are supported. Intel Macs are not supported yet.
+A Mac download is not yet attached to a published release; it is produced by the
+release workflow or by `yarn dist:mac` (see the README).
+
+1. Open **Awesome-Downloader-VERSION-mac-arm64.dmg** and drag **Awesome
+   Downloader** into **Applications**. Keep it there so browser integration can
+   find it.
+2. The app is not notarized by Apple yet, so the first launch is blocked. Open it
+   once, then go to **System Settings → Privacy & Security**, find the message
+   about Awesome Downloader, and click **Open Anyway**. Check the release's
+   SHA-256 checksum before doing this.
+3. Browser setup is the same as below, except that **Load unpacked** opens a
+   Finder window: press **⌘⇧G** (Go to Folder), **⌘V** to paste the extension
+   folder path, **Return**, then click **Select**. The folder is
+   `/Users/YOUR-MAC-USERNAME/.awesome-downloader/BrowserIntegration/extension`.
+
+Closing the window keeps the app running in the menu bar; use **Awesome
+Downloader → Quit** (⌘Q) to quit. To uninstall, quit the app and move it to the
+Trash. The `.awesome-downloader` folder in your home folder and the
+`com.awesome.downloader.json` files in
+`~/Library/Application Support/{Google/Chrome,Microsoft Edge,Mozilla}/NativeMessagingHosts`
+are not removed automatically.
 
 ## Enable video buttons (Chrome / Edge)
 
@@ -94,7 +119,8 @@ Firefox does not yet have equivalent verified YouTube support.
 - Start Download opens progress. On completion, use **Open** or **Open folder**.
 - Repeated clicks reuse the active download. Cancel closes the progress window.
 
-Closing the main window keeps the app in the tray. Use **Tasks → Exit** to quit.
+Closing the main window keeps the app in the tray. Use **Tasks → Exit** to quit
+(on macOS, **Awesome Downloader → Quit**).
 Paused/queued YouTube sessions may expire; reselect the video in the browser if
 resuming later fails. DRM, private/sign-in-required videos, and live streams are
 not supported. Slow YouTube transfers remain a known limitation.

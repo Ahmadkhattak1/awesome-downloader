@@ -2,6 +2,7 @@
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const api = window.downloader;
+const isMac = api.platform === 'darwin';
 const progressMode = new URLSearchParams(location.search).get('progress');
 if (progressMode) document.body.classList.add('progress-window');
 let state = { downloads: [], settings: {}, integration: {} },
@@ -56,6 +57,8 @@ for (const button of $$('[data-icon]')) {
   }
   button.prepend(svg);
 }
+if (isMac)
+  for (const node of $$('[title*="Ctrl+"]')) node.title = node.title.replaceAll('Ctrl+', '⌘');
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -173,9 +176,17 @@ for (const text of [
   'Here in Awesome Downloader, click Copy extension folder path above. This copies the location of the included browser extension, not your download folder.',
   'Click Open Chrome extensions or Open Edge extensions above. Your browser opens its Extensions page.',
   'On that browser page, turn on Developer mode. In Edge, you may need to expand the left menu to find it.',
-  'Click Load unpacked on the Extensions page. A Windows folder selection window opens.',
-  'In that folder selection window, press Ctrl+L to select its address bar at the top. Press Ctrl+V to paste the copied extension folder path, then press Enter. Do not paste into the browser’s web address bar or the Search box.',
-  'Click Select Folder (or Select) in the Windows window. Select the extension folder itself; do not select an individual file or its icons subfolder.',
+  ...(isMac
+    ? [
+        'Click Load unpacked on the Extensions page. A Finder folder selection window opens.',
+        'In that folder selection window, press ⌘⇧G to open Go to Folder. Press ⌘V to paste the copied extension folder path, then press Return. Do not paste into the browser’s web address bar or the Search box.',
+        'Click Select in the Finder window. Select the extension folder itself; do not select an individual file or its icons subfolder.',
+      ]
+    : [
+        'Click Load unpacked on the Extensions page. A Windows folder selection window opens.',
+        'In that folder selection window, press Ctrl+L to select its address bar at the top. Press Ctrl+V to paste the copied extension folder path, then press Enter. Do not paste into the browser’s web address bar or the Search box.',
+        'Click Select Folder (or Select) in the Windows window. Select the extension folder itself; do not select an individual file or its icons subfolder.',
+      ]),
   'Check that Awesome Downloader Integration appears on the browser’s Extensions page and is switched on. Return here and wait for the connection message, then refresh your video page and play the video.',
 ])
   steps.append(element('li', '', text));
@@ -194,7 +205,9 @@ for (const [label, action] of [
       await call('browserSetup', { action });
       if (action === 'copy')
         notify(
-          'Extension folder path copied. In the Windows window opened by Load unpacked, press Ctrl+L, Ctrl+V, then Enter.',
+          isMac
+            ? 'Extension folder path copied. In the Finder window opened by Load unpacked, press ⌘⇧G, ⌘V, then Return.'
+            : 'Extension folder path copied. In the Windows window opened by Load unpacked, press Ctrl+L, Ctrl+V, then Enter.',
         );
     } catch (error) {
       notify(messageOf(error), true);
@@ -859,7 +872,7 @@ commands.details = () => {
 commands.remove = () => performAction(selected(), 'remove');
 commands.all = () => setView('all');
 document.addEventListener('keydown', (event) => {
-  if (event.ctrlKey && event.key.toLowerCase() === 'f') commands.find();
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') commands.find();
   if (event.key === 'Escape') $('.list-search').classList.remove('visible');
 });
 $('#new-download').addEventListener('click', commands.add);
@@ -1087,7 +1100,8 @@ $('#table-scroll').addEventListener('keydown', (event) => {
       ?.scrollIntoView({ block: 'nearest' });
   }
   if (event.key === 'Enter' && selectedId) showDetails(selectedId);
-  if (event.key === 'Delete') performAction(selected(), 'remove');
+  if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace'))
+    performAction(selected(), 'remove');
 });
 $('#dismiss-toast').addEventListener('click', () => {
   $('#toast').hidden = true;

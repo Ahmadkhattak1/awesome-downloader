@@ -1,10 +1,14 @@
-name: Windows tests
+name: Tests
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
   test:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

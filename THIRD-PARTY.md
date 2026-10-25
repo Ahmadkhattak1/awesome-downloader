@@ -29,3 +29,6 @@ the Windows executable includes additional components under their own licenses.
 Full upstream notices are included in `vendor/LICENSE.txt` and
 `vendor/THIRD_PARTY_LICENSES.txt`, copied to the packaged `resources/tools` folder.
 This is an independent extractor, not recovered IDM implementation code.
+macOS builds include it only when the release's `yt-dlp_macos` binary has been
+placed at `vendor/yt-dlp`; without it, YouTube links pasted into the app show a
+message pointing to the browser extension instead.

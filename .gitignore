@@ -1,5 +1,6 @@
 node_modules/
 vendor/*.exe
+vendor/yt-dlp
 integration/native-host.exe
 integration/runtime-path.txt
 integration/desktop-launch.json

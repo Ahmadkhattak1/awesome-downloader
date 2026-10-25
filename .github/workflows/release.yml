@@ -1,4 +1,4 @@
-name: Build Windows release candidate
+name: Build release candidates
 on:
   workflow_dispatch:
 permissions:
@@ -26,5 +26,30 @@ jobs:
           path: |
             release/Awesome-Downloader-Setup.exe
             release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+  build-mac:
+    # macos-latest is Apple Silicon; ffmpeg-static installs the matching arm64 binary.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn test
+      - run: yarn dist:mac
+      - name: Create SHA-256 file
+        working-directory: release
+        run: shasum -a 256 Awesome-Downloader-*-mac-arm64.dmg > SHA256SUMS-mac.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-macos-arm64-release-candidate
+          path: |
+            release/Awesome-Downloader-*-mac-arm64.dmg
+            release/SHA256SUMS-mac.txt
           if-no-files-found: error
           retention-days: 7

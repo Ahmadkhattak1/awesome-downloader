@@ -1,7 +1,7 @@
 # Awesome Downloader
 
-A Windows download manager with a compact desktop interface and browser video
-buttons. Original open-source implementation; not affiliated with Internet
+A Windows and macOS download manager with a compact desktop interface and browser
+video buttons. Original open-source implementation; not affiliated with Internet
 Download Manager and not a complete feature-for-feature replacement.
 
 **Early preview:** Private/sign-in-required, DRM and live media are unsupported. Please report bugs
@@ -19,6 +19,9 @@ the desktop app.
 The installer is currently an unsigned preview. Browser video buttons require
 one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
 
+A macOS preview for Apple Silicon is built as an ad-hoc signed DMG (not
+notarized). See [macOS (preview)](docs/INSTALL.md#macos-preview) in the guide.
+
 ## Features
 
 - HTTP(S) downloads with parallel ranges where the server supports them.
@@ -35,7 +38,8 @@ selection does not invoke it. Firefox YouTube capture has not reached parity.
 
 ## Develop
 
-On Windows x64 with Node.js 22+ and Yarn 4 (run `corepack enable` once):
+On Windows x64 or an Apple Silicon Mac with Node.js 22+ and Yarn 4 (run
+`corepack enable` once):
 
 ```powershell
 yarn install
@@ -45,8 +49,10 @@ yarn start
 
 `yarn package` builds the unpacked application. `yarn dist` builds a local
 NSIS installer, without publishing. `yarn dist:portable` builds a portable
-executable. See [release requirements](docs/RELEASING.md) before distributing
-either. Current builds are unsigned and have no auto-updater.
+executable. On an Apple Silicon Mac, `yarn package:mac` builds the unpacked app
+and `yarn dist:mac` builds a DMG. See [release requirements](docs/RELEASING.md)
+before distributing any of them. Current builds are unsigned (ad-hoc signed on
+macOS) and have no auto-updater.
 
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `yarn install` installs the locked media dependencies.

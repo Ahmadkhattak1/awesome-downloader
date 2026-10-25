@@ -1,5 +1,10 @@
 :root {
-  font-family: 'Segoe UI', Tahoma, sans-serif;
+  font-family:
+    'Segoe UI',
+    -apple-system,
+    BlinkMacSystemFont,
+    Tahoma,
+    sans-serif;
   font-size: 11px;
   color: #111;
   background: #f0f0f0;
