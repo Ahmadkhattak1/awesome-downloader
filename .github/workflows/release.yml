@@ -9,13 +9,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run dist
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn test
+      - run: yarn dist
       - name: Create SHA-256 file
         shell: powershell
         run: (Get-FileHash release/Awesome-Downloader-Setup.exe -Algorithm SHA256).Hash.ToLower() + '  Awesome-Downloader-Setup.exe' | Set-Content release/SHA256SUMS.txt
