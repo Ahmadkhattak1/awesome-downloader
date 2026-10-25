@@ -9,6 +9,24 @@ export function validUrl(value) {
   return url.href;
 }
 
+const DOWNLOADABLE_EXTENSIONS = /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|bin|dmg|apk|mp4|mkv|webm|avi|mov|flv|wmv|mp3|m4a|aac|flac|wav|ogg|pdf|docx?|xlsx?|pptx?|epub)(?:[?#]|$)/i;
+
+export function isDownloadableUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  const str = value.trim();
+  if (str.length > 4096 || !/^https?:\/\//i.test(str)) return false;
+  try {
+    const url = new URL(str);
+    if (!['http:', 'https:'].includes(url.protocol)) return false;
+    if (url.username || url.password) return false;
+    if (DOWNLOADABLE_EXTENSIONS.test(url.pathname)) return true;
+    if (/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)/i.test(url.href)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function cleanHeaders(input = {}) {
   const headers = { 'user-agent': 'AwesomeDownloader/0.1', 'accept-encoding': 'identity' };
   const allowed = new Set(['referer', 'cookie', 'authorization', 'origin', 'user-agent', 'accept']);

@@ -30,7 +30,7 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, monitorClipboard: false };
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
@@ -90,7 +90,7 @@ export class DownloadEngine extends EventEmitter {
         next.categoryDirectories[category] = path.resolve(folder);
       }
     }
-    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
+    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog', 'monitorClipboard']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
     if (next.speedLimitKbps !== this.settings.speedLimitKbps) this.rateNext = 0;
     this.settings = next;
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });

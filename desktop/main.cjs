@@ -12,7 +12,7 @@ if (process.argv.includes('--native-host')) {
   require('node:fs').mkdirSync(sharedDataDirectory, {recursive:true});
   app.setPath('userData', sharedDataDirectory);
   const locked = app.requestSingleInstanceLock();
-  let window, engine, bridge, tray, quitting = false;
+  let window, engine, bridge, tray, clipboardWatcher, quitting = false;
   const progressWindows = new Map();
   const progressWindowSizes = new WeakMap();
   if (!locked) app.quit();
@@ -140,6 +140,23 @@ if (process.argv.includes('--native-host')) {
       window.webContents.on('will-navigate', event => event.preventDefault());
       await window.loadFile(path.join(root, 'renderer', 'index.html'));
       desktopReady();
+      let lastClipboardText = '';
+      try { lastClipboardText = clipboard.readText().trim(); } catch {}
+      const checkClipboard = async () => {
+        if (!engine?.settings?.monitorClipboard || !window || window.isDestroyed()) return;
+        try {
+          const text = clipboard.readText().trim();
+          if (!text || text === lastClipboardText) return;
+          lastClipboardText = text;
+          const { isDownloadableUrl } = await import('../core/http.mjs');
+          if (isDownloadableUrl(text)) {
+            showProgress(window);
+            window.webContents.send('downloader:command', { command: 'clipboardDownload', url: text });
+          }
+        } catch {}
+      };
+      clipboardWatcher = setInterval(checkClipboard, 1500);
+      clipboardWatcher.unref();
       const command = name => () => window.webContents.send('downloader:command', name);
       Menu.setApplicationMenu(Menu.buildFromTemplate([
         { label: 'Tasks', submenu: [ { label: 'Add new download…', accelerator: 'CmdOrCtrl+N', click: command('add') }, { label: 'Add batch download…', click: command('add') }, { label: 'Add batch download from clipboard', click: command('paste') }, { type: 'separator' },
@@ -192,6 +209,7 @@ if (process.argv.includes('--native-host')) {
     app.on('before-quit', event => {
       if (quitting) return;
       event.preventDefault(); quitting = true;
+      clearInterval(clipboardWatcher);
       Promise.resolve().then(() => bridge?.close()).then(() => engine?.close()).catch(error => process.stderr.write(`${error.message}\n`)).finally(() => app.quit());
     });
   }
