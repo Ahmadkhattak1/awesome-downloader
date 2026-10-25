@@ -7,6 +7,8 @@ import {
   youtubeError,
   youtubeFormats,
 } from '../dist/core/youtube.mjs';
+import { streamProgress } from '../dist/core/stream-progress.mjs';
+
 test(
   'a missing optional yt-dlp explains the browser extension alternative',
   {
@@ -37,7 +39,6 @@ test('YouTube refusals explain rate limiting and verification without raw warnin
     'ERROR: failed [URL]',
   );
 });
-import { streamProgress } from '../dist/core/stream-progress.mjs';
 test('YouTube resolver accepts only canonical public video URL shapes', () => {
   assert.equal(
     youtubeUrl('https://youtu.be/wLdZWyLOJCI'),
@@ -48,8 +49,9 @@ test('YouTube resolver accepts only canonical public video URL shapes', () => {
     'file:///secret',
     'https://youtube.com/s/search/audio/no_input.mp3',
     'https://user:secret@youtube.com/watch?v=wLdZWyLOJCI',
-  ])
+  ]) {
     assert.equal(youtubeUrl(url), null);
+  }
 });
 test('YouTube formats pair audio, collapse duplicate quality and omit storyboards/DRM', () => {
   const formats = [

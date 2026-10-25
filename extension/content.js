@@ -3,29 +3,33 @@
   const seen = new WeakSet();
   const records = new Set();
   let pending = false;
-  let stopped = false,
-    scanFrame,
-    mutationObserver,
-    scrollTimer,
-    scrolling = false;
+  let stopped = false;
+  let scanFrame;
+  let mutationObserver;
+  let scrollTimer;
+  let scrolling = false;
   const listeners = new AbortController();
   const resizeObserver = new ResizeObserver(() => position());
   const direct = (value) => {
     try {
-      const u = new URL(value, location.href);
+      const u = new URL(value, globalThis.location.href);
       return /^https?:$/.test(u.protocol) ? u.href : null;
     } catch {
       return null;
     }
   };
   function shutdown() {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     stopped = true;
     listeners.abort();
     clearTimeout(scrollTimer);
     mutationObserver?.disconnect();
     resizeObserver.disconnect();
-    if (scanFrame !== undefined) cancelAnimationFrame(scanFrame);
+    if (scanFrame !== undefined) {
+      cancelAnimationFrame(scanFrame);
+    }
     for (const record of records) {
       record.sourceObserver?.disconnect();
       record.host.remove();
@@ -33,33 +37,46 @@
     records.clear();
     try {
       api.runtime.onMessage.removeListener(onMessage);
-    } catch {}
+    } catch {
+      // The extension context is already gone; nothing is listening anymore.
+    }
   }
   function connected() {
-    if (stopped) return false;
+    if (stopped) {
+      return false;
+    }
     try {
-      if (api.runtime.id) return true;
-    } catch {}
+      if (api.runtime.id) {
+        return true;
+      }
+    } catch {
+      // Reading runtime.id throws once the extension has been reloaded.
+    }
     shutdown();
     return false;
   }
   // sendMessage can throw synchronously after an extension reload, before a
   // caller's .catch exists. Always expose a promise and retire the stale script.
   async function send(message) {
-    if (!connected())
+    if (!connected()) {
       throw new Error('The extension was reloaded. Refresh this page to reconnect.');
+    }
     try {
       return await api.runtime.sendMessage(message);
     } catch (error) {
-      if (/extension context invalidated/i.test(error?.message || '')) shutdown();
+      if (/extension context invalidated/i.test(error?.message || '')) {
+        shutdown();
+      }
       throw error;
     }
   }
   function scan() {
     pending = false;
-    if (!connected()) return;
-    for (const video of document.querySelectorAll('video')) {
-      if (seen.has(video)) continue;
+    if (!connected()) {
+      return;
+    }
+    const unseen = [...document.querySelectorAll('video')].filter((video) => !seen.has(video));
+    for (const video of unseen) {
       seen.add(video);
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;z-index:2147483647;display:none;pointer-events:auto';
@@ -80,11 +97,12 @@
         ]
           .map(direct)
           .filter(Boolean);
-        if (urls.length)
+        if (urls.length) {
           send({
             action: 'remember',
             items: urls.map((url) => ({ url, title: document.title })),
           }).catch(() => {});
+        }
       };
       video.addEventListener('loadedmetadata', report, { signal: listeners.signal });
       record.sourceObserver = new MutationObserver(report);
@@ -95,7 +113,9 @@
         childList: true,
       });
       report();
-      if (stopped) return;
+      if (stopped) {
+        return;
+      }
       dismiss.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -124,12 +144,15 @@
           position();
           try {
             const result = await send({ action: 'listForFrame' });
-            if (!result?.ok) throw new Error(result?.error || 'Could not list video formats.');
+            if (!result?.ok) {
+              throw new Error(result?.error || 'Could not list video formats.');
+            }
             hint.textContent = 'Choose a format to download';
             const candidates = result?.items || [];
-            const youtube = /(^|\.)youtube\.com$/.test(location.hostname);
-            if (!youtube && url && !candidates.some((item) => item.url === url))
+            const youtube = /(^|\.)youtube\.com$/.test(globalThis.location.hostname);
+            if (!youtube && url && !candidates.some((item) => item.url === url)) {
               candidates.unshift({ url, title: document.title });
+            }
             if (!candidates.length) {
               hint.textContent =
                 result.notice ||
@@ -159,10 +182,10 @@
               const title = item.asset
                 ? `Video ${item.asset}`
                 : item.title || document.title || 'Video';
-              row.textContent = `${index + 1}. ${item.quality || format} · ${format} · ${item.audioState}${item.bitrate ? ' · ' + Math.round(item.bitrate / 1000) + ' kbps' : ''} — ${title}`;
-              row.onclick = async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
+              row.textContent = `${index + 1}. ${item.quality || format} · ${format} · ${item.audioState}${item.bitrate ? ` · ${Math.round(item.bitrate / 1000)} kbps` : ''} — ${title}`;
+              row.onclick = async (rowEvent) => {
+                rowEvent.preventDefault();
+                rowEvent.stopPropagation();
                 row.disabled = true;
                 hint.textContent = item.sabrSelection
                   ? 'Opening download options… Getting the video stream ready can take a few seconds.'
@@ -186,7 +209,6 @@
           } catch (error) {
             hint.textContent = error.message;
           }
-          return;
         }
       });
     }
@@ -194,60 +216,74 @@
   }
   function friendlyError(message) {
     return /native messaging host not found/i.test(message || '')
-      ? 'Chrome cannot find the desktop connector. Open Awesome Downloader → Browser Integration → Refresh browsers, then reload this extension and page. Details: ' +
+      ? `Chrome cannot find the desktop connector. Open Awesome Downloader → Browser Integration → Refresh browsers, then reload this extension and page. Details: ${
           message
+        }`
       : message;
   }
   function closeChoosers(except) {
     for (const record of records) {
-      if (record === except) continue;
-      if (record.shadow.querySelector('.chooser')) record.shadow.querySelector('.chooser').remove();
+      if (record !== except) {
+        record.shadow.querySelector('.chooser')?.remove();
+      }
     }
     position();
   }
+  // Places one video's button (and open menu) next to the video, or hides it.
+  function placeRecord(record) {
+    if (!record.video.isConnected) {
+      resizeObserver.unobserve(record.video);
+      record.sourceObserver.disconnect();
+      record.host.remove();
+      records.delete(record);
+      return;
+    }
+    const { innerHeight: viewHeight, innerWidth: viewWidth } = globalThis;
+    const fullscreen = document.fullscreenElement;
+    const parent =
+      fullscreen && fullscreen !== record.video && fullscreen.contains(record.video)
+        ? fullscreen
+        : document.documentElement;
+    if (record.host.parentNode !== parent) {
+      parent.appendChild(record.host);
+    }
+    const rect = record.video.getBoundingClientRect();
+    const visible =
+      !scrolling &&
+      !record.dismissed &&
+      rect.width > 100 &&
+      rect.height > 60 &&
+      rect.top >= 0 &&
+      rect.top < viewHeight - 30 &&
+      rect.right > 0 &&
+      rect.left < viewWidth;
+    const { style } = record.host;
+    style.display = visible ? 'block' : 'none';
+    if (!visible) {
+      return;
+    }
+    const width = record.host.offsetWidth || 180;
+    const height = record.host.offsetHeight || 27;
+    const above = rect.top >= height + 6;
+    style.top = `${Math.max(5, Math.min(viewHeight - height - 5, above ? rect.top - height - 4 : rect.top + 4))}px`;
+    style.left = `${Math.max(5, Math.min(viewWidth - width - 5, rect.right - width - 8))}px`;
+    const chooser = record.shadow.querySelector('.chooser');
+    if (chooser) {
+      const chooserWidth = Math.min(410, viewWidth - 10);
+      const chooserHeight = Math.min(chooser.scrollHeight || 330, Math.min(330, viewHeight * 0.55));
+      const hostRect = record.host.getBoundingClientRect();
+      chooser.style.left = `${Math.max(5, Math.min(viewWidth - chooserWidth - 5, hostRect.right - chooserWidth))}px`;
+      const below = hostRect.bottom + 4;
+      const aboveMenu = hostRect.top - chooserHeight - 4;
+      chooser.style.top = `${below + chooserHeight <= viewHeight - 5 ? below : Math.max(5, aboveMenu)}px`;
+    }
+  }
   function position() {
-    if (!connected()) return;
+    if (!connected()) {
+      return;
+    }
     for (const record of records) {
-      if (!record.video.isConnected) {
-        resizeObserver.unobserve(record.video);
-        record.sourceObserver.disconnect();
-        record.host.remove();
-        records.delete(record);
-        continue;
-      }
-      const fullscreen = document.fullscreenElement;
-      const parent =
-        fullscreen && fullscreen !== record.video && fullscreen.contains(record.video)
-          ? fullscreen
-          : document.documentElement;
-      if (record.host.parentNode !== parent) parent.appendChild(record.host);
-      const rect = record.video.getBoundingClientRect();
-      const visible =
-        !scrolling &&
-        !record.dismissed &&
-        rect.width > 100 &&
-        rect.height > 60 &&
-        rect.top >= 0 &&
-        rect.top < innerHeight - 30 &&
-        rect.right > 0 &&
-        rect.left < innerWidth;
-      record.host.style.display = visible ? 'block' : 'none';
-      if (!visible) continue;
-      const width = record.host.offsetWidth || 180,
-        height = record.host.offsetHeight || 27;
-      const above = rect.top >= height + 6;
-      record.host.style.top = `${Math.max(5, Math.min(innerHeight - height - 5, above ? rect.top - height - 4 : rect.top + 4))}px`;
-      record.host.style.left = `${Math.max(5, Math.min(innerWidth - width - 5, rect.right - width - 8))}px`;
-      const chooser = record.shadow.querySelector('.chooser');
-      if (chooser) {
-        const chooserWidth = Math.min(410, innerWidth - 10),
-          chooserHeight = Math.min(chooser.scrollHeight || 330, Math.min(330, innerHeight * 0.55));
-        const hostRect = record.host.getBoundingClientRect();
-        chooser.style.left = `${Math.max(5, Math.min(innerWidth - chooserWidth - 5, hostRect.right - chooserWidth))}px`;
-        const below = hostRect.bottom + 4,
-          aboveMenu = hostRect.top - chooserHeight - 4;
-        chooser.style.top = `${below + chooserHeight <= innerHeight - 5 ? below : Math.max(5, aboveMenu)}px`;
-      }
+      placeRecord(record);
     }
   }
   mutationObserver = new MutationObserver(() => {
@@ -262,21 +298,28 @@
     (event) => {
       const path = event.composedPath();
       const inside = [...records].find((record) => path.includes(record.host));
-      if (!inside) closeChoosers();
+      if (!inside) {
+        closeChoosers();
+      }
     },
     { capture: true, signal: listeners.signal },
   );
   document.addEventListener(
     'keydown',
     (event) => {
-      if (event.key === 'Escape') closeChoosers();
+      if (event.key === 'Escape') {
+        closeChoosers();
+      }
     },
     { capture: true, signal: listeners.signal },
   );
   function onScroll(event) {
     // Scrolling the quality list itself must remain usable.
-    if (event?.composedPath?.().some((node) => [...records].some((record) => node === record.host)))
+    if (
+      event?.composedPath?.().some((node) => [...records].some((record) => node === record.host))
+    ) {
       return;
+    }
     scrolling = true;
     closeChoosers();
     clearTimeout(scrollTimer);
@@ -285,11 +328,13 @@
       position();
     }, 140);
   }
-  addEventListener('scroll', onScroll, { capture: true, signal: listeners.signal });
-  addEventListener('resize', position, { signal: listeners.signal });
+  globalThis.addEventListener('scroll', onScroll, { capture: true, signal: listeners.signal });
+  globalThis.addEventListener('resize', position, { signal: listeners.signal });
   document.addEventListener('fullscreenchange', position, { signal: listeners.signal });
   function onMessage(message, sender, respond) {
-    if (!connected() || sender.id !== api.runtime.id || message.action !== 'collectLinks') return;
+    if (!connected() || sender.id !== api.runtime.id || message.action !== 'collectLinks') {
+      return false;
+    }
     const items = Array.from(document.querySelectorAll('a[href]'))
       .slice(0, 1000)
       .map((a) => ({ url: direct(a.href), title: a.textContent.trim() }))
@@ -298,7 +343,9 @@
       .then(respond, (error) => {
         try {
           respond({ ok: false, error: error.message });
-        } catch {}
+        } catch {
+          // The popup that asked may already be closed.
+        }
       })
       .catch(() => {});
     return true;

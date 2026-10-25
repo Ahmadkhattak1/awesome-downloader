@@ -58,7 +58,9 @@ test('direct adaptive tracks download separately and complete as audible MP4', a
       res.end();
     }
   });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => {
+    server.listen(0, '127.0.0.1', r);
+  });
   const engine = await new DownloadEngine({
     dataDirectory: path.join(root, 'state'),
     downloadDirectory: path.join(root, 'out'),
@@ -67,19 +69,23 @@ test('direct adaptive tracks download separately and complete as audible MP4', a
   t.after(async () => {
     await engine.close();
     server.closeAllConnections();
-    await new Promise((r) => server.close(r));
+    await new Promise((r) => {
+      server.close(r);
+    });
     await fs.rm(root, { recursive: true, force: true });
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   await engine.add({
-    url: base + '/video.mp4',
-    audioUrl: base + '/audio.m4a',
+    url: `${base}/video.mp4`,
+    audioUrl: `${base}/audio.m4a`,
     filename: 'Captured.mp4',
     outputFormat: 'mp4',
   });
-  const d = engine.downloads[0],
-    end = Date.now() + 15000;
-  while (!['complete', 'error'].includes(d.status) && Date.now() < end) await delay(25);
+  const d = engine.downloads[0];
+  const end = Date.now() + 15000;
+  while (!['complete', 'error'].includes(d.status) && Date.now() < end) {
+    await delay(25);
+  }
   assert.equal(d.status, 'complete', d.error);
   assert.equal(d.kind, 'paired');
   assert.equal(d.total, (await fs.stat(d.path)).size);
@@ -99,14 +105,18 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
     tickMs: 20,
   }).init();
   const server = http.createServer(async (req, res) => {
-    if (req.url === '/master.m3u8')
-      return res.end(
+    if (req.url === '/master.m3u8') {
+      res.end(
         '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",URI="audio.m3u8"\n#EXT-X-STREAM-INF:BANDWIDTH=100000,AUDIO="audio"\nvideo.m3u8',
       );
-    if (req.url.endsWith('.m3u8'))
-      return res.end(
+      return;
+    }
+    if (req.url.endsWith('.m3u8')) {
+      res.end(
         `#EXTM3U\n#EXTINF:1,\n${req.url.startsWith('/audio') ? 'audio.aac' : 'video.ts'}\n#EXT-X-ENDLIST`,
       );
+      return;
+    }
     try {
       res.end(await fs.readFile(path.join(root, path.basename(req.url))));
     } catch {
@@ -117,7 +127,9 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
   t.after(async () => {
     await engine.close();
     server.closeAllConnections();
-    await new Promise((r) => server.close(r));
+    await new Promise((r) => {
+      server.close(r);
+    });
     await fs.rm(root, { recursive: true, force: true });
   });
   await run(
@@ -159,11 +171,15 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
     ],
     { windowsHide: true },
   );
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  await new Promise((r) => {
+    server.listen(0, '127.0.0.1', r);
+  });
   await engine.add({ url: `http://127.0.0.1:${server.address().port}/master.m3u8` });
   const d = engine.downloads[0];
   const end = Date.now() + 15000;
-  while (!['complete', 'error'].includes(d.status) && Date.now() < end) await delay(25);
+  while (!['complete', 'error'].includes(d.status) && Date.now() < end) {
+    await delay(25);
+  }
   assert.equal(d.status, 'complete', d.error);
   assert.match(d.filename, /\.mp4$/);
   await run(
@@ -177,7 +193,9 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
   });
   const audio = engine.downloads[1];
   const audioEnd = Date.now() + 10000;
-  while (!['complete', 'error'].includes(audio.status) && Date.now() < audioEnd) await delay(25);
+  while (!['complete', 'error'].includes(audio.status) && Date.now() < audioEnd) {
+    await delay(25);
+  }
   assert.equal(audio.status, 'complete', audio.error);
   assert.match(audio.filename, /\.mp3$/);
   await run(ffmpeg, ['-v', 'error', '-i', audio.path, '-map', '0:a:0', '-f', 'null', '-'], {

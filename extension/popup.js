@@ -1,6 +1,6 @@
 const api = globalThis.browser || chrome;
-let tab,
-  items = [];
+let tab;
+let items = [];
 const status = document.querySelector('#status');
 const list = document.querySelector('#items');
 async function download(item) {
@@ -9,7 +9,9 @@ async function download(item) {
     tabId: tab.id,
     item: { ...item, referer: tab.url },
   });
-  if (!result?.ok) throw new Error(result?.error || 'Desktop connection failed.');
+  if (!result?.ok) {
+    throw new Error(result?.error || 'Desktop connection failed.');
+  }
 }
 async function refresh() {
   const result = await api.runtime.sendMessage({ action: 'list', tabId: tab.id });
@@ -59,7 +61,7 @@ document.querySelector('#collect').onclick = async () => {
     await api.tabs.sendMessage(tab.id, { action: 'collectLinks' });
     await refresh();
   } catch (e) {
-    status.textContent = 'Reload this web page to enable link detection. ' + e.message;
+    status.textContent = `Reload this web page to enable link detection. ${e.message}`;
   }
 };
 document.querySelector('#selected').onclick = async () => {
@@ -74,7 +76,7 @@ document.querySelector('#selected').onclick = async () => {
   for (const item of selected) {
     try {
       await download(item);
-      added++;
+      added += 1;
     } catch (e) {
       status.textContent = `Added ${added}/${selected.length}. ${e.message}`;
       return;

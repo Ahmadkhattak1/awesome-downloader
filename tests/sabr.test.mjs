@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// eslint-disable-next-line import/no-unresolved -- the import plugin cannot resolve package "exports" subpaths
 import { VideoPlaybackAbrRequest } from 'googlevideo/protos';
 import { normalizeSabrSession } from '../dist/core/sabr.mjs';
 
@@ -79,8 +80,8 @@ test('one default audio variant and one video survive repeated normalization', (
       },
     ],
   };
-  const first = normalizeSabrSession(session),
-    second = normalizeSabrSession(first);
+  const first = normalizeSabrSession(session);
+  const second = normalizeSabrSession(first);
   for (const result of [first, second]) {
     assert.equal(result.formats.length, 2);
     assert.equal(result.formats.find((f) => f.hasAudio).audioTrackId, 'default');

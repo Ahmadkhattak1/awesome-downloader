@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+
 const exec = promisify(execFile);
 
 const HOST = 'com.awesome.downloader';
@@ -30,15 +31,18 @@ async function registerBrowser(
   { browser, extensionId },
   { dataDirectory, integrationRoot, platform = process.platform, home = os.homedir() },
 ) {
-  if (!['Chrome', 'Edge', 'Firefox'].includes(browser))
+  if (!['Chrome', 'Edge', 'Firefox'].includes(browser)) {
     throw new Error('Choose Chrome, Edge, or Firefox.');
+  }
   if (
     typeof extensionId !== 'string' ||
     !(browser === 'Firefox' ? /^[A-Za-z0-9@._{}-]{1,128}$/ : /^[a-p]{32}$/).test(extensionId)
-  )
+  ) {
     throw new Error('Copy the extension ID from your browser’s extensions page.');
-  if (!['win32', 'darwin'].includes(platform))
+  }
+  if (!['win32', 'darwin'].includes(platform)) {
     throw new Error('Browser integration is available on Windows and macOS.');
+  }
   const folder = path.join(dataDirectory, 'NativeMessaging');
   // Windows finds the manifest through the registry; macOS browsers read a fixed folder.
   const manifestPath =
@@ -49,8 +53,11 @@ async function registerBrowser(
     path: nativeHostPath(integrationRoot, platform),
     type: 'stdio',
   };
-  if (browser === 'Firefox') manifest.allowed_extensions = [extensionId];
-  else manifest.allowed_origins = [`chrome-extension://${extensionId}/`];
+  if (browser === 'Firefox') {
+    manifest.allowed_extensions = [extensionId];
+  } else {
+    manifest.allowed_origins = [`chrome-extension://${extensionId}/`];
+  }
   const content = JSON.stringify(manifest, null, 2);
   await fs.access(manifest.path);
   await fs.mkdir(folder, { recursive: true });
@@ -59,28 +66,39 @@ async function registerBrowser(
   try {
     previous = await fs.readFile(manifestPath, 'utf8');
   } catch (e) {
-    if (e.code !== 'ENOENT') throw e;
+    if (e.code !== 'ENOENT') {
+      throw e;
+    }
   }
   const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
-  if (previous && previous !== content)
+  if (previous && previous !== content) {
     await fs.writeFile(path.join(folder, `${browser}.json.${stamp}.bak`), previous);
+  }
   if (platform === 'win32') {
     const key = `HKCU\\Software\\${{ Chrome: 'Google\\Chrome', Edge: 'Microsoft\\Edge', Firefox: 'Mozilla' }[browser]}\\NativeMessagingHosts\\${HOST}`;
     let registry = null;
     try {
       registry = (await exec('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout;
     } catch (error) {
-      if (error.code !== 1) throw error;
+      if (error.code !== 1) {
+        throw error;
+      }
     }
     const previousPath = registry?.match(/REG_SZ\s+(.+)\r?\n?/)?.[1]?.trim();
-    if (registry && previousPath !== manifestPath)
+    if (registry && previousPath !== manifestPath) {
       await fs.writeFile(path.join(folder, `${browser}.${stamp}.registry-backup.txt`), registry);
-    if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
-    if (previousPath !== manifestPath)
+    }
+    if (previous !== content) {
+      await fs.writeFile(manifestPath, content, 'utf8');
+    }
+    if (previousPath !== manifestPath) {
       await exec('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], {
         windowsHide: true,
       });
-  } else if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
+    }
+  } else if (previous !== content) {
+    await fs.writeFile(manifestPath, content, 'utf8');
+  }
   let extensionPath = path.join(integrationRoot, 'extension');
   if (browser === 'Firefox') {
     extensionPath = path.join(folder, 'firefox-extension');
@@ -93,17 +111,37 @@ async function registerBrowser(
   return { ok: true, manifestPath, extensionPath };
 }
 function browserProfileRoots(platform, { localAppData, home }) {
-  if (platform === 'win32')
+  if (platform === 'win32') {
     return [
       ['Chrome', path.join(localAppData, 'Google/Chrome/User Data')],
       ['Edge', path.join(localAppData, 'Microsoft/Edge/User Data')],
     ];
-  if (platform === 'darwin')
+  }
+  if (platform === 'darwin') {
     return ['Chrome', 'Edge'].map((browser) => [
       browser,
       path.join(home, 'Library', 'Application Support', MAC_BROWSER_FOLDERS[browser]),
     ]);
+  }
   return [];
+}
+// An unpacked extension is ours when it is our folder, or a copy of our extension.
+async function isOwnExtension(entryPath, integrationRoot) {
+  const installed = await fs.realpath(entryPath).catch(() => null);
+  const expected = await fs.realpath(path.join(integrationRoot, 'extension'));
+  if (!installed) {
+    return false;
+  }
+  if (installed.toLowerCase() === expected.toLowerCase()) {
+    return true;
+  }
+  const manifest = JSON.parse(await fs.readFile(path.join(installed, 'manifest.json'), 'utf8'));
+  const background = await fs.readFile(path.join(installed, 'background.js'), 'utf8');
+  return (
+    manifest.name === 'Awesome Downloader Integration' &&
+    manifest.background?.service_worker === 'background.js' &&
+    background.includes(`const HOST = '${HOST}'`)
+  );
 }
 // Read only extension registrations, never browser history, cookies, or page data.
 async function connectInstalledBrowsers({
@@ -115,12 +153,8 @@ async function connectInstalledBrowsers({
 }) {
   const results = [];
   for (const [browser, root] of browserProfileRoots(platform, { localAppData, home })) {
-    let profiles;
-    try {
-      profiles = await fs.readdir(root, { withFileTypes: true });
-    } catch {
-      continue;
-    }
+    // A browser that is not installed has no profile folder.
+    const profiles = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
     const ids = new Set();
     for (const profile of profiles.filter(
       (p) => p.isDirectory() && /^(Default|Profile \d+)$/.test(p.name),
@@ -131,21 +165,14 @@ async function connectInstalledBrowsers({
             JSON.parse(await fs.readFile(path.join(root, profile.name, file), 'utf8')).extensions
               ?.settings || {};
           for (const [id, entry] of Object.entries(settings)) {
-            if (!/^[a-p]{32}$/.test(id) || !entry.path || !path.isAbsolute(entry.path)) continue;
-            const installed = await fs.realpath(entry.path).catch(() => null);
-            const expected = await fs.realpath(path.join(integrationRoot, 'extension'));
-            let ownExtension = installed?.toLowerCase() === expected.toLowerCase();
-            if (installed && !ownExtension) {
-              const manifest = JSON.parse(
-                await fs.readFile(path.join(installed, 'manifest.json'), 'utf8'),
-              );
-              const background = await fs.readFile(path.join(installed, 'background.js'), 'utf8');
-              ownExtension =
-                manifest.name === 'Awesome Downloader Integration' &&
-                manifest.background?.service_worker === 'background.js' &&
-                background.includes(`const HOST = '${HOST}'`);
+            if (
+              /^[a-p]{32}$/.test(id) &&
+              entry.path &&
+              path.isAbsolute(entry.path) &&
+              (await isOwnExtension(entry.path, integrationRoot))
+            ) {
+              ids.add(id);
             }
-            if (ownExtension) ids.add(id);
           }
         } catch {
           /* A running browser can temporarily replace a preference file. */

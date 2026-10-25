@@ -33,8 +33,9 @@ const googleVideoSabr = (value: unknown) => {
     url.searchParams.get('sabr') !== '1' ||
     url.username ||
     url.password
-  )
+  ) {
     throw new Error('Invalid YouTube SABR URL.');
+  }
   return url.href;
 };
 export function normalizeSabrSession(input: unknown) {
@@ -44,19 +45,22 @@ export function normalizeSabrSession(input: unknown) {
     typeof value !== 'object' ||
     Array.isArray(value) ||
     !/^[\w-]{11}$/.test(value.videoId || '')
-  )
+  ) {
     throw new Error('Invalid YouTube SABR session.');
+  }
   const serverAbrStreamingUrl = googleVideoSabr(value.serverAbrStreamingUrl);
   if (
     typeof value.videoPlaybackUstreamerConfig !== 'string' ||
     !value.videoPlaybackUstreamerConfig ||
     value.videoPlaybackUstreamerConfig.length > 131072
-  )
+  ) {
     throw new Error('Missing YouTube streaming configuration.');
-  if (!Array.isArray(value.formats) || !value.formats.length || value.formats.length > 150)
+  }
+  if (!Array.isArray(value.formats) || !value.formats.length || value.formats.length > 150) {
     throw new Error('Missing YouTube SABR formats.');
-  const audioItag = Number(value.audioItag),
-    videoItag = value.videoItag === undefined ? undefined : Number(value.videoItag);
+  }
+  const audioItag = Number(value.audioItag);
+  const videoItag = value.videoItag === undefined ? undefined : Number(value.videoItag);
   // An itag is shared by dubbed languages, DRC and voice-boost variants.
   // Keep precisely the chosen default audio and video, not every matching itag.
   const audioCandidates = value.formats.filter(
@@ -78,24 +82,32 @@ export function normalizeSabrSession(input: unknown) {
         ({ ...f, ...buildSabrFormat(f), audioTrack: f.audioTrack }) as SabrFormat &
           Pick<FormatStream, 'audioTrack'>,
     );
-  if (!Number.isSafeInteger(audioItag) || !formats.some((f) => f.itag === audioItag && f.hasAudio))
+  if (
+    !Number.isSafeInteger(audioItag) ||
+    !formats.some((f) => f.itag === audioItag && f.hasAudio)
+  ) {
     throw new Error('The selected YouTube audio track is unavailable.');
+  }
   if (
     videoItag !== undefined &&
     (!Number.isSafeInteger(videoItag) || !formats.some((f) => f.itag === videoItag && f.hasVideo))
-  )
+  ) {
     throw new Error('The selected YouTube video track is unavailable.');
-  let seed: ReturnType<typeof VideoPlaybackAbrRequest.decode> | undefined, requestBody: Buffer;
+  }
+  let seed: ReturnType<typeof VideoPlaybackAbrRequest.decode> | undefined;
+  let requestBody: Buffer;
   if (value.requestBody !== undefined) {
     if (
       typeof value.requestBody !== 'string' ||
       value.requestBody.length > 350000 ||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(value.requestBody)
-    )
+    ) {
       throw new Error('Invalid YouTube SABR request context.');
+    }
     requestBody = Buffer.from(value.requestBody, 'base64');
-    if (!requestBody.length || requestBody.length > 262144)
+    if (!requestBody.length || requestBody.length > 262144) {
       throw new Error('Invalid YouTube SABR request context.');
+    }
     try {
       seed = VideoPlaybackAbrRequest.decode(requestBody);
     } catch {
@@ -139,7 +151,9 @@ async function writeReadable(
     for (;;) {
       signal.throwIfAborted();
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
       const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
       await output.writeFile(chunk);
       onChunk(chunk.length);
@@ -166,20 +180,28 @@ export async function downloadSabr({
   onProgress?: (progress: SabrProgress) => void;
 }) {
   const selected = normalizeSabrSession(session);
-  let networkDownloaded = 0,
-    downloaded = 0;
+  let networkDownloaded = 0;
+  let downloaded = 0;
   const tracks: Record<number, number> = {};
   let total: number | null = null;
   const report = () => onProgress({ downloaded, total, networkDownloaded, tracks: { ...tracks } });
   const commonHeaders: HeaderMap = {};
-  for (const [name, value] of Object.entries(headers || {}))
-    if (typeof value === 'string' && value) commonHeaders[name] = value;
+  for (const [name, value] of Object.entries(headers || {})) {
+    if (typeof value === 'string' && value) {
+      commonHeaders[name] = value;
+    }
+  }
   const fetchFunction: typeof fetch = async (input, init = {}) => {
     const merged = new Headers(init.headers || {});
-    for (const [name, value] of Object.entries(commonHeaders))
-      if (!merged.has(name)) merged.set(name, value);
+    for (const [name, value] of Object.entries(commonHeaders)) {
+      if (!merged.has(name)) {
+        merged.set(name, value);
+      }
+    }
     const response = await fetch(input, { ...init, headers: merged, redirect: 'follow' });
-    if (!response.body || !response.ok) return response;
+    if (!response.body || !response.ok) {
+      return response;
+    }
     const body = response.body.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
@@ -219,7 +241,7 @@ export async function downloadSabr({
     report();
   };
   const abort = () => {
-    void sabr.abort().catch(() => {});
+    sabr.abort().catch(() => {});
   };
   signal.addEventListener('abort', abort, { once: true });
   try {
@@ -235,10 +257,11 @@ export async function downloadSabr({
     const writes = [
       writeReadable(streams.audioStream, audioPath, signal, progress(selected.audioItag)),
     ];
-    if (selected.videoItag !== undefined)
+    if (selected.videoItag !== undefined) {
       writes.push(
         writeReadable(streams.videoStream, videoPath, signal, progress(selected.videoItag)),
       );
+    }
     try {
       await Promise.all(writes);
     } catch (error) {

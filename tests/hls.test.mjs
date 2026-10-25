@@ -60,18 +60,21 @@ test('HLS VOD downloads in parallel, resumes completed segments, and assembles e
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-hls-test-'));
   const pieces = Array.from({ length: 6 }, (_, i) => Buffer.alloc(256 * 1024, i + 1));
   const server = http.createServer((req, res) => {
-    if (req.url === '/master.m3u8')
-      return res.end(
-        '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720\n/video.m3u8',
+    if (req.url === '/master.m3u8') {
+      res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720\n/video.m3u8');
+      return;
+    }
+    if (req.url === '/video.m3u8') {
+      res.end(
+        `#EXTM3U\n${pieces.map((_, i) => `#EXTINF:5,\n/${i}.ts`).join('\n')}\n#EXT-X-ENDLIST`,
       );
-    if (req.url === '/video.m3u8')
-      return res.end(
-        '#EXTM3U\n' + pieces.map((_, i) => `#EXTINF:5,\n/${i}.ts`).join('\n') + '\n#EXT-X-ENDLIST',
-      );
-    const index = Number.parseInt(req.url.slice(1));
+      return;
+    }
+    const index = Number.parseInt(req.url.slice(1), 10);
     if (!pieces[index]) {
       res.writeHead(404);
-      return res.end();
+      res.end();
+      return;
     }
     res.setHeader('content-length', pieces[index].length);
     let pos = 0;
@@ -86,7 +89,9 @@ test('HLS VOD downloads in parallel, resumes completed segments, and assembles e
     }, 10);
     res.on('close', () => clearInterval(timer));
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
   const engine = await new DownloadEngine({
     dataDirectory: path.join(root, 'state'),
     downloadDirectory: path.join(root, 'out'),
@@ -95,7 +100,9 @@ test('HLS VOD downloads in parallel, resumes completed segments, and assembles e
   t.after(async () => {
     await engine.close();
     server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => {
+      server.close(resolve);
+    });
     await fs.rm(root, { recursive: true, force: true });
   });
   await engine.updateSettings({ connections: 2 });
@@ -104,7 +111,9 @@ test('HLS VOD downloads in parallel, resumes completed segments, and assembles e
   const until = async (check) => {
     const end = Date.now() + 8000;
     while (!check()) {
-      if (Date.now() > end) throw new Error('HLS timeout: ' + d.error);
+      if (Date.now() > end) {
+        throw new Error(`HLS timeout: ${d.error}`);
+      }
       await delay(10);
     }
   };

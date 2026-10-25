@@ -32,18 +32,28 @@ export async function startBridge(
     if (
       req.headers.origin ||
       req.headers.host !== `127.0.0.1:${(server.address() as AddressInfo).port}`
-    )
-      return answer(403, { error: 'Forbidden origin or host.' });
+    ) {
+      answer(403, { error: 'Forbidden origin or host.' });
+      return;
+    }
     const auth = Buffer.from(req.headers.authorization || '');
     const expected = Buffer.from(`Bearer ${token}`);
-    if (auth.length !== expected.length || !timingSafeEqual(auth, expected))
-      return answer(401, { error: 'Unauthorized.' });
-    if (req.method === 'GET' && req.url === '/health')
-      return answer(200, { ok: true, version: '0.1.0' });
-    if (req.method !== 'POST' || !['/downloads', '/formats'].includes(req.url ?? ''))
-      return answer(404, { error: 'Not found.' });
-    if (!String(req.headers['content-type']).startsWith('application/json'))
-      return answer(415, { error: 'JSON required.' });
+    if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
+      answer(401, { error: 'Unauthorized.' });
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/health') {
+      answer(200, { ok: true, version: '0.1.0' });
+      return;
+    }
+    if (req.method !== 'POST' || !['/downloads', '/formats'].includes(req.url ?? '')) {
+      answer(404, { error: 'Not found.' });
+      return;
+    }
+    if (!String(req.headers['content-type']).startsWith('application/json')) {
+      answer(415, { error: 'JSON required.' });
+      return;
+    }
     let size = 0;
     try {
       const chunks: Buffer[] = [];
@@ -57,8 +67,10 @@ export async function startBridge(
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      if (req.url === '/formats')
-        return answer(200, { ok: true, items: await youtubeFormats(body.url) });
+      if (req.url === '/formats') {
+        answer(200, { ok: true, items: await youtubeFormats(body.url) });
+        return;
+      }
       // Browser callers cannot select filesystem destinations or arbitrary app actions.
       const payload: BridgeDownload = {
         url: body.url,
@@ -76,10 +88,11 @@ export async function startBridge(
       answer(201, { ok: true, ids });
     } catch (error) {
       const { statusCode, message } = error as Error & { statusCode?: number };
-      if (!res.headersSent)
+      if (!res.headersSent) {
         answer(statusCode === 429 || statusCode === 422 ? statusCode : 400, {
           error: message,
         });
+      }
     }
   });
   server.requestTimeout = 15000;
@@ -106,9 +119,13 @@ export async function startBridge(
       });
       try {
         const saved = JSON.parse(await fs.readFile(configPath, 'utf8'));
-        if (saved.token === token) await fs.unlink(configPath);
+        if (saved.token === token) {
+          await fs.unlink(configPath);
+        }
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw e;
+        }
       }
     },
   };

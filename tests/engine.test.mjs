@@ -16,29 +16,39 @@ async function fixture(t, options = {}) {
   const server = http.createServer((req, res) => {
     if (req.url === '/redirect') {
       res.writeHead(302, { location: '/file.bin' });
-      return res.end();
+      res.end();
+      return;
     }
     if (req.url === '/missing') {
       res.writeHead(404);
-      return res.end();
+      res.end();
+      return;
     }
     const noRange = req.url === '/plain';
     res.setHeader('etag', options.etag || '"fixture-1"');
-    if (!noRange) res.setHeader('accept-ranges', 'bytes');
-    let start = 0,
-      end = data.length - 1;
+    if (!noRange) {
+      res.setHeader('accept-ranges', 'bytes');
+    }
+    let start = 0;
+    let end = data.length - 1;
+    let status = 200;
     if (req.headers.range && req.url === '/ignore-range') {
       res.setHeader('content-length', data.length);
-      return res.end(data);
+      res.end(data);
+      return;
     }
     if (req.headers.range && !noRange) {
       [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
       ranges.push([start, end]);
-      res.statusCode = 206;
+      status = 206;
       res.setHeader('content-range', `bytes ${start}-${end}/${data.length}`);
     }
     res.setHeader('content-length', end - start + 1);
-    if (req.method === 'HEAD') return res.end();
+    res.writeHead(status);
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
     if (options.slow) {
       let offset = start;
       const interval = setInterval(() => {
@@ -47,14 +57,18 @@ async function fixture(t, options = {}) {
           res.end();
           return;
         }
-        const until = Math.min(end + 1, offset + 16384);
-        res.write(data.subarray(offset, until));
-        offset = until;
+        const next = Math.min(end + 1, offset + 16384);
+        res.write(data.subarray(offset, next));
+        offset = next;
       }, 5);
       res.on('close', () => clearInterval(interval));
-    } else res.end(data.subarray(start, end + 1));
+    } else {
+      res.end(data.subarray(start, end + 1));
+    }
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
   const engine = await new DownloadEngine({
     dataDirectory: path.join(root, 'state'),
     downloadDirectory: path.join(root, 'downloads'),
@@ -63,7 +77,9 @@ async function fixture(t, options = {}) {
   t.after(async () => {
     await engine.close();
     server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => {
+      server.close(resolve);
+    });
     await fs.rm(root, { recursive: true, force: true });
   });
   return { engine, data, ranges, root, url: `http://127.0.0.1:${server.address().port}` };
@@ -71,7 +87,7 @@ async function fixture(t, options = {}) {
 
 test('repeated concurrent browser clicks reuse one active download but allow retry after cancel', async (t) => {
   const f = await fixture(t);
-  const request = { url: f.url + '/file.bin', queueOnly: true, reuseActive: true };
+  const request = { url: `${f.url}/file.bin`, queueOnly: true, reuseActive: true };
   const ids = await Promise.all([
     f.engine.add(request),
     f.engine.add(request),
@@ -85,20 +101,20 @@ test('repeated concurrent browser clicks reuse one active download but allow ret
 });
 
 test('review prompt supports Download Later and cancellation without transferring bytes', async (t) => {
-  const f = await fixture(t),
-    request = { url: f.url + '/file.bin', reviewOnly: true, reuseActive: true };
+  const f = await fixture(t);
+  const request = { url: `${f.url}/file.bin`, reviewOnly: true, reuseActive: true };
   const [id] = await f.engine.add(request);
   assert.deepEqual(await f.engine.add(request), [id]);
   await f.engine.reviewDownload({ id, queueOnly: true });
   await delay(40);
-  const d = f.engine.downloads.find((d) => d.id === id);
+  const d = f.engine.downloads.find((item) => item.id === id);
   assert.equal(d.status, 'paused');
   assert.equal(d.needsReview, false);
   assert.equal(d.downloaded, 0);
-  const [cancelId] = await f.engine.add({ ...request, url: f.url + '/plain' });
+  const [cancelId] = await f.engine.add({ ...request, url: `${f.url}/plain` });
   await f.engine.action(cancelId, 'remove');
   assert.equal(
-    f.engine.downloads.some((d) => d.id === cancelId),
+    f.engine.downloads.some((item) => item.id === cancelId),
     false,
   );
 });
@@ -128,8 +144,8 @@ test('browser SABR reuse identifies video and quality rather than expiring URL',
   assert.deepEqual(
     await f.engine.add({
       ...request,
-      url: request.url + '&new=1',
-      sabr: { ...sabr, serverAbrStreamingUrl: request.url + '&new=1' },
+      url: `${request.url}&new=1`,
+      sabr: { ...sabr, serverAbrStreamingUrl: `${request.url}&new=1` },
     }),
     first,
   );
@@ -138,7 +154,9 @@ test('browser SABR reuse identifies video and quality rather than expiring URL',
 async function until(check, timeout = 8000) {
   const deadline = Date.now() + timeout;
   while (!check()) {
-    if (Date.now() > deadline) throw new Error('Timed out waiting for download state.');
+    if (Date.now() > deadline) {
+      throw new Error('Timed out waiting for download state.');
+    }
     await delay(15);
   }
 }

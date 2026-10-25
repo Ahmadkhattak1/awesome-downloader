@@ -1,27 +1,30 @@
 'use strict';
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const api = window.downloader;
 const isMac = api.platform === 'darwin';
-const progressMode = new URLSearchParams(location.search).get('progress');
-if (progressMode) document.body.classList.add('progress-window');
-let state = { downloads: [], settings: {}, integration: {} },
-  selectedId = null,
-  detailId = null,
-  filter = 'all',
-  category = '',
-  searchTerm = '',
-  sort = 'createdAt',
-  ascending = false,
-  visibleDownloads = [],
-  toastTimer,
-  unsubscribe,
-  unsubscribeCommands;
+const progressMode = new URLSearchParams(window.location.search).get('progress');
+if (progressMode) {
+  document.body.classList.add('progress-window');
+}
+let state = { downloads: [], settings: {}, integration: {} };
+let selectedId = null;
+let detailId = null;
+let filter = 'all';
+let category = '';
+let searchTerm = '';
+let sort = 'createdAt';
+let ascending = false;
+let visibleDownloads = [];
+let toastTimer;
+let unsubscribe;
+let unsubscribeCommands;
 const selectedIds = new Set();
 const pending = new Set();
 let pendingReviewId = null;
-let selectionDrag = null,
-  suppressRowClick = false;
+let selectionDrag = null;
+let suppressRowClick = false;
 const dismissedReviews = new Set();
 const iconPaths = {
   add: ['M5 9h8l2-3h6l2 3h6v20H5z', 'M17 13v12M11 19h12'],
@@ -57,12 +60,19 @@ for (const button of $$('[data-icon]')) {
   }
   button.prepend(svg);
 }
-if (isMac)
-  for (const node of $$('[title*="Ctrl+"]')) node.title = node.title.replaceAll('Ctrl+', '⌘');
+if (isMac) {
+  for (const node of $$('[title*="Ctrl+"]')) {
+    node.title = node.title.replaceAll('Ctrl+', '⌘');
+  }
+}
 function element(tag, className, text) {
   const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
+  if (className) {
+    node.className = className;
+  }
+  if (text !== undefined) {
+    node.textContent = text;
+  }
   return node;
 }
 // Browser registration stays local and is performed by the trusted desktop bridge.
@@ -74,8 +84,9 @@ const browserLabel = element('label', '', 'Browser:');
 browserLabel.htmlFor = 'register-browser';
 const browserSelect = element('select');
 browserSelect.id = 'register-browser';
-for (const browser of ['Chrome', 'Edge', 'Firefox'])
+for (const browser of ['Chrome', 'Edge', 'Firefox']) {
   browserSelect.append(element('option', '', browser));
+}
 browserLine.append(browserLabel, browserSelect);
 const idLine = element('div', 'form-line');
 const idLabel = element('label', '', 'Extension ID:');
@@ -102,7 +113,9 @@ registrationForm.addEventListener('submit', async (event) => {
       browser: browserSelect.value,
       extensionId: idInput.value.trim(),
     });
-    if (result?.extensionPath) $('#extension-path').value = result.extensionPath;
+    if (result?.extensionPath) {
+      $('#extension-path').value = result.extensionPath;
+    }
     registrationResult.dataset.error = 'false';
     registrationResult.textContent =
       'Browser connected. Reload the extension, then try a download.';
@@ -124,9 +137,10 @@ rememberLabel.append(
 );
 $('#add-directory').closest('.form-line').after(rememberLabel);
 const integrationHelp = $$('.field-help', $('#integration-dialog'));
-if (integrationHelp.length)
+if (integrationHelp.length) {
   integrationHelp[integrationHelp.length - 1].textContent =
     'Video choices open Download File Info, then a separate progress window. Supported HLS videos can be saved as MP4, including separate audio tracks. MP3 is offered when an audio track is detected.';
+}
 const manualConnection = element('details');
 manualConnection.append(
   element('summary', '', 'Manual connection command'),
@@ -188,8 +202,9 @@ for (const text of [
         'Click Select Folder (or Select) in the Windows window. Select the extension folder itself; do not select an individual file or its icons subfolder.',
       ]),
   'Check that Awesome Downloader Integration appears on the browser’s Extensions page and is switched on. Return here and wait for the connection message, then refresh your video page and play the video.',
-])
+]) {
   steps.append(element('li', '', text));
+}
 const extensionFolderLabel = element('label', '', 'Included browser extension folder:');
 extensionFolderLabel.htmlFor = 'extension-path';
 const extensionFolderInput = $('#extension-path');
@@ -203,12 +218,13 @@ for (const [label, action] of [
   button.addEventListener('click', async () => {
     try {
       await call('browserSetup', { action });
-      if (action === 'copy')
+      if (action === 'copy') {
         notify(
           isMac
             ? 'Extension folder path copied. In the Finder window opened by Load unpacked, press ⌘⇧G, ⌘V, then Return.'
             : 'Extension folder path copied. In the Windows window opened by Load unpacked, press Ctrl+L, Ctrl+V, then Enter.',
         );
+      }
     } catch (error) {
       notify(messageOf(error), true);
     }
@@ -220,16 +236,21 @@ installHelp.append(extensionFolderLabel, extensionFolderInput, folderActions, se
 retryConnection.after(installHelp);
 let setupPolling = false;
 const setupPoll = setInterval(async () => {
-  if (progressMode || !$('#integration-dialog').open || setupPolling) return;
+  if (progressMode || !$('#integration-dialog').open || setupPolling) {
+    return;
+  }
   setupPolling = true;
   try {
     const info = await call('integration');
     $('#extension-path').value = info.extensionPath || '';
-    automaticConnection.textContent = info.connectionError
-      ? `Setup needs attention: ${info.connectionError}`
-      : info.connectedBrowsers?.length
-        ? `${info.connectedBrowsers.map((b) => b.browser).join(', ')} connected. Refresh your video page to see Download this video.`
-        : 'Waiting for you to add the extension. We will connect it automatically.';
+    if (info.connectionError) {
+      automaticConnection.textContent = `Setup needs attention: ${info.connectionError}`;
+    } else if (info.connectedBrowsers?.length) {
+      automaticConnection.textContent = `${info.connectedBrowsers.map((b) => b.browser).join(', ')} connected. Refresh your video page to see Download this video.`;
+    } else {
+      automaticConnection.textContent =
+        'Waiting for you to add the extension. We will connect it automatically.';
+    }
   } catch (error) {
     automaticConnection.textContent = messageOf(error);
   } finally {
@@ -261,8 +282,8 @@ for (const [key, label] of [
   ['url', 'Address'],
   ['path', 'The file saved as'],
 ]) {
-  const fieldLabel = element('label', 'completed-field', label),
-    input = element('input');
+  const fieldLabel = element('label', 'completed-field', label);
+  const input = element('input');
   input.readOnly = true;
   input.setAttribute('aria-label', label);
   fieldLabel.append(input);
@@ -270,8 +291,8 @@ for (const [key, label] of [
   completedFields[key] = input;
 }
 completedPanel.append(completionActions);
-const suppressLabel = element('label', 'checkbox-label'),
-  suppressCompletion = element('input');
+const suppressLabel = element('label', 'checkbox-label');
+const suppressCompletion = element('input');
 suppressCompletion.type = 'checkbox';
 suppressLabel.append(suppressCompletion, document.createTextNode("Don't show this dialog again"));
 completedPanel.append(suppressLabel);
@@ -284,11 +305,13 @@ suppressCompletion.addEventListener('change', async () => {
   }
 });
 $('#details-dialog').append(completedPanel);
-const renderTransferDetails = renderDetails;
-renderDetails = function () {
+// Transfer details, plus the completion summary once the download has finished.
+function renderDetails() {
   renderTransferDetails();
   const d = detailDownload();
-  if (!d || statusOf(d) !== 'completed') return;
+  if (!d || statusOf(d) !== 'completed') {
+    return;
+  }
   completedSummary.replaceChildren(
     element('span', 'completed-icon', '✓'),
     element(
@@ -300,7 +323,7 @@ renderDetails = function () {
   completedFields.url.value = d.url || '';
   completedFields.path.value = d.path || '';
   suppressCompletion.checked = state.settings.hideCompletionDialog === true;
-};
+}
 function numeric(value) {
   const result = Number(value);
   return Number.isFinite(result) && result > 0 ? result : 0;
@@ -322,21 +345,35 @@ function statusOf(d) {
 }
 function categoryOf(d) {
   const value = String(d.category || '').toLowerCase();
-  if (/video/.test(value)) return 'Video';
-  if (/audio|music/.test(value)) return 'Audio';
-  if (/doc|text/.test(value)) return 'Documents';
-  if (/arch|compress/.test(value)) return 'Archives';
-  if (/program/.test(value)) return 'Programs';
+  if (/video/.test(value)) {
+    return 'Video';
+  }
+  if (/audio|music/.test(value)) {
+    return 'Audio';
+  }
+  if (/doc|text/.test(value)) {
+    return 'Documents';
+  }
+  if (/arch|compress/.test(value)) {
+    return 'Archives';
+  }
+  if (/program/.test(value)) {
+    return 'Programs';
+  }
   return 'Other';
 }
 function bytes(value) {
   const size = numeric(value);
-  if (!size) return '0 B';
+  if (!size) {
+    return '0 B';
+  }
   const power = Math.min(4, Math.floor(Math.log(size) / Math.log(1024)));
   return `${(size / 1024 ** power).toFixed(power ? 2 : 0)} ${['B', 'KB', 'MB', 'GB', 'TB'][power]}`;
 }
 function date(value) {
-  if (!value) return '';
+  if (!value) {
+    return '';
+  }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
     ? ''
@@ -344,34 +381,41 @@ function date(value) {
 }
 function timeLeft(d) {
   const total = numeric(d.total) || numeric(d.streamProgress?.estimatedBytes);
-  if (!total || !numeric(d.speed)) return '';
+  if (!total || !numeric(d.speed)) {
+    return '';
+  }
   const seconds = Math.max(0, Math.ceil((total - numeric(d.downloaded)) / numeric(d.speed)));
   return (!d.total || d.estimated ? '≈ ' : '') + duration(seconds);
 }
 function sizeLabel(d) {
-  return numeric(d.total)
-    ? (d.estimated ? '≈ ' : '') + bytes(d.total)
-    : d.streamProgress?.estimatedBytes
-      ? '≈ ' + bytes(d.streamProgress.estimatedBytes)
-      : d.kind === 'hls'
-        ? 'Calculating from segments…'
-        : 'Not supplied by server';
+  if (numeric(d.total)) {
+    return (d.estimated ? '≈ ' : '') + bytes(d.total);
+  }
+  if (d.streamProgress?.estimatedBytes) {
+    return `≈ ${bytes(d.streamProgress.estimatedBytes)}`;
+  }
+  return d.kind === 'hls' ? 'Calculating from segments…' : 'Not supplied by server';
 }
 function duration(seconds) {
-  return seconds < 60
-    ? `${Math.ceil(seconds)} sec`
-    : seconds < 3600
-      ? `${Math.ceil(seconds / 60)} min`
-      : `${Math.floor(seconds / 3600)} hr ${Math.floor((seconds % 3600) / 60)} min`;
+  if (seconds < 60) {
+    return `${Math.ceil(seconds)} sec`;
+  }
+  if (seconds < 3600) {
+    return `${Math.ceil(seconds / 60)} min`;
+  }
+  return `${Math.floor(seconds / 3600)} hr ${Math.floor((seconds % 3600) / 60)} min`;
 }
 function percentage(d) {
-  return statusOf(d) === 'completed'
-    ? 100
-    : numeric(d.total)
-      ? Math.min(100, (numeric(d.downloaded) / numeric(d.total)) * 100)
-      : d.streamProgress?.total
-        ? (d.streamProgress.completed / d.streamProgress.total) * 100
-        : null;
+  if (statusOf(d) === 'completed') {
+    return 100;
+  }
+  if (numeric(d.total)) {
+    return Math.min(100, (numeric(d.downloaded) / numeric(d.total)) * 100);
+  }
+  if (d.streamProgress?.total) {
+    return (d.streamProgress.completed / d.streamProgress.total) * 100;
+  }
+  return null;
 }
 function messageOf(error) {
   return error?.message || String(error || 'The operation failed.');
@@ -389,33 +433,45 @@ function notify(message, error = false) {
   );
 }
 async function call(method, ...args) {
-  if (!api || typeof api[method] !== 'function')
+  if (!api || typeof api[method] !== 'function') {
     throw new Error('The download service is unavailable. Restart Awesome Downloader.');
+  }
   const result = await api[method](...args);
-  if (result?.error && !result.downloads)
+  if (result?.error && !result.downloads) {
     throw new Error(
       typeof result.error === 'string'
         ? result.error
         : result.error.message || 'The request failed.',
     );
+  }
   return result;
 }
 function acceptSnapshot(snapshot) {
-  if (!snapshot || !Array.isArray(snapshot.downloads)) return;
+  if (!snapshot || !Array.isArray(snapshot.downloads)) {
+    return;
+  }
   state = {
     downloads: snapshot.downloads,
     settings: snapshot.settings || state.settings,
     integration: snapshot.integration || state.integration,
   };
   const valid = new Set(state.downloads.map((d) => d.id));
-  for (const id of selectedIds) if (!valid.has(id)) selectedIds.delete(id);
-  if (!valid.has(selectedId)) selectedId = selectedIds.values().next().value || null;
+  for (const id of selectedIds) {
+    if (!valid.has(id)) {
+      selectedIds.delete(id);
+    }
+  }
+  if (!valid.has(selectedId)) {
+    selectedId = selectedIds.values().next().value || null;
+  }
   $('#download-list').setAttribute('aria-busy', 'false');
   $('#connection-label').textContent = 'Connected';
   render();
   if (!$$('dialog[open]').length) {
     const review = state.downloads.find((d) => d.needsReview && !dismissedReviews.has(d.id));
-    if (review) openReview(review.id);
+    if (review) {
+      openReview(review.id);
+    }
   }
 }
 async function refresh() {
@@ -440,10 +496,18 @@ function canPause(d) {
 }
 function matches(d) {
   const status = statusOf(d);
-  if (filter === 'completed' && status !== 'completed') return false;
-  if (filter === 'unfinished' && status === 'completed') return false;
-  if (filter === 'queued' && !['queued', 'scheduled', 'paused'].includes(status)) return false;
-  if (category && categoryOf(d) !== category) return false;
+  if (filter === 'completed' && status !== 'completed') {
+    return false;
+  }
+  if (filter === 'unfinished' && status === 'completed') {
+    return false;
+  }
+  if (filter === 'queued' && !['queued', 'scheduled', 'paused'].includes(status)) {
+    return false;
+  }
+  if (category && categoryOf(d) !== category) {
+    return false;
+  }
   return !searchTerm || `${d.filename || ''} ${d.url || ''}`.toLowerCase().includes(searchTerm);
 }
 function paintSelection() {
@@ -455,15 +519,20 @@ function paintSelection() {
   updateControls();
 }
 function selectDownload(id, { additive = false, toggle = false } = {}) {
-  if (!additive) selectedIds.clear();
-  if (toggle && selectedIds.has(id)) selectedIds.delete(id);
-  else if (id) selectedIds.add(id);
+  if (!additive) {
+    selectedIds.clear();
+  }
+  if (toggle && selectedIds.has(id)) {
+    selectedIds.delete(id);
+  } else if (id) {
+    selectedIds.add(id);
+  }
   selectedId = selectedIds.has(id) ? id : selectedIds.values().next().value || null;
   paintSelection();
 }
 function rowFor(d) {
-  const status = statusOf(d),
-    percent = percentage(d);
+  const status = statusOf(d);
+  const percent = percentage(d);
   const row = element('tr', 'download-row');
   row.dataset.id = d.id;
   row.dataset.status = status;
@@ -473,11 +542,7 @@ function rowFor(d) {
   nameCell.title = d.filename || d.url;
   const name = element('span', 'file-name');
   name.append(
-    element(
-      'span',
-      'file-type-icon',
-      status === 'completed' ? '✓' : status === 'failed' ? '!' : '↓',
-    ),
+    element('span', 'file-type-icon', { completed: '✓', failed: '!' }[status] || '↓'),
     element('span', '', d.filename || 'Preparing file…'),
   );
   nameCell.append(name);
@@ -511,7 +576,9 @@ function rowFor(d) {
     descriptionCell,
   );
   row.addEventListener('click', (event) => {
-    if (suppressRowClick) return;
+    if (suppressRowClick) {
+      return;
+    }
     selectDownload(d.id, {
       additive: event.ctrlKey || event.metaKey,
       toggle: event.ctrlKey || event.metaKey,
@@ -526,8 +593,8 @@ function rowFor(d) {
   return row;
 }
 function updateControls() {
-  const d = selected(),
-    busy = d && pending.has(d.id);
+  const d = selected();
+  const busy = d && pending.has(d.id);
   $('#resume-selected').disabled = (!canResume(d) && !d?.needsReview) || busy;
   $('#stop-selected').disabled = !canPause(d) || busy;
   $('#remove-selected').disabled = !d || busy;
@@ -537,18 +604,22 @@ function updateControls() {
   $('#pause-all').disabled = !state.downloads.some(canPause);
   $('#stop-queue').disabled = $('#pause-all').disabled;
   $('#resume-all').disabled = !state.downloads.some(canResume);
-  $('#remove-completed').disabled = !state.downloads.some((d) => statusOf(d) === 'completed');
+  $('#remove-completed').disabled = !state.downloads.some((item) => statusOf(item) === 'completed');
   $('#scheduler-start').disabled = $('#resume-all').disabled;
   $('#scheduler-stop').disabled = $('#pause-all').disabled;
 }
+function compareBy(key, a, b) {
+  if (key === 'total') {
+    return numeric(a.total) - numeric(b.total);
+  }
+  if (key === 'createdAt') {
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+  }
+  return String(a[key] || '').localeCompare(String(b[key] || ''));
+}
 function render() {
   visibleDownloads = state.downloads.filter(matches).sort((a, b) => {
-    const result =
-      sort === 'total'
-        ? numeric(a.total) - numeric(b.total)
-        : sort === 'createdAt'
-          ? new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
-          : String(a[sort] || '').localeCompare(String(b[sort] || ''));
+    const result = compareBy(sort, a, b);
     return ascending ? result : -result;
   });
   $('#download-list').replaceChildren(...visibleDownloads.map(rowFor));
@@ -562,18 +633,26 @@ function render() {
   $('#status-summary').textContent =
     `${bytes(state.downloads.reduce((sum, d) => sum + numeric(d.speed), 0))}/sec`;
   updateControls();
-  if ($('#details-dialog').open) renderDetails();
-  if ($('#scheduler-dialog').open) renderScheduler();
+  if ($('#details-dialog').open) {
+    renderDetails();
+  }
+  if ($('#scheduler-dialog').open) {
+    renderScheduler();
+  }
 }
 async function performAction(d, action) {
-  if (!d || pending.has(d.id)) return;
+  if (!d || pending.has(d.id)) {
+    return;
+  }
   if (
     action === 'remove' &&
+    // eslint-disable-next-line no-alert -- the native confirmation dialog is intended here
     !window.confirm(
       `Delete “${d.filename || 'this download'}” from the download list?\n\nThe downloaded file will remain on your PC.`,
     )
-  )
+  ) {
     return;
+  }
   pending.add(d.id);
   updateControls();
   try {
@@ -584,7 +663,9 @@ async function performAction(d, action) {
   } finally {
     pending.delete(d.id);
     updateControls();
-    if ($('#details-dialog').open) renderDetails();
+    if ($('#details-dialog').open) {
+      renderDetails();
+    }
   }
 }
 async function bulkAction(action) {
@@ -599,8 +680,9 @@ async function bulkAction(action) {
     ),
   );
   const failures = results.filter((r) => r.status === 'rejected');
-  if (failures.length)
+  if (failures.length) {
     notify(`${failures.length} operation(s) failed: ${messageOf(failures[0].reason)}`, true);
+  }
   try {
     await refresh();
   } catch (error) {
@@ -611,16 +693,20 @@ async function removeCompleted() {
   const downloads = state.downloads.filter((d) => statusOf(d) === 'completed');
   if (
     !downloads.length ||
+    // eslint-disable-next-line no-alert -- the native confirmation dialog is intended here
     !window.confirm(
       `Delete ${downloads.length} completed download(s) from the list?\n\nThe downloaded files will remain on your PC.`,
     )
-  )
+  ) {
     return;
+  }
   const results = await Promise.allSettled(
     downloads.map((d) => call('action', { id: d.id, action: 'remove' })),
   );
   const failures = results.filter((r) => r.status === 'rejected');
-  if (failures.length) notify(messageOf(failures[0].reason), true);
+  if (failures.length) {
+    notify(messageOf(failures[0].reason), true);
+  }
   try {
     await refresh();
   } catch (error) {
@@ -629,7 +715,9 @@ async function removeCompleted() {
 }
 function showDialog(id) {
   const dialog = $(id);
-  if (!dialog.open) dialog.showModal();
+  if (!dialog.open) {
+    dialog.showModal();
+  }
 }
 function openAdd(text = '', scheduled = '') {
   pendingReviewId = null;
@@ -647,9 +735,13 @@ function openAdd(text = '', scheduled = '') {
   $('#download-urls').focus();
 }
 function openReview(id) {
-  if (progressMode) return;
+  if (progressMode) {
+    return;
+  }
   const d = state.downloads.find((item) => item.id === id && item.needsReview);
-  if (!d || dismissedReviews.has(id)) return;
+  if (!d || dismissedReviews.has(id)) {
+    return;
+  }
   openAdd(d.url || '');
   pendingReviewId = id;
   $('#download-urls').readOnly = true;
@@ -660,7 +752,9 @@ function openReview(id) {
   $('#add-directory').value = d.directory || state.settings.defaultDirectory || '';
 }
 async function dismissReview() {
-  if (!pendingReviewId) return;
+  if (!pendingReviewId) {
+    return;
+  }
   const id = pendingReviewId;
   dismissedReviews.add(id);
   pendingReviewId = null;
@@ -689,15 +783,15 @@ function showDetails(id) {
   renderDetails();
   showDialog('#details-dialog');
 }
-function renderDetails() {
-  const d = state.downloads.find((d) => d.id === detailId);
+function renderTransferDetails() {
+  const d = state.downloads.find((item) => item.id === detailId);
   if (!d) {
     $('#details-dialog').close();
     return;
   }
-  const status = statusOf(d),
-    percent = percentage(d),
-    content = $('#details-content');
+  const status = statusOf(d);
+  const percent = percentage(d);
+  const content = $('#details-content');
   $('#details-title').textContent =
     `${percent !== null ? `${Math.floor(percent)}% ` : ''}${d.filename || 'Download status'}`;
   $('#transfer-source').textContent = d.url || '';
@@ -719,32 +813,36 @@ function renderDetails() {
     ['Downloaded', `${bytes(d.downloaded)}${percent !== null ? ` (${percent.toFixed(2)}%)` : ''}`],
     ['Transfer rate', status === 'downloading' ? `${bytes(d.speed)}/sec` : '0 B/sec'],
     ['Time left', status === 'downloading' ? timeLeft(d) || 'Estimating…' : '—'],
-    [
-      'Resume capability',
-      d.resumable === true ? 'Yes' : d.resumable === false ? 'No' : 'Checking…',
-    ],
+    ['Resume capability', { true: 'Yes', false: 'No' }[d.resumable] || 'Checking…'],
   ];
-  if (numeric(d.duration))
+  if (numeric(d.duration)) {
     rows.splice(1, 0, [
       'Video duration',
       `${Math.floor(d.duration / 60)} min ${Math.floor(d.duration % 60)} sec`,
     ]);
-  if (d.streamProgress?.total && status !== 'completed')
+  }
+  if (d.streamProgress?.total && status !== 'completed') {
     rows.push(['Segments', `${d.streamProgress.completed} / ${d.streamProgress.total}`]);
-  if (d.scheduledAt && status === 'scheduled') rows.push(['Start at', date(d.scheduledAt)]);
+  }
+  if (d.scheduledAt && status === 'scheduled') {
+    rows.push(['Start at', date(d.scheduledAt)]);
+  }
   content.replaceChildren();
-  for (const [label, value] of rows)
+  for (const [label, value] of rows) {
     content.append(element('dt', '', label), element('dd', '', value));
+  }
   const progress = $('#detail-progress');
-  if (percent === null && ['downloading', 'connecting'].includes(status))
+  if (percent === null && ['downloading', 'connecting'].includes(status)) {
     progress.removeAttribute('value');
-  else progress.value = percent || 0;
+  } else {
+    progress.value = percent || 0;
+  }
   const segments = Array.isArray(d.connectionsProgress) ? d.connectionsProgress : [];
-  const bars = $('#segment-bars'),
-    map = $('#segment-map');
+  const bars = $('#segment-bars');
+  const map = $('#segment-map');
   bars.replaceChildren();
   map.replaceChildren();
-  for (let index = 0; index < segments.length; index++) {
+  for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     const row = element('tr');
     const segmentStatus =
@@ -763,14 +861,18 @@ function renderDetails() {
     const total = numeric(segment.total);
     bar.value = total ? Math.min(100, (numeric(segment.downloaded) / total) * 100) : 0;
     bar.setAttribute('aria-label', `Connection ${index + 1} progress`);
-    if (!total && status === 'downloading') bar.removeAttribute('value');
+    if (!total && status === 'downloading') {
+      bar.removeAttribute('value');
+    }
     map.append(bar);
   }
-  $('#segment-note').textContent = segments.length
-    ? `${segments.length} connection(s)`
-    : status === 'completed'
-      ? 'Download completed.'
-      : 'Connection progress appears when the transfer starts.';
+  let note = 'Connection progress appears when the transfer starts.';
+  if (segments.length) {
+    note = `${segments.length} connection(s)`;
+  } else if (status === 'completed') {
+    note = 'Download completed.';
+  }
+  $('#segment-note').textContent = note;
   $('#detail-error').textContent = d.error || '';
   $('#detail-error').hidden = !d.error;
   $('#detail-open').disabled = status !== 'completed';
@@ -797,13 +899,16 @@ function setView(nextFilter, nextCategory = '') {
       ? button.dataset.category === nextCategory
       : button.dataset.filter === nextFilter;
     button.classList.toggle('selected', active);
-    if (active) button.setAttribute('aria-current', 'page');
-    else button.removeAttribute('aria-current');
+    if (active) {
+      button.setAttribute('aria-current', 'page');
+    } else {
+      button.removeAttribute('aria-current');
+    }
   });
   render();
 }
 function openSettings() {
-  const settings = state.settings;
+  const { settings } = state;
   $('#default-directory').value = settings.defaultDirectory || '';
   $('#max-concurrent').value = settings.maxConcurrent || 3;
   $('#connections').value = settings.connections || 8;
@@ -817,7 +922,9 @@ function renderScheduler() {
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
   const list = $('#scheduled-list');
   list.replaceChildren();
-  if (!downloads.length) list.append(element('p', 'field-help', 'No scheduled downloads.'));
+  if (!downloads.length) {
+    list.append(element('p', 'field-help', 'No scheduled downloads.'));
+  }
   for (const d of downloads) {
     const row = element('div', 'scheduled-item');
     const name = element('span', '', d.filename);
@@ -834,11 +941,14 @@ async function openIntegration() {
   try {
     const info = (await call('integration')) || state.integration;
     $('#extension-path').value = info.extensionPath || '';
-    automaticConnection.textContent = info.connectionError
-      ? `Browser setup needs attention: ${info.connectionError}`
-      : info.connectedBrowsers?.length
-        ? `${info.connectedBrowsers.map((b) => b.browser).join(', ')} connected automatically. Click Download this video in your browser to choose a file.`
-        : 'Ready to connect automatically when the browser extension is installed.';
+    if (info.connectionError) {
+      automaticConnection.textContent = `Browser setup needs attention: ${info.connectionError}`;
+    } else if (info.connectedBrowsers?.length) {
+      automaticConnection.textContent = `${info.connectedBrowsers.map((b) => b.browser).join(', ')} connected automatically. Click Download this video in your browser to choose a file.`;
+    } else {
+      automaticConnection.textContent =
+        'Ready to connect automatically when the browser extension is installed.';
+    }
     $('#integration-port').value = info.port ? 'Ready' : 'Unavailable';
     showDialog('#integration-dialog');
   } catch (error) {
@@ -867,13 +977,19 @@ commands.find = () => {
   $('#search').focus();
 };
 commands.details = () => {
-  if (selectedId) showDetails(selectedId);
+  if (selectedId) {
+    showDetails(selectedId);
+  }
 };
 commands.remove = () => performAction(selected(), 'remove');
 commands.all = () => setView('all');
 document.addEventListener('keydown', (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') commands.find();
-  if (event.key === 'Escape') $('.list-search').classList.remove('visible');
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+    commands.find();
+  }
+  if (event.key === 'Escape') {
+    $('.list-search').classList.remove('visible');
+  }
 });
 $('#new-download').addEventListener('click', commands.add);
 $('#settings-button').addEventListener('click', openSettings);
@@ -896,9 +1012,13 @@ $('#remove-selected').addEventListener('click', () => performAction(selected(), 
 $('#open-selected').addEventListener('click', () => performAction(selected(), 'open'));
 $('#reveal-selected').addEventListener('click', () => performAction(selected(), 'reveal'));
 $('#details-selected').addEventListener('click', () => {
-  if (selectedId) showDetails(selectedId);
+  if (selectedId) {
+    showDetails(selectedId);
+  }
 });
-const detailDownload = () => state.downloads.find((d) => d.id === detailId);
+function detailDownload() {
+  return state.downloads.find((d) => d.id === detailId);
+}
 $('#detail-open').addEventListener('click', () => performAction(detailDownload(), 'open'));
 $('#detail-folder').addEventListener('click', () => performAction(detailDownload(), 'reveal'));
 $('#detail-stop').addEventListener('click', () => performAction(detailDownload(), 'pause'));
@@ -912,15 +1032,17 @@ $('#toggle-details').addEventListener('click', async () => {
   details.hidden = !details.hidden;
   document.body.classList.toggle('details-collapsed', details.hidden);
   $('#toggle-details').textContent = details.hidden ? '>> Show details' : '<< Hide details';
-  if (progressMode)
+  if (progressMode) {
     try {
       await call('resizeProgress', { expanded: !details.hidden });
     } catch (error) {
       notify(messageOf(error), true);
     }
+  }
 });
-for (const tab of ['status', 'speed', 'completion'])
+for (const tab of ['status', 'speed', 'completion']) {
   $(`#tab-${tab}`).addEventListener('click', () => setDetailTab(tab));
+}
 $('#detail-speed-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('#detail-speed-error').hidden = true;
@@ -996,13 +1118,15 @@ categoryExpander.addEventListener('click', (event) => {
   setCategoryTreeExpanded(categoryExpander.getAttribute('aria-expanded') !== 'true');
 });
 categoryExpander.addEventListener('keydown', (event) => {
-  if (!['Enter', ' '].includes(event.key)) return;
+  if (!['Enter', ' '].includes(event.key)) {
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
   setCategoryTreeExpanded(categoryExpander.getAttribute('aria-expanded') !== 'true');
 });
-const tableScroll = $('#table-scroll'),
-  selectionRectangle = $('#selection-rectangle');
+const tableScroll = $('#table-scroll');
+const selectionRectangle = $('#selection-rectangle');
 const tablePoint = (event) => {
   const bounds = tableScroll.getBoundingClientRect();
   return {
@@ -1011,9 +1135,11 @@ const tablePoint = (event) => {
   };
 };
 tableScroll.addEventListener('pointerdown', (event) => {
-  if (event.button !== 0 || event.target.closest('thead') || event.target.closest('button')) return;
-  const point = tablePoint(event),
-    row = event.target.closest('.download-row');
+  if (event.button !== 0 || event.target.closest('thead') || event.target.closest('button')) {
+    return;
+  }
+  const point = tablePoint(event);
+  const row = event.target.closest('.download-row');
   selectionDrag = {
     pointerId: event.pointerId,
     startX: point.x,
@@ -1027,16 +1153,20 @@ tableScroll.addEventListener('pointerdown', (event) => {
   event.preventDefault();
 });
 tableScroll.addEventListener('pointermove', (event) => {
-  if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
-  const point = tablePoint(event),
-    dx = point.x - selectionDrag.startX,
-    dy = point.y - selectionDrag.startY;
-  if (!selectionDrag.moved && Math.hypot(dx, dy) < 4) return;
+  if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) {
+    return;
+  }
+  const point = tablePoint(event);
+  const dx = point.x - selectionDrag.startX;
+  const dy = point.y - selectionDrag.startY;
+  if (!selectionDrag.moved && Math.hypot(dx, dy) < 4) {
+    return;
+  }
   selectionDrag.moved = true;
-  const left = Math.min(selectionDrag.startX, point.x),
-    top = Math.min(selectionDrag.startY, point.y),
-    right = Math.max(selectionDrag.startX, point.x),
-    bottom = Math.max(selectionDrag.startY, point.y);
+  const left = Math.min(selectionDrag.startX, point.x);
+  const top = Math.min(selectionDrag.startY, point.y);
+  const right = Math.max(selectionDrag.startX, point.x);
+  const bottom = Math.max(selectionDrag.startY, point.y);
   Object.assign(selectionRectangle.style, {
     left: `${left}px`,
     top: `${top}px`,
@@ -1045,72 +1175,90 @@ tableScroll.addEventListener('pointermove', (event) => {
   });
   selectionRectangle.hidden = false;
   selectedIds.clear();
-  for (const id of selectionDrag.base) selectedIds.add(id);
+  for (const id of selectionDrag.base) {
+    selectedIds.add(id);
+  }
   const viewport = tableScroll.getBoundingClientRect();
   for (const row of $$('.download-row')) {
-    const rect = row.getBoundingClientRect(),
-      rowLeft = rect.left - viewport.left + tableScroll.scrollLeft,
-      rowTop = rect.top - viewport.top + tableScroll.scrollTop;
+    const rect = row.getBoundingClientRect();
+    const rowLeft = rect.left - viewport.left + tableScroll.scrollLeft;
+    const rowTop = rect.top - viewport.top + tableScroll.scrollTop;
     if (
       rowLeft < right &&
       rowLeft + rect.width > left &&
       rowTop < bottom &&
       rowTop + rect.height > top
-    )
+    ) {
       selectedIds.add(row.dataset.id);
+    }
   }
   selectedId = selectedIds.values().next().value || null;
   paintSelection();
   event.preventDefault();
 });
 function finishMarquee(event) {
-  if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
+  if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) {
+    return;
+  }
   const { moved, row, toggle } = selectionDrag;
   try {
     tableScroll.releasePointerCapture(event.pointerId);
-  } catch {}
+  } catch {
+    // The capture may already have ended with the pointer.
+  }
   selectionDrag = null;
   selectionRectangle.hidden = true;
   // With the pointer captured, Chromium delivers the following click to the list rather
   // than the row, so a plain click selects its row here and the row's own handler is skipped.
   if (moved || row) {
-    if (!moved) selectDownload(row.dataset.id, { additive: toggle, toggle });
+    if (!moved) {
+      selectDownload(row.dataset.id, { additive: toggle, toggle });
+    }
     suppressRowClick = true;
     setTimeout(() => {
       suppressRowClick = false;
     }, 0);
-  } else selectDownload(null);
+  } else {
+    selectDownload(null);
+  }
 }
 // The double-click reaches the list for the same reason; find the row under the pointer.
 tableScroll.addEventListener('dblclick', (event) => {
-  if (event.target.closest('.download-row')) return;
+  if (event.target.closest('.download-row')) {
+    return;
+  }
   const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('.download-row');
-  if (row) showDetails(row.dataset.id);
+  if (row) {
+    showDetails(row.dataset.id);
+  }
 });
 tableScroll.addEventListener('pointerup', finishMarquee);
 tableScroll.addEventListener('pointercancel', finishMarquee);
 $('#table-scroll').addEventListener('keydown', (event) => {
-  if (!visibleDownloads.length) return;
+  if (!visibleDownloads.length) {
+    return;
+  }
   const index = visibleDownloads.findIndex((d) => d.id === selectedId);
   if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
     event.preventDefault();
-    const next =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? visibleDownloads.length - 1
-          : Math.max(
-              0,
-              Math.min(visibleDownloads.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)),
-            );
+    const last = visibleDownloads.length - 1;
+    let next = Math.max(0, Math.min(last, index + (event.key === 'ArrowDown' ? 1 : -1)));
+    if (event.key === 'Home') {
+      next = 0;
+    } else if (event.key === 'End') {
+      next = last;
+    }
     selectDownload(visibleDownloads[next].id);
     $$('.download-row')
       .find((row) => row.dataset.id === selectedId)
       ?.scrollIntoView({ block: 'nearest' });
   }
-  if (event.key === 'Enter' && selectedId) showDetails(selectedId);
-  if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace'))
+  if (event.key === 'Enter' && selectedId) {
+    showDetails(selectedId);
+  }
+  if (event.key === 'Delete' || (isMac && event.metaKey && event.key === 'Backspace')) {
     performAction(selected(), 'remove');
+  }
 });
 $('#dismiss-toast').addEventListener('click', () => {
   $('#toast').hidden = true;
@@ -1119,14 +1267,18 @@ $$('[data-close]').forEach((button) =>
   button.addEventListener('click', () => {
     const dialog = button.closest('dialog');
     dialog.close();
-    if (dialog.id === 'add-dialog') dismissReview();
+    if (dialog.id === 'add-dialog') {
+      dismissReview();
+    }
   }),
 );
 $('#add-dialog').addEventListener('cancel', () => dismissReview());
 document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') {
     event.preventDefault();
-    if (!$$('dialog[open]').length) openAdd();
+    if (!$$('dialog[open]').length) {
+      openAdd();
+    }
   }
   if (
     (event.ctrlKey || event.metaKey) &&
@@ -1149,7 +1301,9 @@ $('#paste-button').addEventListener('click', async () => {
 $('#add-browse').addEventListener('click', async () => {
   try {
     const path = await call('chooseDirectory');
-    if (typeof path === 'string' && path) $('#add-directory').value = path;
+    if (typeof path === 'string' && path) {
+      $('#add-directory').value = path;
+    }
   } catch (error) {
     $('#add-error').textContent = messageOf(error);
     $('#add-error').hidden = false;
@@ -1157,9 +1311,13 @@ $('#add-browse').addEventListener('click', async () => {
 });
 $('#download-category').addEventListener('change', (event) => {
   const folder = state.settings.categoryDirectories?.[event.target.value];
-  if (folder) $('#add-directory').value = folder;
+  if (folder) {
+    $('#add-directory').value = folder;
+  }
   rememberInput.disabled = !event.target.value;
-  if (rememberInput.disabled) rememberInput.checked = false;
+  if (rememberInput.disabled) {
+    rememberInput.checked = false;
+  }
 });
 $('#add-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -1169,10 +1327,12 @@ $('#add-form').addEventListener('submit', async (event) => {
     .value.split(/\r?\n/)
     .map((url) => url.trim())
     .filter(Boolean);
-  const filename = $('#download-filename').value.trim(),
-    scheduled = $('#download-schedule').value;
+  const filename = $('#download-filename').value.trim();
+  const scheduled = $('#download-schedule').value;
   try {
-    if (!urls.length) throw new Error('Enter at least one download address.');
+    if (!urls.length) {
+      throw new Error('Enter at least one download address.');
+    }
     for (const url of urls) {
       let parsed;
       try {
@@ -1180,26 +1340,30 @@ $('#add-form').addEventListener('submit', async (event) => {
       } catch {
         throw new Error(`Invalid address: ${url}`);
       }
-      if (!['http:', 'https:'].includes(parsed.protocol))
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
         throw new Error('Download addresses must begin with http:// or https://.');
+      }
     }
-    if (filename && urls.length !== 1)
+    if (filename && urls.length !== 1) {
       throw new Error('A custom file name can only be used for a single address.');
+    }
     const scheduledAt = scheduled ? new Date(scheduled).toISOString() : undefined;
-    if (scheduledAt && new Date(scheduledAt).getTime() <= Date.now())
+    if (scheduledAt && new Date(scheduledAt).getTime() <= Date.now()) {
       throw new Error('Choose a future start time or leave Start at empty.');
+    }
     $('#add-submit').disabled = true;
     $('#add-later').disabled = true;
-    const directory = $('#add-directory').value,
-      selectedCategory = $('#download-category').value,
-      description = $('#download-description').value.trim();
-    if (rememberInput.checked && selectedCategory && directory)
+    const directory = $('#add-directory').value;
+    const selectedCategory = $('#download-category').value;
+    const description = $('#download-description').value.trim();
+    if (rememberInput.checked && selectedCategory && directory) {
       await call('settings', {
         categoryDirectories: {
           ...state.settings.categoryDirectories,
           [selectedCategory]: directory,
         },
       });
+    }
     const data = {
       ...(filename ? { filename } : {}),
       ...(scheduledAt ? { scheduledAt } : {}),
@@ -1230,7 +1394,9 @@ $('#add-form').addEventListener('submit', async (event) => {
 $('#choose-directory').addEventListener('click', async () => {
   try {
     const path = await call('chooseDirectory');
-    if (typeof path === 'string' && path) $('#default-directory').value = path;
+    if (typeof path === 'string' && path) {
+      $('#default-directory').value = path;
+    }
   } catch (error) {
     $('#settings-error').textContent = messageOf(error);
     $('#settings-error').hidden = false;
@@ -1260,18 +1426,24 @@ $('#settings-form').addEventListener('submit', async (event) => {
 async function start() {
   try {
     await refresh();
-    if (typeof api.subscribe === 'function')
+    if (typeof api.subscribe === 'function') {
       unsubscribe = api.subscribe((snapshot) => {
-        if (snapshot?.downloads) acceptSnapshot(snapshot);
-        else refresh().catch((error) => notify(messageOf(error), true));
+        if (snapshot?.downloads) {
+          acceptSnapshot(snapshot);
+        } else {
+          refresh().catch((error) => notify(messageOf(error), true));
+        }
       });
-    if (typeof api.onCommand === 'function')
+    }
+    if (typeof api.onCommand === 'function') {
       unsubscribeCommands = api.onCommand(async (payload) => {
         const command = typeof payload === 'string' ? payload : payload?.command;
         if (command === 'reviewDownload') {
           try {
             await refresh();
-            if (!$$('dialog[open]').length) openReview(payload.id);
+            if (!$$('dialog[open]').length) {
+              openReview(payload.id);
+            }
           } catch (error) {
             notify(messageOf(error), true);
           }
@@ -1280,9 +1452,11 @@ async function start() {
         if (
           !$$('dialog[open]').length ||
           ['pauseAll', 'resumeAll', 'removeCompleted'].includes(command)
-        )
+        ) {
           commands[command]?.();
+        }
       });
+    }
   } catch (error) {
     $('#download-list').setAttribute('aria-busy', 'false');
     $('#list-count').textContent = 'Download service unavailable';
@@ -1291,8 +1465,12 @@ async function start() {
   }
 }
 window.addEventListener('beforeunload', () => {
-  if (typeof unsubscribe === 'function') unsubscribe();
-  if (typeof unsubscribeCommands === 'function') unsubscribeCommands();
+  if (typeof unsubscribe === 'function') {
+    unsubscribe();
+  }
+  if (typeof unsubscribeCommands === 'function') {
+    unsubscribeCommands();
+  }
 });
 if (progressMode) {
   $('#details-dialog').addEventListener('close', () => call('closeProgress'));

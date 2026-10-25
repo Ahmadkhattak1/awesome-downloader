@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseHlsMaster } = require('./hls.js');
+
 test('HLS master uses actual resolution bandwidth codecs and relative variants', () => {
   const items = parseHlsMaster(
     '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=1280x720,CODECS="avc1.64001f,mp4a.40.2"\n720/video.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,AVERAGE-BANDWIDTH=2000000,RESOLUTION=1920x1080\nhttps://cdn.example/high.m3u8',
@@ -25,9 +26,10 @@ test('HLS separate audio is paired with video and missing resolution is not gues
 test('HLS parsing is bounded, rejects non-playlists, and retains VOD leaf identity', () => {
   assert.throws(() => parseHlsMaster('x'.repeat(1048577), 'https://example.com/a'));
   assert.throws(() => parseHlsMaster('not a playlist', 'https://example.com/a'));
-  const master =
-    '#EXTM3U\n' +
-    Array.from({ length: 25 }, (_, i) => `#EXT-X-STREAM-INF:BANDWIDTH=100\n${i}.m3u8`).join('\n');
+  const master = `#EXTM3U\n${Array.from(
+    { length: 25 },
+    (_, i) => `#EXT-X-STREAM-INF:BANDWIDTH=100\n${i}.m3u8`,
+  ).join('\n')}`;
   assert.equal(parseHlsMaster(master, 'https://example.com/a').length, 20);
   assert.equal(
     parseHlsMaster(

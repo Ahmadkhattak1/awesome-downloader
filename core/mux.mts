@@ -7,7 +7,9 @@ import path from 'node:path';
 const ffmpegPath = ffmpegStatic as unknown as string | null;
 
 export function ffmpegExecutable() {
-  if (!ffmpegPath) throw new Error('FFmpeg is not available for this platform.');
+  if (!ffmpegPath) {
+    throw new Error('FFmpeg is not available for this platform.');
+  }
   return ffmpegPath.replace('app.asar', 'app.asar.unpacked');
 }
 
@@ -21,9 +23,9 @@ export async function muxTracks(
     ['video', 0, videoCount],
     ['audio', videoCount, count],
   ] as const) {
-    const output = await fs.open(path.join(directory, name + '.track'), 'w');
+    const output = await fs.open(path.join(directory, `${name}.track`), 'w');
     try {
-      for (let i = start; i < end; i++) {
+      for (let i = start; i < end; i += 1) {
         const input = await fs.open(path.join(directory, `${i}.part`), 'r');
         try {
           for await (const chunk of input.createReadStream()) {
@@ -78,7 +80,7 @@ export async function muxTracks(
         ? resolve()
         : reject(
             new Error(
-              `Could not combine video and audio: ${error || 'media process exited ' + code}`,
+              `Could not combine video and audio: ${error || `media process exited ${code}`}`,
             ),
           ),
     );
@@ -92,7 +94,9 @@ export async function convertMedia(
   format: string,
   signal: AbortSignal,
 ) {
-  if (!['mp4', 'mp3'].includes(format)) throw new Error('Unsupported output format.');
+  if (!['mp4', 'mp3'].includes(format)) {
+    throw new Error('Unsupported output format.');
+  }
   const source = path.join(directory, 'conversion-source.track');
   const out = await fs.open(source, 'w');
   try {
@@ -110,7 +114,7 @@ export async function convertMedia(
   } finally {
     await out.close();
   }
-  const output = path.join(directory, 'converted.' + format);
+  const output = path.join(directory, `converted.${format}`);
   await new Promise<void>((resolve, reject) => {
     const args = [
       '-nostdin',
@@ -143,7 +147,7 @@ export async function convertMedia(
         ? resolve()
         : reject(
             new Error(
-              `Could not create ${format.toUpperCase()}: ${error || 'media process exited ' + code}`,
+              `Could not create ${format.toUpperCase()}: ${error || `media process exited ${code}`}`,
             ),
           ),
     );

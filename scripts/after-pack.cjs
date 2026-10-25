@@ -20,7 +20,9 @@ function machOArch(file) {
   } finally {
     fs.closeSync(descriptor);
   }
-  if (header.readUInt32LE(0) !== MACHO_64_MAGIC) return null;
+  if (header.readUInt32LE(0) !== MACHO_64_MAGIC) {
+    return null;
+  }
   const cpuType = header.readUInt32LE(4);
   return Object.keys(CPU_TYPES).find((arch) => CPU_TYPES[arch] === cpuType) || null;
 }
@@ -29,7 +31,9 @@ function machOArch(file) {
 // pinned by the installed package.
 function downloadFfmpeg(arch) {
   const binary = path.join(cacheDirectory, `ffmpeg-darwin-${arch}`, 'ffmpeg');
-  if (fs.existsSync(binary) && machOArch(binary) === arch) return binary;
+  if (fs.existsSync(binary) && machOArch(binary) === arch) {
+    return binary;
+  }
   fs.rmSync(path.dirname(binary), { recursive: true, force: true });
   fs.mkdirSync(path.dirname(binary), { recursive: true });
   execFileSync(process.execPath, [path.join(ffmpegStaticDirectory, 'install.js')], {
@@ -45,9 +49,13 @@ function downloadFfmpeg(arch) {
 }
 
 exports.default = async function afterPack(context) {
-  if (context.electronPlatformName !== 'darwin') return;
+  if (context.electronPlatformName !== 'darwin') {
+    return;
+  }
   const arch = Arch[context.arch];
-  if (!CPU_TYPES[arch]) throw new Error(`No FFmpeg build is configured for macOS ${arch}.`);
+  if (!CPU_TYPES[arch]) {
+    throw new Error(`No FFmpeg build is configured for macOS ${arch}.`);
+  }
   const resources = path.join(
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.app`,
@@ -55,7 +63,9 @@ exports.default = async function afterPack(context) {
     'Resources',
   );
   const packaged = path.join(resources, 'app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg');
-  if (machOArch(packaged) === arch) return;
+  if (machOArch(packaged) === arch) {
+    return;
+  }
 
   const source = downloadFfmpeg(arch);
   fs.copyFileSync(source, packaged);
@@ -65,5 +75,6 @@ exports.default = async function afterPack(context) {
   if (machOArch(packaged) !== arch) {
     throw new Error(`Packaged FFmpeg is not a macOS ${arch} binary: ${packaged}`);
   }
+  // eslint-disable-next-line no-console -- reports the swap in the build log.
   console.log(`  • replaced FFmpeg with the darwin-${arch} build`);
 };

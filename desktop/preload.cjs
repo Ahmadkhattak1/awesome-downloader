@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+
 const api = {};
 for (const name of [
   'snapshot',
@@ -14,8 +15,9 @@ for (const name of [
   'openProgress',
   'closeProgress',
   'resizeProgress',
-])
+]) {
   api[name] = (data) => ipcRenderer.invoke(`downloader:${name}`, data);
+}
 api.subscribe = (callback) => {
   const listener = (_event, data) => callback(data);
   ipcRenderer.on('downloader:change', listener);

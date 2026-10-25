@@ -3,69 +3,102 @@
   const pending = new Set();
   let stopped = false;
   function shutdown() {
-    if (stopped) return;
+    if (stopped) {
+      return;
+    }
     stopped = true;
-    removeEventListener('message', onPlayer);
+    globalThis.removeEventListener('message', onPlayer);
     try {
       api.runtime.onMessage.removeListener(onMessage);
-    } catch {}
-    for (const done of pending) done(false);
+    } catch {
+      // The extension context is already gone; nothing is listening anymore.
+    }
+    for (const done of pending) {
+      done(false);
+    }
     pending.clear();
   }
   function connected() {
-    if (stopped) return false;
+    if (stopped) {
+      return false;
+    }
     try {
-      if (api.runtime.id) return true;
-    } catch {}
+      if (api.runtime.id) {
+        return true;
+      }
+    } catch {
+      // Reading runtime.id throws once the extension has been reloaded.
+    }
     shutdown();
     return false;
   }
   async function onPlayer(event) {
-    if (!connected()) return;
-    if (event.source !== window || event.origin !== location.origin) return;
+    if (!connected()) {
+      return;
+    }
+    if (event.source !== window || event.origin !== globalThis.location.origin) {
+      return;
+    }
     if (event.data?.type === 'awesome-sabr-request') {
       const { url, body } = event.data.data || {};
-      if (typeof url !== 'string' || typeof body !== 'string' || body.length > 350000) return;
+      if (typeof url !== 'string' || typeof body !== 'string' || body.length > 350000) {
+        return;
+      }
       try {
         await api.runtime.sendMessage({ action: 'sabrRequest', data: { url, body } });
       } catch (error) {
-        if (/extension context invalidated/i.test(error?.message || '')) shutdown();
+        if (/extension context invalidated/i.test(error?.message || '')) {
+          shutdown();
+        }
       }
       return;
     }
-    if (event.data?.type !== 'awesome-player-response') return;
-    const data = event.data.data;
+    if (event.data?.type !== 'awesome-player-response') {
+      return;
+    }
+    const { data } = event.data;
     if (
       !data ||
       !/^[\w-]{11}$/.test(data.videoId || '') ||
       !Array.isArray(data.formats) ||
       data.formats.length > 150
-    )
+    ) {
       return;
+    }
     try {
       await api.runtime.sendMessage({ action: 'playerResponse', data });
-      for (const done of pending) done();
+      for (const done of pending) {
+        done();
+      }
       pending.clear();
     } catch (error) {
-      if (/extension context invalidated/i.test(error?.message || '')) shutdown();
+      if (/extension context invalidated/i.test(error?.message || '')) {
+        shutdown();
+      }
     }
   }
-  addEventListener('message', onPlayer);
+  globalThis.addEventListener('message', onPlayer);
   function onMessage(message, sender, respond) {
-    if (!connected() || sender.id !== api.runtime.id) return;
+    if (!connected() || sender.id !== api.runtime.id) {
+      return false;
+    }
     if (message.action === 'primeStream') {
       dispatchEvent(new Event('awesome-prime-stream'));
       respond({ ok: true });
-      return;
+      return false;
     }
-    if (message.action !== 'refreshPlayer') return;
+    if (message.action !== 'refreshPlayer') {
+      return false;
+    }
     let timer;
     const done = (ok = true) => {
       clearTimeout(timer);
       pending.delete(done);
       try {
         respond({ ok });
-      } catch {}
+      } catch {
+        // The caller stopped waiting for this answer.
+      }
     };
     pending.add(done);
     timer = setTimeout(done, 1500);

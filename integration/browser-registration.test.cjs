@@ -11,8 +11,8 @@ const {
 } = require('../desktop/browser-registration.cjs');
 const { encodeMessage } = require('./native-host.cjs');
 
-const chromeId = 'a'.repeat(32),
-  secondId = 'b'.repeat(32);
+const chromeId = 'a'.repeat(32);
+const secondId = 'b'.repeat(32);
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ad-registration-'));
@@ -48,12 +48,14 @@ test(
     await fs.symlink(process.execPath, runtime);
     await prepareNativeHost(integrationRoot, runtime, 'darwin');
     const script = path.join(integrationRoot, 'integration', 'native-host.sh');
-    assert.equal((await fs.stat(script)).mode & 0o777, 0o755);
+    assert.equal((await fs.stat(script)).mode.toString(8).slice(-3), '755');
     const child = spawn(script, [], { stdio: ['pipe', 'pipe', 'inherit'] });
     const output = [];
     child.stdout.on('data', (chunk) => output.push(chunk));
     child.stdin.end(encodeMessage({ action: 'unknown' }));
-    await new Promise((resolve) => child.on('close', resolve));
+    await new Promise((resolve) => {
+      child.on('close', resolve);
+    });
     const reply = Buffer.concat(output);
     assert.deepEqual(JSON.parse(reply.subarray(4, 4 + reply.readUInt32LE(0)).toString('utf8')), {
       ok: false,

@@ -25,12 +25,16 @@ interface RequestOptions {
 }
 
 export function validUrl(value: unknown): string {
-  if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
+  if (typeof value !== 'string' || value.length > 16384) {
+    throw new Error('Invalid download URL.');
+  }
   const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol))
+  if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error('Only HTTP and HTTPS downloads are supported.');
-  if (url.username || url.password)
+  }
+  if (url.username || url.password) {
     throw new Error('Use request headers for authentication, not credentials in URLs.');
+  }
   return url.href;
 }
 
@@ -46,18 +50,21 @@ export function cleanHeaders(input: Record<string, unknown> = {}): HeaderMap {
       typeof value === 'string' &&
       value.length <= 32768 &&
       !/[\r\n]/.test(value)
-    )
+    ) {
       headers[key.toLowerCase()] = value;
+    }
   }
   return headers;
 }
 
 export async function request(
-  url: string,
+  rawUrl: string,
   { method = 'GET', headers = {}, signal, redirects = 0 }: RequestOptions = {},
 ): Promise<HttpResponse> {
-  url = validUrl(url);
-  if (redirects > 10) throw new Error('Too many redirects.');
+  const url = validUrl(rawUrl);
+  if (redirects > 10) {
+    throw new Error('Too many redirects.');
+  }
   const send: typeof http.request = url.startsWith('https:') ? https.request : http.request;
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     const req = send(url, { method, headers, signal }, resolve);
@@ -91,8 +98,9 @@ export async function probe(
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   response.destroy();
-  if (info.status < 200 || info.status >= 300)
+  if (info.status < 200 || info.status >= 300) {
     throw new Error(`Server returned HTTP ${info.status}.`);
+  }
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);
   return {

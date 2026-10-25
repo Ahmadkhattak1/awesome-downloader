@@ -1,5 +1,7 @@
 /* Downloads require extension UI messages; page player metadata is bounded and sanitized. */
-if (typeof importScripts === 'function') importScripts('hls.js', 'youtube-media.js');
+if (typeof importScripts === 'function') {
+  importScripts('hls.js', 'youtube-media.js');
+}
 const api = globalThis.browser || chrome;
 const HOST = 'com.awesome.downloader';
 const CACHE_KEY = 'mediaByTab';
@@ -12,21 +14,23 @@ let serial = Promise.resolve();
 const requestContext = new Map();
 // Captured SABR requests are kept per tab and per stream: an ad or preview played in the
 // same tab must not replace the main video's capture.
-const youtubePlayers = new Map(),
-  youtubeObserved = new Map(),
-  youtubeSabrObserved = new Map(),
-  youtubeSabrSeed = new Map(),
-  youtubeSabrStats = new Map();
-const SABR_CAPTURES_PER_TAB = 5,
-  SABR_RETRY_POLLS = 40,
-  SABR_RETRY_INTERVAL_MS = 250;
+const youtubePlayers = new Map();
+const youtubeObserved = new Map();
+const youtubeSabrObserved = new Map();
+const youtubeSabrSeed = new Map();
+const youtubeSabrStats = new Map();
+const SABR_CAPTURES_PER_TAB = 5;
+const SABR_RETRY_POLLS = 40;
+const SABR_RETRY_INTERVAL_MS = 250;
 function clearSabrCapture(tabId) {
   youtubeSabrObserved.delete(tabId);
   youtubeSabrStats.delete(tabId);
-  for (const [id, seed] of youtubeSabrSeed) if (seed.tabId === tabId) youtubeSabrSeed.delete(id);
-  updateSession(SABR_KEY, (map) => {
-    delete map[tabId];
-  }).catch(() => {});
+  for (const [id, seed] of youtubeSabrSeed) {
+    if (seed.tabId === tabId) {
+      youtubeSabrSeed.delete(id);
+    }
+  }
+  updateSession(SABR_KEY, ({ [tabId]: removed, ...others }) => others).catch(() => {});
 }
 // The googlevideo `id` parameter names the media asset, so it tells streams apart.
 const sabrStream = (value) => {
@@ -41,14 +45,18 @@ function sabrStats(tabId) {
   if (!stats) {
     stats = { seen: 0, withoutBody: 0, fromPage: 0 };
     youtubeSabrStats.set(tabId, stats);
-    if (youtubeSabrStats.size > 50) youtubeSabrStats.delete(youtubeSabrStats.keys().next().value);
+    if (youtubeSabrStats.size > 50) {
+      youtubeSabrStats.delete(youtubeSabrStats.keys().next().value);
+    }
   }
   return stats;
 }
 const watchVideoId = (value) => {
   try {
     const page = new URL(value);
-    if (!['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(page.hostname)) return null;
+    if (!['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(page.hostname)) {
+      return null;
+    }
     const id = page.searchParams.get('v') || /^\/shorts\/([\w-]{11})/.exec(page.pathname)?.[1];
     return /^[\w-]{11}$/.test(id || '') ? id : null;
   } catch {
@@ -67,23 +75,29 @@ async function rememberSabrCapture(tabId, seed) {
   if (!captures) {
     captures = new Map();
     youtubeSabrObserved.set(tabId, captures);
-    if (youtubeSabrObserved.size > 50)
+    if (youtubeSabrObserved.size > 50) {
       youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
+    }
   }
   captures.delete(key);
   captures.set(key, capture);
-  for (const old of [...captures.keys()].slice(0, -SABR_CAPTURES_PER_TAB)) captures.delete(old);
+  for (const old of [...captures.keys()].slice(0, -SABR_CAPTURES_PER_TAB)) {
+    captures.delete(old);
+  }
   // The page address names the main video even while an ad plays, and a worker woken by
   // this request has not yet seen the page's player data.
   try {
     capture.videoId = watchVideoId((await api.tabs.get(tabId)).url) || capture.videoId;
-  } catch {}
+  } catch {
+    // The tab may already be gone; keep the video ID from the player data.
+  }
   await updateSession(SABR_KEY, (map) => {
-    const stored = { ...map[tabId] };
-    delete stored[key];
-    stored[key] = capture;
-    for (const old of Object.keys(stored).slice(0, -SABR_CAPTURES_PER_TAB)) delete stored[old];
-    map[tabId] = stored;
+    // Re-adding the key moves it to the end, so the oldest captures are dropped first.
+    const { [key]: replaced, ...others } = map[tabId] || {};
+    const stored = Object.fromEntries(
+      Object.entries({ ...others, [key]: capture }).slice(-SABR_CAPTURES_PER_TAB),
+    );
+    return { ...map, [tabId]: stored };
   });
 }
 // Prefer the capture of the player's own stream; fall back to one recorded on its page.
@@ -97,7 +111,9 @@ function matchingCapture(captures, player) {
 }
 async function sabrCapture(tabId, player) {
   const found = matchingCapture(youtubeSabrObserved.get(tabId)?.values() || [], player);
-  if (found) return found;
+  if (found) {
+    return found;
+  }
   // After a worker restart, only session storage still has the earlier captures.
   await serial;
   const stored = (await api.storage.session.get(SABR_KEY))[SABR_KEY]?.[tabId];
@@ -107,26 +123,34 @@ async function sabrCapture(tabId, player) {
 // again and wait for that request to be captured.
 async function waitForSabrCapture(tabId, player) {
   await api.tabs.sendMessage(tabId, { action: 'primeStream' }).catch(() => {});
-  for (let i = 0; i < SABR_RETRY_POLLS; i++) {
-    await new Promise((resolve) => setTimeout(resolve, SABR_RETRY_INTERVAL_MS));
+  for (let i = 0; i < SABR_RETRY_POLLS; i += 1) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, SABR_RETRY_INTERVAL_MS);
+    });
     const captured = await sabrCapture(tabId, player);
-    if (captured) return captured;
+    if (captured) {
+      return captured;
+    }
   }
+  return undefined;
 }
 function bytesBase64(bytes) {
   let binary = '';
   const view = new Uint8Array(bytes);
-  for (let i = 0; i < view.length; i += 8192)
+  for (let i = 0; i < view.length; i += 8192) {
     binary += String.fromCharCode(...view.subarray(i, i + 8192));
+  }
   return btoa(binary);
 }
 api.webRequest.onBeforeRequest?.addListener(
   (details) => {
-    const url = globalThis.youtubeMedia?.sabrUrl(details.url),
-      raw = details.requestBody?.raw;
-    if (!url || details.tabId < 0) return;
+    const url = globalThis.youtubeMedia?.sabrUrl(details.url);
+    const raw = details.requestBody?.raw;
+    if (!url || details.tabId < 0) {
+      return;
+    }
     const stats = sabrStats(details.tabId);
-    stats.seen++;
+    stats.seen += 1;
     let size = 0;
     for (const part of Array.isArray(raw) ? raw : []) {
       if (!part.bytes) {
@@ -136,7 +160,7 @@ api.webRequest.onBeforeRequest?.addListener(
       size += part.bytes.byteLength;
     }
     if (!size || size > 262144) {
-      stats.withoutBody++;
+      stats.withoutBody += 1;
       return;
     }
     const bytes = new Uint8Array(size);
@@ -150,18 +174,24 @@ api.webRequest.onBeforeRequest?.addListener(
       url,
       requestBody: bytesBase64(bytes),
     });
-    if (youtubeSabrSeed.size > 100) youtubeSabrSeed.delete(youtubeSabrSeed.keys().next().value);
+    if (youtubeSabrSeed.size > 100) {
+      youtubeSabrSeed.delete(youtubeSabrSeed.keys().next().value);
+    }
   },
   { urls: ['https://*.googlevideo.com/videoplayback*', 'https://googlevideo.com/videoplayback*'] },
   ['requestBody'],
 );
 function rememberRequest(details) {
-  if (details.tabId < 0 || !httpUrl(details.url)) return;
+  if (details.tabId < 0 || !httpUrl(details.url)) {
+    return;
+  }
   let tab = requestContext.get(details.tabId);
   if (!tab) {
     tab = new Map();
     requestContext.set(details.tabId, tab);
-    if (requestContext.size > 50) requestContext.delete(requestContext.keys().next().value);
+    if (requestContext.size > 50) {
+      requestContext.delete(requestContext.keys().next().value);
+    }
   }
   const headers = {};
   for (const h of details.requestHeaders || []) {
@@ -171,11 +201,14 @@ function rememberRequest(details) {
       typeof h.value === 'string' &&
       h.value.length <= 16384 &&
       !/[\r\n]/.test(h.value)
-    )
+    ) {
       headers[name] = h.value;
+    }
   }
   tab.set(details.url, headers);
-  if (tab.size > 100) tab.delete(tab.keys().next().value);
+  if (tab.size > 100) {
+    tab.delete(tab.keys().next().value);
+  }
 }
 api.webRequest.onBeforeSendHeaders?.addListener(
   rememberRequest,
@@ -199,27 +232,37 @@ function isFragment(url) {
 const hlsSeen = new Map();
 let hlsActive = 0;
 async function discoverHls(tabId, url) {
-  if (tabId < 0 || hlsActive >= 8) return;
+  if (tabId < 0 || hlsActive >= 8) {
+    return;
+  }
   let seen = hlsSeen.get(tabId);
   if (!seen) {
     seen = new Set();
     hlsSeen.set(tabId, seen);
-    if (hlsSeen.size > 50) hlsSeen.delete(hlsSeen.keys().next().value);
+    if (hlsSeen.size > 50) {
+      hlsSeen.delete(hlsSeen.keys().next().value);
+    }
   }
-  if (seen.has(url) || seen.size >= 20) return;
+  if (seen.has(url) || seen.size >= 20) {
+    return;
+  }
   seen.add(url);
-  hlsActive++;
-  const controller = new AbortController(),
-    timer = setTimeout(() => controller.abort(), 10000);
+  hlsActive += 1;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
   try {
     const response = await fetch(url, { signal: controller.signal, credentials: 'omit' });
-    if (!response.ok) throw new Error('Manifest fetch failed.');
+    if (!response.ok) {
+      throw new Error('Manifest fetch failed.');
+    }
     const reader = response.body.getReader();
     let size = 0;
     const chunks = [];
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
       size += value.length;
       if (size > 1048576) {
         await reader.cancel();
@@ -240,29 +283,36 @@ async function discoverHls(tabId, url) {
     let title = '';
     try {
       title = (await api.tabs.get(tabId)).title || '';
-    } catch {}
-    if (hlsSeen.get(tabId) === seen)
+    } catch {
+      // The tab may already be gone; the variants are still worth listing.
+    }
+    if (hlsSeen.get(tabId) === seen) {
       await remember(
         tabId,
         variants.map((item) => ({ ...item, title })),
       );
+    }
   } catch {
+    // Unreachable, oversized or invalid manifests are simply not listed.
   } finally {
     clearTimeout(timer);
-    hlsActive--;
+    hlsActive -= 1;
   }
 }
 function nativeSend(payload) {
   return new Promise((resolve, reject) => {
     // Chrome callbacks retain useful runtime.lastError diagnostics.
-    if (!globalThis.browser)
+    if (!globalThis.browser) {
       chrome.runtime.sendNativeMessage(HOST, payload, (result) => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else if (!result?.ok)
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else if (!result?.ok) {
           reject(new Error(result?.error || 'The desktop app did not accept this download.'));
-        else resolve(result);
+        } else {
+          resolve(result);
+        }
       });
-    else
+    } else {
       browser.runtime
         .sendNativeMessage(HOST, payload)
         .then(
@@ -272,22 +322,24 @@ function nativeSend(payload) {
               : reject(new Error(result?.error || 'Desktop rejected download.')),
           reject,
         );
+    }
   });
 }
 async function enqueue(item, tabId) {
   let sabr;
   if (item.sabrSelection) {
-    const player = youtubePlayers.get(tabId),
-      selection = item.sabrSelection;
-    const videoItag = selection.videoItag === undefined ? undefined : Number(selection.videoItag),
-      audioItag = Number(selection.audioItag);
+    const player = youtubePlayers.get(tabId);
+    const selection = item.sabrSelection;
+    const videoItag = selection.videoItag === undefined ? undefined : Number(selection.videoItag);
+    const audioItag = Number(selection.audioItag);
     if (
       !player ||
       !Number.isSafeInteger(audioItag) ||
       audioItag <= 0 ||
       (videoItag !== undefined && (!Number.isSafeInteger(videoItag) || videoItag <= 0))
-    )
+    ) {
       throw new Error('The captured YouTube session expired. Reopen the menu.');
+    }
     const audio = player.formats.find(
       (f) => f.itag === audioItag && /^audio\/mp4/i.test(f.mimeType),
     );
@@ -309,10 +361,11 @@ async function enqueue(item, tabId) {
       (videoItag !== undefined && !video) ||
       !globalThis.youtubeMedia.sabrUrl(serverAbrStreamingUrl) ||
       !player.ustreamerConfig
-    )
+    ) {
       throw new Error(
         'The captured YouTube SABR session is incomplete. Play the video briefly and reopen the menu.',
       );
+    }
     sabr = {
       videoId: player.videoId,
       serverAbrStreamingUrl,
@@ -325,9 +378,12 @@ async function enqueue(item, tabId) {
     };
   }
   const url = httpUrl(sabr?.serverAbrStreamingUrl || item.url);
-  if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
-  if (unsupported(url, item.mime) || item.unsupported)
+  if (!url) {
+    throw new Error('Only direct HTTP and HTTPS links are supported.');
+  }
+  if (unsupported(url, item.mime) || item.unsupported) {
     throw new Error(item.reason || 'DASH streams are unsupported.');
+  }
   const requestHeaders = requestContext.get(tabId)?.get(url);
   return nativeSend({
     action: 'download',
@@ -345,67 +401,77 @@ async function enqueue(item, tabId) {
 function updateCache(change) {
   return updateSession(CACHE_KEY, change);
 }
+// `change` receives the stored map and returns the map to store.
 function updateSession(key, change) {
   const next = serial.then(async () => {
     const data = await api.storage.session.get(key);
-    const map = data[key] || {};
-    await change(map);
+    const changed = await change(data[key] || {});
     // Bound total tracked tabs as well as each tab's results.
-    const keys = Object.keys(map);
-    keys.slice(0, Math.max(0, keys.length - 50)).forEach((key) => delete map[key]);
-    await api.storage.session.set({ [key]: map });
+    const bounded = Object.fromEntries(Object.entries(changed).slice(-50));
+    await api.storage.session.set({ [key]: bounded });
   });
   serial = next.catch(() => {});
   return next;
 }
-async function remember(tabId, items) {
-  if (tabId < 0) return;
-  await updateCache((map) => {
-    const prior = map[tabId] || [];
-    for (const item of items.slice(0, 100)) {
-      const url = httpUrl(item.url);
-      if (!url || isFragment(url)) continue;
-      const value = {
-        url,
-        mime: String(item.mime || '').slice(0, 100),
-        title: String(item.title || '').slice(0, 180),
-        quality: String(item.quality || '').slice(0, 40),
-        bitrate: Number(item.bitrate) || 0,
-        format: String(item.format || '').slice(0, 20),
-        separateAudio: !!item.separateAudio,
-        reason: String(item.reason || '').slice(0, 180),
-        unsupported: unsupported(url, item.mime) || !!item.unsupported,
-      };
-      value.audioUrl = httpUrl(item.audioUrl) || undefined;
-      value.codecs = String(item.codecs || '').slice(0, 200);
-      value.masterUrl = httpUrl(item.masterUrl) || undefined;
-      const existing = prior.findIndex((v) => v.url === url);
-      if (existing >= 0) {
-        const previous = prior[existing];
-        if (previous.format === 'HLS' && !item.format) {
-          if (value.title) previous.title = value.title;
-          continue;
-        }
-        prior[existing] = {
-          ...previous,
-          ...value,
-          audioUrl: value.audioUrl || previous.audioUrl,
-          codecs: value.codecs || previous.codecs,
-          masterUrl: value.masterUrl || previous.masterUrl,
-          title: value.title || previous.title,
-          quality: value.quality || previous.quality,
-          bitrate: value.bitrate || previous.bitrate,
-          format: value.format || previous.format,
-          separateAudio: value.separateAudio || previous.separateAudio,
-          unsupported: value.unsupported || previous.unsupported,
-          reason: value.reason || previous.reason,
-        };
-        continue;
-      }
-      prior.push(value);
+// Adds one observed item to a tab's list, or refreshes the entry it repeats.
+function rememberItem(prior, item) {
+  const url = httpUrl(item.url);
+  if (!url || isFragment(url)) {
+    return prior;
+  }
+  const value = {
+    url,
+    mime: String(item.mime || '').slice(0, 100),
+    title: String(item.title || '').slice(0, 180),
+    quality: String(item.quality || '').slice(0, 40),
+    bitrate: Number(item.bitrate) || 0,
+    format: String(item.format || '').slice(0, 20),
+    separateAudio: !!item.separateAudio,
+    reason: String(item.reason || '').slice(0, 180),
+    unsupported: unsupported(url, item.mime) || !!item.unsupported,
+  };
+  value.audioUrl = httpUrl(item.audioUrl) || undefined;
+  value.codecs = String(item.codecs || '').slice(0, 200);
+  value.masterUrl = httpUrl(item.masterUrl) || undefined;
+  const existing = prior.findIndex((v) => v.url === url);
+  if (existing < 0) {
+    return [...prior, value];
+  }
+  const previous = prior[existing];
+  if (previous.format === 'HLS' && !item.format) {
+    if (value.title) {
+      previous.title = value.title;
     }
-    map[tabId] = prior.slice(-100);
-  });
+    return prior;
+  }
+  const next = [...prior];
+  next[existing] = {
+    ...previous,
+    ...value,
+    audioUrl: value.audioUrl || previous.audioUrl,
+    codecs: value.codecs || previous.codecs,
+    masterUrl: value.masterUrl || previous.masterUrl,
+    title: value.title || previous.title,
+    quality: value.quality || previous.quality,
+    bitrate: value.bitrate || previous.bitrate,
+    format: value.format || previous.format,
+    separateAudio: value.separateAudio || previous.separateAudio,
+    unsupported: value.unsupported || previous.unsupported,
+    reason: value.reason || previous.reason,
+  };
+  return next;
+}
+async function remember(tabId, items) {
+  if (tabId < 0) {
+    return;
+  }
+  await updateCache((map) => ({
+    ...map,
+    [tabId]: items
+      .slice(0, 100)
+      .reduce(rememberItem, map[tabId] || [])
+      .slice(-100),
+  }));
 }
 api.webRequest.onHeadersReceived.addListener(
   (details) => {
@@ -415,8 +481,9 @@ api.webRequest.onHeadersReceived.addListener(
     const capturedSabr = globalThis.youtubeMedia?.sabrUrl(details.url);
     if (capturedSabr && details.tabId >= 0 && [200, 206].includes(details.statusCode)) {
       const seed = youtubeSabrSeed.get(details.requestId);
-      if (seed?.tabId === details.tabId && seed.url === capturedSabr)
+      if (seed?.tabId === details.tabId && seed.url === capturedSabr) {
         rememberSabrCapture(details.tabId, seed).catch(() => {});
+      }
       youtubeSabrSeed.delete(details.requestId);
     }
     if (
@@ -426,9 +493,13 @@ api.webRequest.onHeadersReceived.addListener(
       /^(video|audio)\//i.test(mime)
     ) {
       const urls = youtubeObserved.get(details.tabId) || [];
-      if (!urls.includes(captured)) urls.unshift(captured);
+      if (!urls.includes(captured)) {
+        urls.unshift(captured);
+      }
       youtubeObserved.set(details.tabId, urls.slice(0, 100));
-      if (youtubeObserved.size > 50) youtubeObserved.delete(youtubeObserved.keys().next().value);
+      if (youtubeObserved.size > 50) {
+        youtubeObserved.delete(youtubeObserved.keys().next().value);
+      }
     }
     if (
       details.type === 'media' ||
@@ -437,8 +508,9 @@ api.webRequest.onHeadersReceived.addListener(
     ) {
       remember(details.tabId, [{ url: details.url, mime }]).catch(() => {});
     }
-    if (/\.m3u8(?:[?#]|$)/i.test(details.url) || /mpegurl/i.test(mime))
+    if (/\.m3u8(?:[?#]|$)/i.test(details.url) || /mpegurl/i.test(mime)) {
       discoverHls(details.tabId, details.url);
+    }
   },
   { urls: ['http://*/*', 'https://*/*'] },
   ['responseHeaders'],
@@ -449,9 +521,7 @@ api.tabs.onRemoved.addListener((tabId) => {
   clearSabrCapture(tabId);
   requestContext.delete(tabId);
   hlsSeen.delete(tabId);
-  updateCache((map) => {
-    delete map[tabId];
-  }).catch(() => {});
+  updateCache(({ [tabId]: removed, ...others }) => others).catch(() => {});
 });
 api.tabs.onUpdated.addListener((tabId, change) => {
   if (change.status === 'loading') {
@@ -460,9 +530,7 @@ api.tabs.onUpdated.addListener((tabId, change) => {
     clearSabrCapture(tabId);
     requestContext.delete(tabId);
     hlsSeen.delete(tabId);
-    updateCache((map) => {
-      delete map[tabId];
-    }).catch(() => {});
+    updateCache(({ [tabId]: removed, ...others }) => others).catch(() => {});
   }
 });
 api.runtime.onInstalled.addListener(async () => {
@@ -493,11 +561,15 @@ api.contextMenus.onClicked.addListener(async (info, tab) => {
     await api.action.setBadgeText({ tabId: tab.id, text: 'OK' });
   } catch (e) {
     await api.storage.local.set({ lastError: e.message });
-    if (tab?.id) await api.action.setBadgeText({ tabId: tab.id, text: '!' });
+    if (tab?.id) {
+      await api.action.setBadgeText({ tabId: tab.id, text: '!' });
+    }
   }
 });
 api.runtime.onMessage.addListener((message, sender, respond) => {
-  if (sender.id !== api.runtime.id) return false;
+  if (sender.id !== api.runtime.id) {
+    return false;
+  }
   const task = async () => {
     // A copy of a successful streaming request, taken by the YouTube page script.
     if (message.action === 'sabrRequest' && sender.tab) {
@@ -510,9 +582,10 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
         !body ||
         body.length > 350000 ||
         !/^[A-Za-z0-9+/]*={0,2}$/.test(body)
-      )
+      ) {
         throw new Error('Invalid streaming request.');
-      sabrStats(sender.tab.id).fromPage++;
+      }
+      sabrStats(sender.tab.id).fromPage += 1;
       await rememberSabrCapture(sender.tab.id, {
         tabId: sender.tab.id,
         url,
@@ -522,19 +595,25 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
     }
     if (message.action === 'playerResponse' && sender.tab) {
       const page = new URL(sender.url || sender.tab.url || 'https://invalid.local');
-      if (!['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(page.hostname))
+      if (!['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(page.hostname)) {
         throw new Error('Invalid player source.');
-      const data = message.data;
-      if (!data || !Array.isArray(data.formats) || data.formats.length > 150)
+      }
+      const { data } = message;
+      if (!data || !Array.isArray(data.formats) || data.formats.length > 150) {
         throw new Error('Invalid player data.');
+      }
       const clean = globalThis.youtubeMedia.sanitizePlayer(data);
       if (clean) {
         const previous = youtubePlayers.get(sender.tab.id);
         // Captures are matched to their own stream, so they are kept when an ad's
         // or preview's player data arrives in between.
-        if (previous && previous.videoId !== clean.videoId) youtubeObserved.delete(sender.tab.id);
+        if (previous && previous.videoId !== clean.videoId) {
+          youtubeObserved.delete(sender.tab.id);
+        }
         youtubePlayers.set(sender.tab.id, clean);
-        if (youtubePlayers.size > 50) youtubePlayers.delete(youtubePlayers.keys().next().value);
+        if (youtubePlayers.size > 50) {
+          youtubePlayers.delete(youtubePlayers.keys().next().value);
+        }
       }
       return { ok: true };
     }
@@ -555,7 +634,9 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       const page = new URL(sender.tab.url || 'https://invalid.local');
       if (['www.youtube.com', 'youtube.com', 'm.youtube.com'].includes(page.hostname)) {
         const id = watchVideoId(page.href);
-        if (!id) return { ok: true, items: [] };
+        if (!id) {
+          return { ok: true, items: [] };
+        }
         await api.tabs.sendMessage(sender.tab.id, { action: 'refreshPlayer' }).catch(() => {});
         const player = youtubePlayers.get(sender.tab.id);
         const active = player?.videoId === id ? player : null;
@@ -593,7 +674,9 @@ api.downloads.onCreated.addListener(async (item) => {
   let paused = false;
   try {
     const { interceptDownloads = false } = await api.storage.local.get('interceptDownloads');
-    if (!interceptDownloads || !httpUrl(item.finalUrl || item.url)) return;
+    if (!interceptDownloads || !httpUrl(item.finalUrl || item.url)) {
+      return;
+    }
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id);
     paused = true;
@@ -607,7 +690,9 @@ api.downloads.onCreated.addListener(async (item) => {
     );
     await api.downloads.cancel(item.id);
   } catch (e) {
-    if (paused) await api.downloads.resume(item.id).catch(() => {});
+    if (paused) {
+      await api.downloads.resume(item.id).catch(() => {});
+    }
     await api.storage.local.set({ lastError: `Browser download was kept: ${e.message}` });
   }
 });

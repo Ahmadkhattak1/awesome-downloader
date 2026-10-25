@@ -5,21 +5,25 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 function harness(file, mode) {
-  const events = new Map(),
-    observers = [],
-    hosts = [],
-    callbacks = new Set();
-  let calls = 0,
-    id = 'test-extension',
-    removed = 0;
+  const events = new Map();
+  const observers = [];
+  const hosts = [];
+  const callbacks = new Set();
+  let calls = 0;
+  let id = 'test-extension';
+  let removed = 0;
   const runtime = {
     get id() {
       return id;
     },
     sendMessage() {
-      calls++;
-      if (mode === 'throw') throw new Error('Extension context invalidated.');
-      if (mode === 'reject') return Promise.reject(new Error('Extension context invalidated.'));
+      calls += 1;
+      if (mode === 'throw') {
+        throw new Error('Extension context invalidated.');
+      }
+      if (mode === 'reject') {
+        return Promise.reject(new Error('Extension context invalidated.'));
+      }
       return Promise.resolve({ ok: true });
     },
     onMessage: {
@@ -38,10 +42,18 @@ function harness(file, mode) {
   class Observer {
     constructor(fn) {
       this.fn = fn;
+      this.targets = new Set();
       observers.push(this);
     }
-    observe() {}
-    unobserve() {}
+
+    observe(target) {
+      this.targets.add(target);
+    }
+
+    unobserve(target) {
+      this.targets.delete(target);
+    }
+
     disconnect() {
       this.disconnected = true;
     }
@@ -62,7 +74,7 @@ function harness(file, mode) {
     title: 'Video',
     documentElement: {
       appendChild(host) {
-        host.parentNode = this;
+        Object.assign(host, { parentNode: this });
       },
     },
     querySelectorAll(selector) {
@@ -73,7 +85,7 @@ function harness(file, mode) {
       const host = {
         style: {},
         remove() {
-          removed++;
+          removed += 1;
         },
         attachShadow() {
           return {
@@ -136,7 +148,9 @@ function harness(file, mode) {
 for (const mode of ['throw', 'reject']) {
   test(`content script cleans up after ${mode} from invalidated messaging`, async () => {
     const h = harness('content.js', mode);
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
     assert.equal(h.calls, 1);
     assert.equal(h.removed, 1);
     assert.ok(h.observers.every((observer) => observer.disconnected));
@@ -193,8 +207,8 @@ test('missing runtime ID retires page scripts without sending again', () => {
 });
 
 test('page scrolling dismisses chooser and does not pin an offscreen video button', async () => {
-  const h = harness('content.js', 'success'),
-    host = h.hosts[0];
+  const h = harness('content.js', 'success');
+  const host = h.hosts[0];
   host.chooser = {
     remove() {
       delete host.chooser;
@@ -211,7 +225,9 @@ test('page scrolling dismisses chooser and does not pin an offscreen video butto
     width: 600,
     height: 330,
   });
-  await new Promise((resolve) => setTimeout(resolve, 180));
+  await new Promise((resolve) => {
+    setTimeout(resolve, 180);
+  });
   assert.equal(host.style.display, 'none');
   h.invalidate();
   h.events.get('resize')();

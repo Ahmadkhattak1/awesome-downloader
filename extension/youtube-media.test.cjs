@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { mediaUrl, playerData, choices } = require('./youtube-media.js');
+
 const url = (itag, id = 'asset') =>
   `https://r1.googlevideo.com/videoplayback?id=${id}&itag=${itag}&expire=9999999999`;
 const player = (formats) =>
@@ -36,13 +37,13 @@ test('an observed resolved URL must match both asset and itag', () => {
     choices(data, [url(137, 'wrong')]).some((x) => x.format === 'MP4'),
     false,
   );
-  assert.equal(choices(data, [url(137) + '&sig=resolved'])[0].format, 'MP4');
+  assert.equal(choices(data, [`${url(137)}&sig=resolved`])[0].format, 'MP4');
 });
 test('reject fragments, lookalike hosts and signed partial ranges', () => {
   assert.equal(mediaUrl('https://googlevideo.com.evil.test/videoplayback'), null);
-  assert.equal(mediaUrl(url(137) + '&sq=2'), null);
-  assert.equal(mediaUrl(url(137) + '&range=0-100&sparams=id,range'), null);
-  assert.equal(new URL(mediaUrl(url(137) + '&range=0-100')).searchParams.has('range'), false);
+  assert.equal(mediaUrl(`${url(137)}&sq=2`), null);
+  assert.equal(mediaUrl(`${url(137)}&range=0-100&sparams=id,range`), null);
+  assert.equal(new URL(mediaUrl(`${url(137)}&range=0-100`)).searchParams.has('range'), false);
 });
 test('expired formats and live/DRM tracks are not selectable', () => {
   assert.equal(choices(player([{ ...audio, url: url(140).replace('9999999999', '1') }])).length, 0);
@@ -59,7 +60,7 @@ test('SABR metadata is detected without inventing downloadable URLs', () => {
   });
   assert.equal(data.sabr, true);
   assert.deepEqual(choices(data), []);
-  assert.equal(mediaUrl(url(137) + '&sabr=1'), null);
+  assert.equal(mediaUrl(`${url(137)}&sabr=1`), null);
 });
 test('SABR metadata produces real video plus audio choices when the browser session is complete', () => {
   const stream = 'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';

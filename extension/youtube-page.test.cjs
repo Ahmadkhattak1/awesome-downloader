@@ -4,22 +4,32 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const youtubeMedia = require('./youtube-media.js');
+
 const sabrUrl = 'https://r1.googlevideo.com/videoplayback?id=wLdZWyLOJCI-asset&sabr=1&rn=3';
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
 
 // Runs youtube-page.js against a stand-in page whose own fetch/XHR answer with `status`.
 function page({ status = 200 } = {}) {
-  const posted = [],
-    sent = [];
+  const posted = [];
+  const sent = [];
   class FakeXMLHttpRequest {
     constructor() {
       this.listeners = {};
       this.status = status;
     }
+
     addEventListener(name, fn) {
       this.listeners[name] = fn;
     }
-    open() {}
+
+    open(method, url) {
+      this.url = url;
+    }
+
     send(body) {
       sent.push(body);
       setTimeout(() => this.listeners.load?.(), 0);
@@ -49,7 +59,7 @@ function page({ status = 200 } = {}) {
     Blob,
     btoa,
     setTimeout,
-    youtubeMedia: require('./youtube-media.js'),
+    youtubeMedia,
   });
   return { window, XMLHttpRequest: FakeXMLHttpRequest, posted, sent };
 }
@@ -75,8 +85,8 @@ test('a SABR Request object is copied without consuming the page’s own body', 
 });
 
 test('a SABR XMLHttpRequest body is copied after it loads', async () => {
-  const h = page(),
-    xhr = new h.XMLHttpRequest();
+  const h = page();
+  const xhr = new h.XMLHttpRequest();
   xhr.open('POST', sabrUrl);
   xhr.send(Uint8Array.from([1, 2, 3]));
   await settle();

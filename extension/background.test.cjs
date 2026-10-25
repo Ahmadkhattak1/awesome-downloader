@@ -3,11 +3,14 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
+
+const youtubeMedia = require('./youtube-media.js');
+
 // Pass a previous harness's `data` to simulate Chrome restarting the service worker:
 // memory is lost, storage.session survives. `onTabMessage` sees messages sent to the page.
 function harness(data = {}, { onTabMessage } = {}) {
-  const events = {},
-    nativeRequests = [];
+  const events = {};
+  const nativeRequests = [];
   const event = (name) => ({
     addListener(fn) {
       events[name] = fn;
@@ -19,9 +22,6 @@ function harness(data = {}, { onTabMessage } = {}) {
     },
     async set(value) {
       Object.assign(data, structuredClone(value));
-    },
-    async remove(key) {
-      delete data[key];
     },
   };
   const browser = {
@@ -41,7 +41,7 @@ function harness(data = {}, { onTabMessage } = {}) {
       onBeforeSendHeaders: event('requestHeaders'),
     },
     tabs: { onRemoved: event('removed'), onUpdated: event('updated') },
-    contextMenus: { onClicked: event('context'), async removeAll() {}, create() {} },
+    contextMenus: { onClicked: event('context'), removeAll: () => Promise.resolve(), create() {} },
     downloads: { onCreated: event('download') },
     action: {},
   };
@@ -58,7 +58,7 @@ function harness(data = {}, { onTabMessage } = {}) {
     URLSearchParams,
     Uint8Array,
     btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
-    youtubeMedia: require('./youtube-media.js'),
+    youtubeMedia,
   });
   return {
     events,
@@ -67,14 +67,16 @@ function harness(data = {}, { onTabMessage } = {}) {
     request(message, sender) {
       return new Promise((resolve) => {
         const accepted = events.message(message, sender, resolve);
-        if (accepted !== true) resolve(undefined);
+        if (accepted !== true) {
+          resolve(undefined);
+        }
       });
     },
   };
 }
 test('video selection forwards explicit one-click download intent', async () => {
-  const h = harness(),
-    sender = { id: 'extension-id', tab: { id: 3 } };
+  const h = harness();
+  const sender = { id: 'extension-id', tab: { id: 3 } };
   await h.request(
     { action: 'download', item: { url: 'https://example.com/video.mp4', startNow: true } },
     sender,
@@ -84,11 +86,11 @@ test('video selection forwards explicit one-click download intent', async () => 
   assert.equal(h.nativeRequests[1].startNow, false);
 });
 test('YouTube menu uses captured player formats without a desktop discovery request', async () => {
-  const h = harness(),
-    sender = {
-      id: 'extension-id',
-      tab: { id: 7, url: 'https://www.youtube.com/watch?v=wLdZWyLOJCI' },
-    };
+  const h = harness();
+  const sender = {
+    id: 'extension-id',
+    tab: { id: 7, url: 'https://www.youtube.com/watch?v=wLdZWyLOJCI' },
+  };
   const base = 'https://r1.googlevideo.com/videoplayback?id=asset&expire=9999999999&itag=';
   await h.request(
     {
@@ -173,22 +175,25 @@ function observeSabrRequest(
     responseHeaders: [{ name: 'Content-Type', value: 'application/vnd.yt-ump' }],
   });
 }
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const settle = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
 const sabrItem = async (h, sender) =>
   (await h.request({ action: 'listForFrame' }, sender)).items.find(
     (value) => value.quality === '1080p',
   );
 test('captured SABR request context is handed to the desktop with the selected tracks', async () => {
-  const h = harness(),
-    sender = sabrSender(),
-    stream = sabrStream();
+  const h = harness();
+  const sender = sabrSender();
+  const stream = sabrStream();
   await h.request(sabrPlayer(), sender);
   observeSabrRequest(h);
   // A later in-flight or rejected request must not replace the successful body.
   h.events.beforeRequest({
     requestId: 'pending',
     tabId: 8,
-    url: stream + '&seq=2',
+    url: `${stream}&seq=2`,
     requestBody: { raw: [{ bytes: Uint8Array.from([4, 5, 6]).buffer }] },
   });
   const item = (await h.request({ action: 'listForFrame' }, sender)).items.find(
@@ -200,7 +205,7 @@ test('captured SABR request context is handed to the desktop with the selected t
   assert.equal(h.nativeRequests[0].sabr.audioItag, 140);
   assert.equal(h.nativeRequests[0].sabr.requestBody, 'AQID');
   assert.equal(h.nativeRequests[0].sabr.serverAbrStreamingUrl, stream);
-  h.events.response({ requestId: 'pending', tabId: 8, url: stream + '&seq=2', statusCode: 403 });
+  h.events.response({ requestId: 'pending', tabId: 8, url: `${stream}&seq=2`, statusCode: 403 });
   await h.request({ action: 'download', item: { ...item, startNow: true } }, sender);
   assert.equal(h.nativeRequests[1].sabr.requestBody, 'AQID');
   h.events.updated(8, { status: 'loading' });
@@ -212,8 +217,8 @@ test('captured SABR request context is handed to the desktop with the selected t
   assert.equal(h.nativeRequests.length, 2);
 });
 test('a SABR capture survives Chrome stopping the idle service worker', async () => {
-  const playing = harness(),
-    sender = sabrSender();
+  const playing = harness();
+  const sender = sabrSender();
   await playing.request(sabrPlayer(), sender);
   observeSabrRequest(playing);
   await settle();
@@ -238,7 +243,9 @@ test('a missing capture is recovered automatically by priming the page player', 
       onTabMessage(message) {
         sent.push(message.action);
         // The page's player answers the nudge with a fresh streaming request.
-        if (message.action === 'primeStream') observeSabrRequest(h);
+        if (message.action === 'primeStream') {
+          observeSabrRequest(h);
+        }
       },
     },
   );
@@ -252,8 +259,8 @@ test('a missing capture is recovered automatically by priming the page player', 
 });
 test('a streaming request copied by the page is used when Chrome hides its body', async () => {
   const sent = [];
-  const h = harness({}, { onTabMessage: (message) => sent.push(message.action) }),
-    sender = sabrSender();
+  const h = harness({}, { onTabMessage: (message) => sent.push(message.action) });
+  const sender = sabrSender();
   await h.request(sabrPlayer(), sender);
   // What Chrome reports today: the request is visible, its body is not.
   h.events.beforeRequest({ requestId: 'hidden', tabId: 8, url: sabrStream() });
@@ -278,8 +285,9 @@ test('page-copied streaming requests are accepted only from YouTube for SABR URL
     ],
     [sabrSender(), { url: 'https://example.com/videoplayback?sabr=1', body: 'AQID' }],
     [sabrSender(), { url: sabrStream(), body: 'not base64!' }],
-  ])
+  ]) {
     assert.equal((await h.request({ action: 'sabrRequest', data }, sender)).ok, false);
+  }
   assert.doesNotMatch(JSON.stringify(h.data), /AQID/);
 });
 test('an ad played in between keeps the main video capture', async () => {
@@ -300,8 +308,8 @@ test('an ad played in between keeps the main video capture', async () => {
   assert.ok(!sent.includes('primeStream'));
 });
 test('when recovery fails the message says what the extension saw', async () => {
-  const h = harness(),
-    sender = sabrSender();
+  const h = harness();
+  const sender = sabrSender();
   await h.request(sabrPlayer(), sender);
   // A streaming request whose body Chrome did not expose cannot be captured.
   h.events.beforeRequest({ requestId: 'no-body', tabId: 8, url: sabrStream() });
@@ -321,8 +329,8 @@ test('a stored SABR capture is never reused for a different video', async () => 
   await settle();
   // After a restart, an in-page navigation to another video reports new player data
   // without a previous player to compare against.
-  const restarted = harness(playing.data),
-    other = sabrSender('abcdefghijk');
+  const restarted = harness(playing.data);
+  const other = sabrSender('abcdefghijk');
   await restarted.request(sabrPlayer('abcdefghijk'), other);
   const item = await sabrItem(restarted, other);
   const rejected = await restarted.request(
@@ -344,8 +352,8 @@ test('closing or reloading a tab removes its stored SABR capture', async () => {
   assert.doesNotMatch(JSON.stringify(playing.data), /AQID/);
 });
 test('observing a video-only leaf never erases its master audio pairing', async () => {
-  const h = harness(),
-    sender = { id: 'extension-id', tab: { id: 3 } };
+  const h = harness();
+  const sender = { id: 'extension-id', tab: { id: 3 } };
   const url = 'https://example.com/video.m3u8';
   await h.request(
     {
@@ -400,8 +408,8 @@ test('frame list is restricted to its sender tab and excludes non-media links', 
 });
 
 test('request credentials stay out of storage and cannot cross tab or URL boundaries', async () => {
-  const h = harness(),
-    url = 'https://example.com/video.mp4';
+  const h = harness();
+  const url = 'https://example.com/video.mp4';
   h.events.requestHeaders({
     tabId: 3,
     url,
@@ -418,13 +426,13 @@ test('request credentials stay out of storage and cannot cross tab or URL bounda
 });
 
 test('individual HLS media fragments are not listed as complete videos', async () => {
-  const h = harness(),
-    sender = { id: 'extension-id', tab: { id: 3 } };
+  const h = harness();
+  const sender = { id: 'extension-id', tab: { id: 3 } };
   await h.request(
     {
       action: 'remember',
       items: ['a.m4s', 'a.ts', 'init.mp4', 'movie.mp4'].map((name) => ({
-        url: 'https://example.com/' + name,
+        url: `https://example.com/${name}`,
       })),
     },
     sender,
@@ -434,8 +442,8 @@ test('individual HLS media fragments are not listed as complete videos', async (
   assert.equal(result.items[0].url, 'https://example.com/movie.mp4');
 });
 test('media cache is bounded, deduplicated, and cleared on navigation', async () => {
-  const h = harness(),
-    sender = { id: 'extension-id', tab: { id: 9 } };
+  const h = harness();
+  const sender = { id: 'extension-id', tab: { id: 9 } };
   const items = Array.from({ length: 120 }, (_, i) => ({ url: `https://example.com/${i}.mp4` }));
   await h.request({ action: 'remember', items: items.slice(0, 80) }, sender);
   await h.request({ action: 'remember', items: items.slice(60) }, sender);

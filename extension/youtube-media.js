@@ -1,6 +1,6 @@
-(function (root) {
-  const MAX_URL = 16384,
-    MAX_FORMATS = 150;
+(() => {
+  const MAX_URL = 16384;
+  const MAX_FORMATS = 150;
   const text = (value, max = 200) => String(value || '').slice(0, max);
   const integer = (value) => {
     const n = Number(value);
@@ -18,17 +18,23 @@
         u.username ||
         u.password ||
         u.href.length > MAX_URL
-      )
+      ) {
         return null;
-      if (requireSabr) return u.searchParams.get('sabr') === '1' ? u.href : null;
+      }
+      if (requireSabr) {
+        return u.searchParams.get('sabr') === '1' ? u.href : null;
+      }
       if (
         u.searchParams.has('sq') ||
         u.searchParams.get('source') === 'yt_live_broadcast' ||
         u.searchParams.get('sabr') === '1'
-      )
+      ) {
         return null;
+      }
       if (u.searchParams.has('range')) {
-        if ((u.searchParams.get('sparams') || '').split(',').includes('range')) return null;
+        if ((u.searchParams.get('sparams') || '').split(',').includes('range')) {
+          return null;
+        }
         u.searchParams.delete('range');
       }
       return u.href;
@@ -39,8 +45,15 @@
   const mediaUrl = (value) => googleVideoUrl(value, false);
   const sabrUrl = (value) => googleVideoUrl(value, true);
   function cleanFormat(f) {
-    if (!f || typeof f !== 'object' || Array.isArray(f) || f.drmFamilies?.length || f.drmTrackType)
+    if (
+      !f ||
+      typeof f !== 'object' ||
+      Array.isArray(f) ||
+      f.drmFamilies?.length ||
+      f.drmTrackType
+    ) {
       return null;
+    }
     const cipher = new URLSearchParams(
       typeof f.signatureCipher === 'string' ? f.signatureCipher : '',
     );
@@ -86,11 +99,12 @@
       !/^[\w-]{11}$/.test(value.videoId || '') ||
       !Array.isArray(value.formats) ||
       value.formats.length > MAX_FORMATS
-    )
+    ) {
       return null;
+    }
     const formats = value.formats.map(cleanFormat).filter((f) => f && f.itag && f.mimeType);
     const url = sabrUrl(value.sabrUrl);
-    const config = /^[A-Za-z0-9_+\/=.-]{1,131072}$/.test(String(value.ustreamerConfig || ''))
+    const config = /^[A-Za-z0-9_+/=.-]{1,131072}$/.test(String(value.ustreamerConfig || ''))
       ? String(value.ustreamerConfig)
       : '';
     const clientName = integer(value.clientName) || 1;
@@ -109,20 +123,23 @@
     };
   }
   function playerData(value) {
-    if (value?.videoId && Array.isArray(value.formats)) return sanitizePlayer(value);
+    if (value?.videoId && Array.isArray(value.formats)) {
+      return sanitizePlayer(value);
+    }
     if (
       !value ||
       !/^[\w-]{11}$/.test(value.videoDetails?.videoId || '') ||
       value.videoDetails?.isLiveContent
-    )
+    ) {
       return null;
+    }
     const formats = [
       ...(Array.isArray(value.streamingData?.formats) ? value.streamingData.formats : []),
       ...(Array.isArray(value.streamingData?.adaptiveFormats)
         ? value.streamingData.adaptiveFormats
         : []),
     ];
-    const ytcfg = root.ytcfg;
+    const { ytcfg } = globalThis;
     return sanitizePlayer({
       videoId: value.videoDetails.videoId,
       title: value.videoDetails.title,
@@ -133,17 +150,21 @@
           ?.videoPlaybackUstreamerConfig,
       clientName:
         ytcfg?.get?.('INNERTUBE_CONTEXT_CLIENT_NAME') ||
+        // eslint-disable-next-line no-underscore-dangle -- YouTube's own ytcfg property
         ytcfg?.data_?.INNERTUBE_CONTEXT_CLIENT_NAME ||
         1,
       clientVersion:
         ytcfg?.get?.('INNERTUBE_CONTEXT_CLIENT_VERSION') ||
+        // eslint-disable-next-line no-underscore-dangle -- YouTube's own ytcfg property
         ytcfg?.data_?.INNERTUBE_CONTEXT_CLIENT_VERSION ||
         '',
       formats,
     });
   }
   function choices(data, observed = []) {
-    if (!data) return [];
+    if (!data) {
+      return [];
+    }
     const formats = data.formats
       .map((f) => {
         const source = f.sourceUrl && new URL(f.sourceUrl);
@@ -171,36 +192,39 @@
           (!new URL(f.url).searchParams.has('expire') ||
             Number(new URL(f.url).searchParams.get('expire')) * 1000 > Date.now() + 30000),
       );
-    const result = [],
-      seen = new Set();
+    const result = [];
+    const seen = new Set();
+    // eslint-disable-next-line no-control-regex -- control characters are invalid in file names
     const title = data.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 170);
     const audio = formats
       .filter(
         (f) => /^audio\/mp4/i.test(f.mimeType) && (!f.audioTrack || f.audioTrack.audioIsDefault),
       )
       .sort((a, b) => b.bitrate - a.bitrate)[0];
-    for (const f of formats
-      .filter((f) => /^video\/mp4/i.test(f.mimeType) && f.height)
-      .sort((a, b) => b.height - a.height || b.fps - a.fps || b.bitrate - a.bitrate)) {
-      const muxed = f.audioQuality || /mp4a/i.test(f.mimeType);
-      if (!muxed && !audio) continue;
-      const key = f.height + ':' + f.fps;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      result.push({
-        url: f.url,
-        audioUrl: muxed ? undefined : audio.url,
-        provider: 'youtube',
-        format: 'MP4',
-        outputFormat: 'mp4',
-        quality: f.height + 'p' + (f.fps > 30 ? ' ' + f.fps + 'fps' : ''),
-        audioState: 'Video + audio',
-        title: data.title,
-        filename: title + '.mp4',
-        bitrate: f.bitrate,
-      });
+    const isMuxed = (f) => f.audioQuality || /mp4a/i.test(f.mimeType);
+    // Video-only formats are offered only when there is an audio track to pair them with.
+    const videos = formats
+      .filter((f) => /^video\/mp4/i.test(f.mimeType) && f.height && (audio || isMuxed(f)))
+      .sort((a, b) => b.height - a.height || b.fps - a.fps || b.bitrate - a.bitrate);
+    for (const f of videos) {
+      const key = `${f.height}:${f.fps}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          url: f.url,
+          audioUrl: isMuxed(f) ? undefined : audio.url,
+          provider: 'youtube',
+          format: 'MP4',
+          outputFormat: 'mp4',
+          quality: `${f.height}p${f.fps > 30 ? ` ${f.fps}fps` : ''}`,
+          audioState: 'Video + audio',
+          title: data.title,
+          filename: `${title}.mp4`,
+          bitrate: f.bitrate,
+        });
+      }
     }
-    if (audio)
+    if (audio) {
       result.push({
         url: audio.url,
         provider: 'youtube',
@@ -209,9 +233,12 @@
         quality: 'Audio',
         audioState: 'Audio only',
         title: data.title,
-        filename: title + '.mp3',
+        filename: `${title}.mp3`,
       });
-    if (!data.sabrUrl || !data.ustreamerConfig) return result;
+    }
+    if (!data.sabrUrl || !data.ustreamerConfig) {
+      return result;
+    }
     const sabrAudio = data.formats
       .filter(
         (f) =>
@@ -221,33 +248,31 @@
           !f.isVb,
       )
       .sort((a, b) => b.bitrate - a.bitrate)[0];
-    if (!sabrAudio) return result;
-    for (const f of data.formats
-      .filter(
-        (f) =>
-          /^video\/mp4/i.test(f.mimeType) &&
-          f.height &&
-          !f.audioQuality &&
-          !/mp4a/i.test(f.mimeType),
-      )
-      .sort((a, b) => b.height - a.height || b.fps - a.fps || b.bitrate - a.bitrate)) {
-      const key = f.height + ':' + f.fps;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      result.push({
-        url: data.sabrUrl,
-        provider: 'youtube',
-        format: 'MP4',
-        outputFormat: 'mp4',
-        quality: f.height + 'p' + (f.fps > 30 ? ' ' + f.fps + 'fps' : ''),
-        audioState: 'Video + audio',
-        title: data.title,
-        filename: title + '.mp4',
-        bitrate: f.bitrate,
-        sabrSelection: { videoItag: f.itag, audioItag: sabrAudio.itag },
-      });
+    if (!sabrAudio) {
+      return result;
     }
-    if (!result.some((item) => item.format === 'MP3'))
+    const sabrVideos = data.formats
+      .filter((f) => /^video\/mp4/i.test(f.mimeType) && f.height && !isMuxed(f))
+      .sort((a, b) => b.height - a.height || b.fps - a.fps || b.bitrate - a.bitrate);
+    for (const f of sabrVideos) {
+      const key = `${f.height}:${f.fps}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push({
+          url: data.sabrUrl,
+          provider: 'youtube',
+          format: 'MP4',
+          outputFormat: 'mp4',
+          quality: `${f.height}p${f.fps > 30 ? ` ${f.fps}fps` : ''}`,
+          audioState: 'Video + audio',
+          title: data.title,
+          filename: `${title}.mp4`,
+          bitrate: f.bitrate,
+          sabrSelection: { videoItag: f.itag, audioItag: sabrAudio.itag },
+        });
+      }
+    }
+    if (!result.some((item) => item.format === 'MP3')) {
       result.push({
         url: data.sabrUrl,
         provider: 'youtube',
@@ -256,12 +281,15 @@
         quality: 'Audio',
         audioState: 'Audio only',
         title: data.title,
-        filename: title + '.mp3',
+        filename: `${title}.mp3`,
         bitrate: sabrAudio.bitrate,
         sabrSelection: { audioItag: sabrAudio.itag },
       });
+    }
     return result;
   }
-  root.youtubeMedia = { mediaUrl, sabrUrl, playerData, sanitizePlayer, choices };
-  if (typeof module !== 'undefined') module.exports = root.youtubeMedia;
-})(globalThis);
+  globalThis.youtubeMedia = { mediaUrl, sabrUrl, playerData, sanitizePlayer, choices };
+  if (typeof module !== 'undefined') {
+    module.exports = globalThis.youtubeMedia;
+  }
+})();

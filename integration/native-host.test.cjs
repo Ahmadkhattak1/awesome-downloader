@@ -2,6 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const http = require('node:http');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
 const {
   MessageDecoder,
   encodeMessage,
@@ -9,6 +12,7 @@ const {
   submitDownload,
   readBridge,
 } = require('./native-host.cjs');
+
 test('format discovery is restricted to YouTube video pages and format IDs are not commands', () => {
   assert.equal(
     sanitizeRequest({ action: 'formats', url: 'https://www.youtube.com/watch?v=wLdZWyLOJCI' })
@@ -25,9 +29,6 @@ test('format discovery is restricted to YouTube video pages and format IDs are n
   );
 });
 test('default bridge location is shared with browsers outside AppData virtualization', async (t) => {
-  const fs = require('node:fs/promises'),
-    os = require('node:os'),
-    path = require('node:path');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'shared-bridge-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   t.mock.method(os, 'homedir', () => root);
@@ -39,12 +40,13 @@ test('default bridge location is shared with browsers outside AppData virtualiza
 test('one-click intent is preserved only for an explicit boolean', () => {
   const request = { action: 'download', url: 'https://example.com/video.mp4' };
   assert.equal(sanitizeRequest({ ...request, startNow: true }).startNow, true);
-  for (const value of [undefined, false, 'true', 1])
+  for (const value of [undefined, false, 'true', 1]) {
     assert.equal(sanitizeRequest({ ...request, startNow: value }).startNow, undefined);
+  }
 });
 test('native framing accepts fragmentation and multiple messages', async () => {
-  const decoder = new MessageDecoder(),
-    messages = [];
+  const decoder = new MessageDecoder();
+  const messages = [];
   decoder.on('data', (v) => messages.push(v));
   const data = Buffer.concat([encodeMessage({ text: 'héllo' }), encodeMessage({ second: true })]);
   decoder.write(data.subarray(0, 2));
@@ -92,8 +94,9 @@ test('request validation restricts URL, filenames, actions and passed fields', (
     { action: 'download', url: 'https://user:pass@example.com' },
     { action: 'download', url: 'https://example.com', filename: '../x' },
     { action: 'download', url: 'https://example.com/a.mpd' },
-  ])
+  ]) {
     assert.throws(() => sanitizeRequest(item));
+  }
   assert.equal(
     sanitizeRequest({ action: 'download', url: 'https://example.com/a.m3u8' }).url,
     'https://example.com/a.m3u8',
@@ -106,7 +109,9 @@ test('desktop handoff authenticates, sends fields, and requires acceptance', asy
     assert.equal(request.method, 'POST');
     assert.equal(request.headers.authorization, 'Bearer test-token');
     let body = '';
-    request.on('data', (chunk) => (body += chunk));
+    request.on('data', (chunk) => {
+      body += chunk;
+    });
     request.on('end', () => {
       assert.deepEqual(JSON.parse(body), { url: 'https://example.com/file' });
       response.writeHead(rejectRequest ? 503 : 201, { 'Content-Type': 'application/json' });
