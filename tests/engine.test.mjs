@@ -8,6 +8,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
+import { EngineLimits, HashAlgorithm } from '../core/constants.mjs';
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-test-'));
@@ -204,3 +205,37 @@ test('request credentials are excluded from history and UI snapshots', async t =
   assert.doesNotMatch(JSON.stringify(f.engine.snapshot()), /private-fixture/);
   assert.doesNotMatch(await fs.readFile(path.join(f.root, 'state', 'downloads.json'), 'utf8'), /private-fixture/);
 });
+
+test('dynamic segment splitting divides candidate segment into non-overlapping sub-ranges', async t => {
+  const f = await fixture(t);
+  const totalBytes = 10 * 1024 * 1024;
+  const mockDownload = {
+    id: 'test-split-id',
+    total: totalBytes,
+    segments: [
+      { index: 0, start: 0, end: totalBytes - 1, downloaded: 2 * 1024 * 1024, done: false }
+    ]
+  };
+
+  const candidate = f.engine.findSplittableSegment(mockDownload);
+  assert.ok(candidate);
+  assert.equal(candidate.index, 0);
+
+  const child = f.engine.splitSegment(mockDownload, candidate);
+  assert.ok(child);
+  assert.equal(mockDownload.segments.length, 2);
+  assert.equal(child.index, 1);
+  assert.equal(candidate.end + 1, child.start);
+  assert.equal(child.end, totalBytes - 1);
+  assert.equal(child.downloaded, 0);
+
+  const smallDownload = {
+    id: 'test-small-id',
+    total: 1024 * 1024,
+    segments: [
+      { index: 0, start: 0, end: 1024 * 1024 - 1, downloaded: 512 * 1024, done: false }
+    ]
+  };
+  assert.equal(f.engine.findSplittableSegment(smallDownload), null);
+});
+

@@ -4,14 +4,35 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness() {
-  const events={}, nativeRequests=[];
+  const events={}, nativeRequests=[], canceledDownloads=[];
   const event=name=>({addListener(fn){events[name]=fn;}});
   const data={};
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+  const browser={
+    runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},
+    storage:{session:storage,local:storage},
+    webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},
+    tabs:{onRemoved:event('removed'),onUpdated:event('updated')},
+    contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},
+    downloads:{
+      onCreated:event('download'),
+      onDeterminingFilename:event('determiningFilename'),
+      cancel(id, cb){ canceledDownloads.push(id); cb?.(); },
+      erase(query, cb){ cb?.(); }
+    },
+    action:{}
+  };
   browser.tabs.sendMessage=async()=>({ok:true});
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{
+    browser,
+    URL,
+    URLSearchParams,
+    Uint8Array,
+    btoa:value=>Buffer.from(value,'binary').toString('base64'),
+    youtubeMedia:require('./youtube-media.js'),
+    ...require('./constants.js')
+  });
+  return {events,data,nativeRequests,canceledDownloads,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -100,4 +121,36 @@ test('media cache is bounded, deduplicated, and cleared on navigation',async()=>
   assert.equal(result.items.length,100); assert.equal(new Set(result.items.map(i=>i.url)).size,100);
   h.events.updated(9,{status:'loading'});
   result=await h.request({action:'listForFrame'},sender); assert.equal(result.items.length,0);
+});
+
+test('browser download determining filename captures matched archive and forwards to host', async () => {
+  const h = harness();
+  let suggested = false;
+  h.events.determiningFilename({
+    id: 42,
+    url: 'https://example.com/files/archive.zip',
+    filename: 'archive.zip',
+    referrer: 'https://example.com/download-page'
+  }, () => { suggested = true; });
+
+  assert.equal(suggested, false);
+  assert.equal(h.canceledDownloads.includes(42), true);
+  assert.equal(h.nativeRequests.length, 1);
+  assert.equal(h.nativeRequests[0].action, 'download');
+  assert.equal(h.nativeRequests[0].url, 'https://example.com/files/archive.zip');
+  assert.equal(h.nativeRequests[0].filename, 'archive.zip');
+});
+
+test('browser download determining filename ignores excluded blob schemes', async () => {
+  const h = harness();
+  let suggested = false;
+  h.events.determiningFilename({
+    id: 43,
+    url: 'blob:https://example.com/uuid-blob-1234',
+    filename: 'blob.zip'
+  }, () => { suggested = true; });
+
+  assert.equal(suggested, true);
+  assert.equal(h.canceledDownloads.includes(43), false);
+  assert.equal(h.nativeRequests.length, 0);
 });

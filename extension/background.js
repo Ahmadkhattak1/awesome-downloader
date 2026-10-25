@@ -1,8 +1,14 @@
 /* Downloads require extension UI messages; page player metadata is bounded and sanitized. */
-if(typeof importScripts==='function') importScripts('hls.js','youtube-media.js');
+if(typeof importScripts==='function') importScripts('constants.js','hls.js','youtube-media.js');
 const api = globalThis.browser || chrome;
-const HOST = 'com.awesome.downloader';
-const CACHE_KEY = 'mediaByTab';
+const HOST = typeof NATIVE_HOST_NAME !== 'undefined' ? NATIVE_HOST_NAME : 'com.awesome.downloader';
+const CACHE_KEY = typeof CACHE_KEY_MEDIA !== 'undefined' ? CACHE_KEY_MEDIA : 'mediaByTab';
+const INTERCEPT_EXTENSIONS = typeof INTERCEPT_EXTENSIONS_PATTERN !== 'undefined'
+  ? INTERCEPT_EXTENSIONS_PATTERN
+  : /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|dmg|bin|apk|pdf|doc|docx|xls|xlsx|ppt|pptx|mp4|mkv|mov|avi|wmv|flv|webm|mp3|wav|flac|aac|epub|torrent)$/i;
+const EXCLUDED_SCHEMES = typeof EXCLUDED_URL_SCHEMES !== 'undefined'
+  ? EXCLUDED_URL_SCHEMES
+  : ['blob:', 'data:', 'chrome:', 'edge:', 'about:', 'javascript:'];
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
@@ -202,7 +208,51 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   task().then(respond, error => respond({ok: false, error: error.message}));
   return true;
 });
-api.downloads.onCreated.addListener(async item => {
+const recentlyInterceptedUrls = new Set();
+
+if (api.downloads?.onDeterminingFilename) {
+  api.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    const url = item.finalUrl || item.url || '';
+    if (!url || EXCLUDED_SCHEMES.some(scheme => url.startsWith(scheme))) {
+      suggest?.();
+      return;
+    }
+
+    const filename = item.filename || '';
+    const shouldIntercept = INTERCEPT_EXTENSIONS.test(filename) || INTERCEPT_EXTENSIONS.test(url);
+
+    if (shouldIntercept && !recentlyInterceptedUrls.has(url)) {
+      recentlyInterceptedUrls.add(url);
+      if (recentlyInterceptedUrls.size > 100) {
+        recentlyInterceptedUrls.delete(recentlyInterceptedUrls.keys().next().value);
+      }
+
+      api.downloads.cancel(item.id, () => {
+        if (api.runtime.lastError) {
+          // Gracefully ignore cancellation failure
+        }
+        api.downloads.erase({ id: item.id }, () => {});
+      });
+
+      const requestHeaders = requestContext.get(item.tabId || -1)?.get(url);
+      nativeSend({
+        action: 'download',
+        url,
+        filename: filename ? filename.split(/[\\/]/).pop() : undefined,
+        referer: item.referrer || undefined,
+        requestHeaders: requestHeaders || undefined
+      }).catch(error => {
+        api.storage.local.set({ lastError: `Download capture failed: ${error.message}` }).catch(() => {});
+      });
+
+      return;
+    }
+
+    suggest?.();
+  });
+}
+
+api.downloads?.onCreated?.addListener(async item => {
   let paused=false;
   try {
     const {interceptDownloads = false} = await api.storage.local.get('interceptDownloads');

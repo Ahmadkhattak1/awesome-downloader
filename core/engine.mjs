@@ -6,13 +6,21 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { validUrl, cleanHeaders, request, probe } from './http.mjs';
 import { resolveHls, scopedHeaders } from './hls.mjs';
 import { youtubeUrl, downloadYoutube } from './youtube.mjs';
-import {streamProgress} from './stream-progress.mjs';
-import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
+import { streamProgress } from './stream-progress.mjs';
+import { downloadSabr, normalizeSabrSession } from './sabr.mjs';
+import {
+  DownloadStatus,
+  TRANSIENT_STATUSES,
+  DownloadAction,
+  DownloadCategory,
+  CATEGORY_PATTERNS,
+  EngineLimits
+} from './constants.mjs';
 
-const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
-const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
+const TRANSIENT = TRANSIENT_STATUSES;
+const CATEGORY = CATEGORY_PATTERNS;
 export function safeFilename(value) {
-  let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180);
+  let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, EngineLimits.MAX_FILENAME_LENGTH);
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
   return name;
 }
@@ -22,7 +30,7 @@ function suggestedName(url, disposition) {
   try { return safeFilename(utf ? decodeURIComponent(utf[1]) : plain ? (plain[1] || plain[2]).trim() : decodeURIComponent(new URL(url).pathname.split('/').pop()) || 'download'); }
   catch { return 'download'; }
 }
-const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
+const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || DownloadCategory.OTHER;
 
 export class DownloadEngine extends EventEmitter {
   constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
@@ -222,17 +230,24 @@ export class DownloadEngine extends EventEmitter {
     }
     d.total = info.total; d.validator = info.validator;
     d.resumable = Boolean(info.ranges && info.validator);
-    const count = info.ranges && info.total > 1024 * 1024 ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024))) : 1;
+    const count = info.ranges && info.total > EngineLimits.MIN_CHUNK_BYTES * 2 ? Math.min(this.settings.connections, Math.ceil(info.total / EngineLimits.MIN_CHUNK_BYTES)) : 1;
     if (!d.segments.length) {
-      d.segments = Array.from({ length: count }, (_, i) => ({ start: info.total === null ? 0 : Math.floor(info.total * i / count),
-        end: info.total === null ? null : Math.floor(info.total * (i + 1) / count) - 1, downloaded: 0 }));
+      d.segments = Array.from({ length: count }, (_, i) => ({
+        index: i,
+        start: info.total === null ? 0 : Math.floor(info.total * i / count),
+        end: info.total === null ? null : Math.floor(info.total * (i + 1) / count) - 1,
+        downloaded: 0,
+        done: false
+      }));
     }
     for (let i = 0; i < d.segments.length; i++) {
-      let size = 0;
-      try { size = (await fs.stat(path.join(dir, `${i}.part`))).size; } catch (e) { if (e.code !== 'ENOENT') throw e; }
       const s = d.segments[i];
+      if (s.index === undefined) s.index = i;
+      let size = 0;
+      try { size = (await fs.stat(path.join(dir, `${s.index}.part`))).size; } catch (e) { if (e.code !== 'ENOENT') throw e; }
       if (s.end !== null && size > s.end - s.start + 1) throw new Error('Partial file is larger than its segment. Remove and re-add this download.');
       s.downloaded = size;
+      s.done = Boolean(s.end !== null && size === s.end - s.start + 1);
     }
     d.downloaded = d.segments.reduce((n, s) => n + s.downloaded, 0);
     d.connections = d.segments.length; d.status = 'downloading'; await this.persist(); this.changed();
@@ -243,27 +258,52 @@ export class DownloadEngine extends EventEmitter {
     }, this.tickMs);
     const siblings = new AbortController();
     const transferSignal = AbortSignal.any([signal, siblings.signal]);
+
+    const runWorker = async segment => {
+      const file = path.join(dir, `${segment.index}.part`);
+      await this.transfer(d, info, segment, file, headers, transferSignal);
+      segment.done = true;
+
+      if (info.ranges && info.total !== null && d.segments.length < this.settings.connections) {
+        const candidate = this.findSplittableSegment(d);
+        if (candidate) {
+          const split = this.splitSegment(d, candidate);
+          if (split) {
+            await this.persist();
+            this.changed();
+            await runWorker(split);
+          }
+        }
+      }
+    };
+
     try {
-      const outcomes = await Promise.allSettled(d.segments.map((segment, i) => this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers, transferSignal).catch(error => { siblings.abort(); throw error; })));
+      const outcomes = await Promise.allSettled(
+        d.segments.map(segment => runWorker(segment).catch(error => {
+          siblings.abort();
+          throw error;
+        }))
+      );
       const failure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
       if (failure) throw failure.reason;
     } finally { clearInterval(progress); }
     await this.assemble(d, dir, signal);
   }
-  async assemble(d, dir, signal, files = d.segments.map((_,i) => path.join(dir, `${i}.part`)), converted = false) {
+  async assemble(d, dir, signal, files, converted = false) {
     signal.throwIfAborted();
     d.status = 'assembling'; d.speed = 0; this.changed();
-    if(d.outputFormat&&!converted){
-      const {convertMedia}=await import('./mux.mjs');
-      const output=await convertMedia(dir,files,d.outputFormat,signal);
-      d.filename=safeFilename(d.filename.replace(/\.[^.]+$/,'')+'.'+d.outputFormat);
-      if(!d.explicitCategory)d.category=d.outputFormat==='mp3'?'Audio':'Video';
-      return this.assemble(d,dir,signal,[output],true);
+    const orderedFiles = files || [...d.segments].sort((a, b) => a.start - b.start).map((s, i) => path.join(dir, `${s.index !== undefined ? s.index : i}.part`));
+    if (d.outputFormat && !converted) {
+      const { convertMedia } = await import('./mux.mjs');
+      const output = await convertMedia(dir, orderedFiles, d.outputFormat, signal);
+      d.filename = safeFilename(d.filename.replace(/\.[^.]+$/, '') + '.' + d.outputFormat);
+      if (!d.explicitCategory) d.category = d.outputFormat === 'mp3' ? 'Audio' : 'Video';
+      return this.assemble(d, dir, signal, [output], true);
     }
     await fs.mkdir(d.directory, { recursive: true });
     // Exclusive creation prevents collision with user files or another download.
     let destination, out;
-    for (let n = 0; n < 10000; n++) {
+    for (let n = 0; n < EngineLimits.MAX_FREE_FILENAME_COLLISION_ATTEMPTS; n++) {
       const ext = path.extname(d.filename), base = path.basename(d.filename, ext);
       destination = path.join(d.directory, n ? `${base} (${n})${ext}` : d.filename);
       try { out = await fs.open(destination, 'wx'); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
@@ -271,7 +311,7 @@ export class DownloadEngine extends EventEmitter {
     if (!out) throw new Error('Could not choose a free output filename.');
     let complete = false;
     try {
-      for (const file of files) {
+      for (const file of orderedFiles) {
         const input = await fs.open(file, 'r');
         try {
           for await (const chunk of input.createReadStream()) { signal.throwIfAborted(); await out.writeFile(chunk); }
@@ -396,10 +436,59 @@ export class DownloadEngine extends EventEmitter {
     d.total=d.downloaded=(await fs.stat(output)).size;d.segments=[{start:0,end:d.total-1,downloaded:d.total,done:true}];
     await this.assemble(d,dir,signal,[output],true);
   }
+  /**
+   * Finds the active segment with the largest remaining byte delta eligible for splitting.
+   * @param {object} d Download item
+   * @returns {object|null} Candidate segment or null if no segment qualifies
+   */
+  findSplittableSegment(d) {
+    let candidate = null;
+    let maxRemaining = 0;
+    for (const s of d.segments) {
+      if (s.done || s.end === null) continue;
+      const remaining = (s.end - s.start + 1) - s.downloaded;
+      if (remaining >= EngineLimits.SEGMENT_SPLIT_THRESHOLD_BYTES && remaining > maxRemaining) {
+        maxRemaining = remaining;
+        candidate = s;
+      }
+    }
+    return candidate;
+  }
+
+  /**
+   * Dynamically splits a candidate segment into two sub-ranges.
+   * @param {object} d Download item
+   * @param {object} candidate Segment to split
+   * @returns {object|null} Newly created child segment or null
+   */
+  splitSegment(d, candidate) {
+    const remaining = (candidate.end - candidate.start + 1) - candidate.downloaded;
+    if (remaining < EngineLimits.SEGMENT_SPLIT_THRESHOLD_BYTES) return null;
+
+    const currentOffset = candidate.start + candidate.downloaded;
+    const halfRemaining = Math.floor(remaining / 2);
+    const splitPoint = currentOffset + halfRemaining;
+    const originalEnd = candidate.end;
+
+    candidate.end = splitPoint - 1;
+
+    const newIndex = d.segments.length;
+    const newSegment = {
+      index: newIndex,
+      start: splitPoint,
+      end: originalEnd,
+      downloaded: 0,
+      done: false
+    };
+    d.segments.push(newSegment);
+    d.connections = d.segments.filter(s => !s.done).length;
+    return newSegment;
+  }
+
   async transfer(d, info, segment, file, headers, signal, url=d.url) {
-    const expected = segment.end === null ? null : segment.end - segment.start + 1;
-    if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); return; }
-    for (let attempt = 0; attempt < 4; attempt++) {
+    let expected = segment.end === null ? null : segment.end - segment.start + 1;
+    if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); segment.done = true; return; }
+    for (let attempt = 0; attempt < EngineLimits.MAX_NETWORK_RETRIES; attempt++) {
       signal.throwIfAborted();
       try {
         const ranged = info.ranges && info.total !== null;
@@ -420,17 +509,32 @@ export class DownloadEngine extends EventEmitter {
         try {
           for await (const chunk of response) {
             signal.throwIfAborted();
-            if (expected !== null && segment.downloaded + chunk.length > expected) throw new Error('Server sent more bytes than requested.');
+            expected = segment.end === null ? null : segment.end - segment.start + 1;
+            if (expected !== null && segment.downloaded + chunk.length > expected) {
+              const needed = expected - segment.downloaded;
+              if (needed > 0) {
+                const slice = chunk.subarray(0, needed);
+                await this.throttle(slice.length, signal);
+                await out.writeFile(slice);
+                segment.downloaded += slice.length;
+                d.downloaded += slice.length;
+              }
+              await out.sync();
+              segment.done = true;
+              return;
+            }
             await this.throttle(chunk.length, signal);
             await out.writeFile(chunk); segment.downloaded += chunk.length; d.downloaded += chunk.length;
           }
           await out.sync();
         } finally { await out.close(); response.destroy(); }
+        expected = segment.end === null ? null : segment.end - segment.start + 1;
         if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
+        segment.done = true;
         return;
       } catch (error) {
-        if (signal.aborted || attempt === 3) throw error;
-        await delay(250 * 2 ** attempt, undefined, { signal });
+        if (signal.aborted || attempt === EngineLimits.MAX_NETWORK_RETRIES - 1) throw error;
+        await delay(EngineLimits.INITIAL_RETRY_BACKOFF_MS * 2 ** attempt, undefined, { signal });
       }
     }
   }
