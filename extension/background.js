@@ -407,7 +407,41 @@ function nativeSend(payload) {
   });
 }
 
+// The highest-quality video choice the in-page menu would offer for the video open in
+// this tab (H.264 first within a quality), or undefined if that video is not open there.
+async function bestYoutubeChoice(tabId, videoId) {
+  if (youtubePlayers.get(tabId)?.videoId !== videoId) {
+    await api.tabs.sendMessage(tabId, { action: 'refreshPlayer' }).catch(() => {});
+  }
+
+  const player = youtubePlayers.get(tabId);
+
+  if (player?.videoId !== videoId) {
+    return undefined;
+  }
+
+  const height = (choice) => Number.parseInt(choice.quality, 10) || 0;
+
+  return globalThis.youtubeMedia
+    .choices(player, youtubeObserved.get(tabId) || [])
+    .filter((choice) => choice.format === 'MP4')
+    .sort((first, second) => height(second) - height(first))[0];
+}
+
 async function enqueue(item, tabId) {
+  // "Find page links" and the link menu can pick a YouTube page address, which the
+  // desktop can only download with the optional yt-dlp tool. When it is the video open
+  // in this tab, download it through the captured stream like the in-page menu does.
+  const pageVideoId = !item.sabrSelection && !item.youtubeFormat && watchVideoId(item.url);
+
+  if (pageVideoId) {
+    const choice = await bestYoutubeChoice(tabId, pageVideoId);
+
+    if (choice) {
+      return enqueue({ ...choice, startNow: item.startNow, referer: item.referer }, tabId);
+    }
+  }
+
   let sabr;
 
   if (item.sabrSelection) {

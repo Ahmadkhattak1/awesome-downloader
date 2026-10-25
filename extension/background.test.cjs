@@ -384,6 +384,41 @@ test('an ad played in between keeps the main video capture', async () => {
   assert.ok(!sent.includes('primeStream'));
 });
 
+// "Find page links" in the popup lists every link, including YouTube watch pages.
+const popupSender = { id: 'extension-id' };
+
+test('a watch link for the open video downloads through its captured stream', async () => {
+  const worker = harness();
+  await worker.request(sabrPlayer(), sabrSender());
+  observeSabrRequest(worker);
+
+  const result = await worker.request(
+    {
+      action: 'download',
+      tabId: 8,
+      item: { url: 'https://www.youtube.com/watch?v=wLdZWyLOJCI', title: 'Captured' },
+    },
+    popupSender,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(worker.nativeRequests[0].url, sabrStream());
+  assert.equal(worker.nativeRequests[0].sabr.videoItag, 137);
+  assert.equal(worker.nativeRequests[0].sabr.audioItag, 140);
+  assert.equal(worker.nativeRequests[0].outputFormat, 'mp4');
+});
+
+test('a watch link for another video is sent to the desktop unchanged', async () => {
+  const worker = harness();
+  await worker.request(sabrPlayer(), sabrSender());
+  const otherVideo = 'https://www.youtube.com/watch?v=abcdefghijk';
+
+  await worker.request({ action: 'download', tabId: 8, item: { url: otherVideo } }, popupSender);
+
+  assert.equal(worker.nativeRequests[0].url, otherVideo);
+  assert.equal(worker.nativeRequests[0].sabr, undefined);
+});
+
 test('when recovery fails the message says what the extension saw', async () => {
   const worker = harness();
   const sender = sabrSender();
