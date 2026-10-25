@@ -12,10 +12,12 @@ const {
 } = require('./browser-registration.cjs');
 
 const { openExtensions } = require('./browser-setup.cjs');
-const { runNativeHost } = require('../integration/native-host.cjs');
 
 if (process.argv.includes('--native-host')) {
-  runNativeHost();
+  // integration/ ships beside app.asar (Resources/browser), not inside it, so the
+  // packaged app can only load this module in the mode that needs it.
+  // eslint-disable-next-line global-require -- see above.
+  require('../integration/native-host.cjs').runNativeHost();
 } else {
   const {
     app,
