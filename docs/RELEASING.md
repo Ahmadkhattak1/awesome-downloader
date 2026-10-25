@@ -19,8 +19,8 @@ download asset just because a local package command succeeds.
    pinned ffmpeg-static release into the x64 app (check with `file` on
    `Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg`). Test
    each DMG on a clean Mac of its architecture the same way, including the
-   first-launch **Open Anyway** step. For the optional legacy YouTube resolver, place the same
-   pinned yt-dlp release's `yt-dlp_macos` binary at `vendor/yt-dlp` before building.
+   first-launch **Open Anyway** step. Run `yarn fetch:yt-dlp` before building so the
+   pinned, checksum-verified yt-dlp is bundled (the release workflow does this).
 5. Publish a **prerelease** until the clean-machine checks and known limitations
    are documented. Attach installer, checksums, notices, and required source assets.
    The browser extension's store package comes from `yarn package:extension`.

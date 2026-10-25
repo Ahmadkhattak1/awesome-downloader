@@ -22,13 +22,19 @@ Source and license: https://github.com/LuanRT/GoogleVideo
 
 # YouTube extraction
 
-The Windows build includes yt-dlp 2026.08.19 from its official GitHub release,
-SHA-256 `66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a`.
-Source: https://github.com/yt-dlp/yt-dlp/tree/2026.08.19 . The core is public domain;
-the Windows executable includes additional components under their own licenses.
-Full upstream notices are included in `vendor/LICENSE.txt` and
-`vendor/THIRD_PARTY_LICENSES.txt`, copied to the packaged `resources/tools` folder.
-This is an independent extractor, not recovered IDM implementation code.
-macOS builds include it only when the release's `yt-dlp_macos` binary has been
-placed at `vendor/yt-dlp`; without it, YouTube links pasted into the app show a
-message pointing to the browser extension instead.
+The Windows and macOS builds include yt-dlp 2026.08.19 from its official GitHub
+release, used for YouTube page links (pasted into the app, or picked with "Find page
+links"):
+
+- Windows `yt-dlp.exe`, SHA-256 `66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a`.
+- macOS `yt-dlp_macos` (universal: Apple Silicon and Intel), shipped as `yt-dlp`,
+  SHA-256 `0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202`.
+
+`yarn fetch:yt-dlp [win32|darwin]` downloads the pinned file into `vendor/` and refuses
+any file whose checksum differs; the release workflow runs it before building. Source:
+https://github.com/yt-dlp/yt-dlp/tree/2026.08.19 . The core is public domain; the
+executables include additional components under their own licenses. Full upstream
+notices are included in `vendor/LICENSE.txt` and `vendor/THIRD_PARTY_LICENSES.txt`,
+copied to the packaged `resources/tools` folder. This is an independent extractor, not
+recovered IDM implementation code. A build made without it shows a message pointing
+to the browser extension instead.

@@ -295,7 +295,7 @@ function run(
         spawnError.code === 'ENOENT'
           ? Object.assign(
               new Error(
-                'YouTube links pasted into the app need the optional yt-dlp tool, which is not included in this build. Use Download this video from the browser extension instead.',
+                'YouTube page links need the optional yt-dlp tool, which is not included in this build. Open the video in your browser and choose a quality from the browser extension’s Download this video button instead.',
               ),
               { code: 'YOUTUBE_EXTRACTOR_MISSING', statusCode: 422 },
             )
@@ -347,7 +347,9 @@ export async function youtubeFormats(input: string) {
 
   active += 1;
 
-  const promise = run(['--skip-download', '--dump-single-json', url], { timeout: 45000 })
+  // yt-dlp unpacks itself on first use and solves YouTube's player challenge with Node,
+  // which can take well over 45 s on a slow connection.
+  const promise = run(['--skip-download', '--dump-single-json', url], { timeout: 120000 })
     .then((raw) => choicesFromInfo(JSON.parse(raw), url))
     .finally(() => {
       active -= 1;

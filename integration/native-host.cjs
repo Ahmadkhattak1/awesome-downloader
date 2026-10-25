@@ -367,7 +367,8 @@ function submitDownload(payload, config) {
           'Content-Length': Buffer.byteLength(body),
           Authorization: `Bearer ${config.token}`,
         },
-        timeout: payload.action === 'formats' ? 55000 : 15000,
+        // Longer than the desktop's 120 s yt-dlp format lookup, so the desktop answers first.
+        timeout: payload.action === 'formats' ? 130000 : 15000,
       },
       (response) => {
         let result = '';

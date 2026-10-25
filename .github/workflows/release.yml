@@ -17,7 +17,12 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn test
+      # The pinned, checksum-verified yt-dlp for YouTube page links (see THIRD-PARTY.md).
+      - run: yarn fetch:yt-dlp win32
       - run: yarn dist
+      - name: Check that yt-dlp is bundled
+        shell: powershell
+        run: if (-not (Test-Path release/win-unpacked/resources/tools/yt-dlp.exe)) { throw 'yt-dlp.exe is missing from the app' }
       - name: Create SHA-256 file
         shell: powershell
         run: (Get-FileHash release/Awesome-Downloader-Setup.exe -Algorithm SHA256).Hash.ToLower() + '  Awesome-Downloader-Setup.exe' | Set-Content release/SHA256SUMS.txt
@@ -71,8 +76,10 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
       - run: yarn test
+      # yt-dlp_macos is a universal binary, so the same file serves both apps.
+      - run: yarn fetch:yt-dlp darwin
       - run: yarn dist:mac
-      - name: Check Electron and FFmpeg architectures
+      - name: Check Electron and FFmpeg architectures and the bundled yt-dlp
         working-directory: release
         run: |
           for build in mac-arm64:arm64 mac:x86_64; do
@@ -81,6 +88,8 @@ jobs:
               echo "$app/$binary: $(lipo -archs "$app/$binary")"
               test "$(lipo -archs "$app/$binary")" = "${build#*:}"
             done
+            echo "$app/Resources/tools/yt-dlp: $(lipo -archs "$app/Resources/tools/yt-dlp")"
+            test -x "$app/Resources/tools/yt-dlp"
           done
       - name: Create SHA-256 file
         working-directory: release

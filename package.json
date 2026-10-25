@@ -23,6 +23,7 @@
     "package:mac": "tsc && electron-builder --mac dir --arm64",
     "dist:mac": "tsc && electron-builder --mac dmg --arm64 --x64 --publish never",
     "package:extension": "node scripts/package-extension.mjs",
+    "fetch:yt-dlp": "node scripts/fetch-yt-dlp.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "tsc && eslint .",
