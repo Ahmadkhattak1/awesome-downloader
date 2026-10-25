@@ -21,7 +21,7 @@
     "dist": "tsc && electron-builder --win nsis --x64 --publish never",
     "dist:portable": "tsc && electron-builder --win portable --x64 --publish never",
     "package:mac": "tsc && electron-builder --mac dir --arm64",
-    "dist:mac": "tsc && electron-builder --mac dmg --arm64 --publish never",
+    "dist:mac": "tsc && electron-builder --mac dmg --arm64 --x64 --publish never",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
@@ -89,7 +89,7 @@
         ]
       }
     ],
-    "electronDist": "node_modules/electron/dist",
+    "afterPack": "./scripts/after-pack.cjs",
     "win": {
       "target": [
         {
@@ -120,7 +120,8 @@
         {
           "target": "dmg",
           "arch": [
-            "arm64"
+            "arm64",
+            "x64"
           ]
         }
       ],

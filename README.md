@@ -19,8 +19,8 @@ the desktop app.
 The installer is currently an unsigned preview. Browser video buttons require
 one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
 
-A macOS preview for Apple Silicon is built as an ad-hoc signed DMG (not
-notarized). See [macOS (preview)](docs/INSTALL.md#macos-preview) in the guide.
+A macOS preview is built as ad-hoc signed DMGs (not notarized) for Apple
+Silicon and Intel Macs. See [macOS (preview)](docs/INSTALL.md#macos-preview) in the guide.
 
 ## Features
 
@@ -50,7 +50,7 @@ yarn start
 `yarn package` builds the unpacked application. `yarn dist` builds a local
 NSIS installer, without publishing. `yarn dist:portable` builds a portable
 executable. On an Apple Silicon Mac, `yarn package:mac` builds the unpacked app
-and `yarn dist:mac` builds a DMG. See [release requirements](docs/RELEASING.md)
+and `yarn dist:mac` builds Apple Silicon (arm64) and Intel (x64) DMGs. See [release requirements](docs/RELEASING.md)
 before distributing any of them. Current builds are unsigned (ad-hoc signed on
 macOS) and have no auto-updater.
 

@@ -3,7 +3,7 @@
 ## Download
 
 Windows 10/11, 64-bit Intel/AMD PCs are the main target; Windows ARM builds are
-not provided. A macOS preview for Apple Silicon is described [below](#macos-preview). This is preview software; YouTube speed and compatibility vary.
+not provided. A macOS preview for Apple Silicon and Intel Macs is described [below](#macos-preview). This is preview software; YouTube speed and compatibility vary.
 
 Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.4)
 and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
@@ -20,13 +20,15 @@ can find it.
 
 ### macOS (preview)
 
-Apple Silicon Macs (M1 or newer) are supported. Intel Macs are not supported yet.
-A Mac download is not yet attached to a published release; it is produced by the
-release workflow or by `yarn dist:mac` (see the README).
+There are two Mac downloads: **Awesome-Downloader-VERSION-mac-arm64.dmg** for
+Apple Silicon Macs (M1 or newer) and **Awesome-Downloader-VERSION-mac-x64.dmg**
+for Intel Macs. If you are not sure which Mac you have, choose **Apple menu → About
+This Mac**: a **Chip** line names Apple M1 or newer, a **Processor** line names
+Intel. A Mac download is not yet attached to a published release; it is produced
+by the release workflow or by `yarn dist:mac` (see the README).
 
-1. Open **Awesome-Downloader-VERSION-mac-arm64.dmg** and drag **Awesome
-   Downloader** into **Applications**. Keep it there so browser integration can
-   find it.
+1. Open the DMG for your Mac and drag **Awesome Downloader** into
+   **Applications**. Keep it there so browser integration can find it.
 2. The app is not notarized by Apple yet, so the first launch is blocked. Open it
    once, then go to **System Settings → Privacy & Security**, find the message
    about Awesome Downloader, and click **Open Anyway**. Check the release's
