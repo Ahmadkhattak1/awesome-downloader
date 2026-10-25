@@ -35,21 +35,21 @@ selection does not invoke it. Firefox YouTube capture has not reached parity.
 
 ## Develop
 
-On Windows x64 with Node.js 22+:
+On Windows x64 with Node.js 22+ and Yarn 4 (run `corepack enable` once):
 
 ```powershell
-npm ci
-npm test
-npm start
+yarn install
+yarn test
+yarn start
 ```
 
-`npm run package` builds the unpacked application. `npm run dist` builds a local
-NSIS installer, without publishing. `npm run dist:portable` builds a portable
+`yarn package` builds the unpacked application. `yarn dist` builds a local
+NSIS installer, without publishing. `yarn dist:portable` builds a portable
 executable. See [release requirements](docs/RELEASING.md) before distributing
 either. Current builds are unsigned and have no auto-updater.
 
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
-Do not commit its executable. `npm ci` installs the locked media dependencies.
+Do not commit its executable. `yarn install` installs the locked media dependencies.
 
 ## Contribute
 

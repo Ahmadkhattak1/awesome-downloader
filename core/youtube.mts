@@ -135,7 +135,7 @@ export function choicesFromInfo(info: YtDlpInfo, url: string): YoutubeChoice[] {
   return result;
 }
 function executable() {
-  // Electron adds these to process; plain Node (tests, npm start sources) does not.
+  // Packaged Electron sets these; plain Node and unpackaged `electron .` runs use vendor/.
   const electron = process as NodeJS.Process & { resourcesPath?: string; defaultApp?: boolean };
   return process.versions.electron && electron.resourcesPath && !electron.defaultApp
     ? path.join(electron.resourcesPath, 'tools', 'yt-dlp.exe')

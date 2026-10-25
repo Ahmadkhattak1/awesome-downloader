@@ -5,19 +5,24 @@ finished replacement for every commercial downloader feature.
 
 ## Development
 
-Use Windows x64 and Node.js 22 or newer with npm. Fork this repository, clone your
-fork, and create a branch for one focused change.
+Use Windows x64 and Node.js 22 or newer. The project uses Yarn 4 through Corepack,
+which ships with Node.js; run `corepack enable` once. Fork this repository, clone
+your fork, and create a branch for one focused change.
 
 ```powershell
-npm ci
-npm test
-npm start
+yarn install
+yarn test
+yarn start
 ```
+
+The download engine in `core/` is TypeScript. `yarn build` compiles it into
+`dist/`; `yarn test`, `yarn start` and the packaging commands build it first.
+Run `yarn format` before committing.
 
 The legacy manual YouTube URL resolver needs the optional executable described
 in THIRD-PARTY.md; the browser-capture path does not invoke it.
 
-Run `npm run package` to build the unpacked app or `npm run dist` for a local
+Run `yarn package` to build the unpacked app or `yarn dist` for a local
 Windows installer. These commands do not publish a release. Review
 [release requirements](docs/RELEASING.md) before distributing binaries.
 
