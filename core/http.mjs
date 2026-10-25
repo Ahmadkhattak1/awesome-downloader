@@ -4,8 +4,10 @@ import https from 'node:https';
 export function validUrl(value) {
   if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
   const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS downloads are supported.');
-  if (url.username || url.password) throw new Error('Use request headers for authentication, not credentials in URLs.');
+  if (!['http:', 'https:'].includes(url.protocol))
+    throw new Error('Only HTTP and HTTPS downloads are supported.');
+  if (url.username || url.password)
+    throw new Error('Use request headers for authentication, not credentials in URLs.');
   return url.href;
 }
 
@@ -13,7 +15,13 @@ export function cleanHeaders(input = {}) {
   const headers = { 'user-agent': 'AwesomeDownloader/0.1', 'accept-encoding': 'identity' };
   const allowed = new Set(['referer', 'cookie', 'authorization', 'origin', 'user-agent', 'accept']);
   for (const [key, value] of Object.entries(input)) {
-    if (allowed.has(key.toLowerCase()) && typeof value === 'string' && value.length <= 32768 && !/[\r\n]/.test(value)) headers[key.toLowerCase()] = value;
+    if (
+      allowed.has(key.toLowerCase()) &&
+      typeof value === 'string' &&
+      value.length <= 32768 &&
+      !/[\r\n]/.test(value)
+    )
+      headers[key.toLowerCase()] = value;
   }
   return headers;
 }
@@ -22,7 +30,11 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
   url = validUrl(url);
   if (redirects > 10) throw new Error('Too many redirects.');
   const response = await new Promise((resolve, reject) => {
-    const req = (url.startsWith('https:') ? https : http).request(url, { method, headers, signal }, resolve);
+    const req = (url.startsWith('https:') ? https : http).request(
+      url,
+      { method, headers, signal },
+      resolve,
+    );
     req.on('error', reject);
     req.setTimeout(30000, () => req.destroy(new Error('Connection timed out.')));
     req.end();
@@ -50,10 +62,17 @@ export async function probe(url, headers, signal) {
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   response.destroy();
-  if (info.status < 200 || info.status >= 300) throw new Error(`Server returned HTTP ${info.status}.`);
+  if (info.status < 200 || info.status >= 300)
+    throw new Error(`Server returned HTTP ${info.status}.`);
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);
-  return { ...info, total: Number.isSafeInteger(total) && total >= 0 ? total : null,
+  return {
+    ...info,
+    total: Number.isSafeInteger(total) && total >= 0 ? total : null,
     ranges: info.headers['accept-ranges'] === 'bytes' || info.status === 206,
-    validator: info.headers.etag && !info.headers.etag.startsWith('W/') ? info.headers.etag : info.headers['last-modified'] || null };
+    validator:
+      info.headers.etag && !info.headers.etag.startsWith('W/')
+        ? info.headers.etag
+        : info.headers['last-modified'] || null,
+  };
 }
