@@ -204,3 +204,26 @@ test('request credentials are excluded from history and UI snapshots', async t =
   assert.doesNotMatch(JSON.stringify(f.engine.snapshot()), /private-fixture/);
   assert.doesNotMatch(await fs.readFile(path.join(f.root, 'state', 'downloads.json'), 'utf8'), /private-fixture/);
 });
+
+test('batchAction pauses, resumes, and removes multiple downloads', async t => {
+  const f = await fixture(t, { slow: true });
+  await assert.rejects(f.engine.batchAction('not-an-array', 'pause'), /IDs must be an array/);
+  const ids = await f.engine.add({ urls: [`${f.url}/a.bin`, `${f.url}/b.bin`], queueOnly: true });
+  assert.equal(f.engine.downloads.length, 2);
+  assert.equal(f.engine.downloads[0].status, 'paused');
+  assert.equal(f.engine.downloads[1].status, 'paused');
+
+  await f.engine.batchAction(ids, 'resume');
+  assert.ok(['queued', 'probing', 'downloading'].includes(f.engine.downloads[0].status));
+  assert.ok(['queued', 'probing', 'downloading'].includes(f.engine.downloads[1].status));
+
+  await f.engine.batchAction(ids, 'pause');
+  assert.equal(f.engine.downloads[0].status, 'paused');
+  assert.equal(f.engine.downloads[1].status, 'paused');
+
+  const outcomes = await f.engine.batchAction(ids, 'remove');
+  assert.equal(outcomes.length, 2);
+  assert.ok(outcomes.every(o => o.status === 'fulfilled'));
+  assert.equal(f.engine.downloads.length, 0);
+});
+

@@ -108,6 +108,10 @@ if (process.argv.includes('--native-host')) {
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
         },
+        batchAction: async ({ ids, action } = {}) => {
+          if (!Array.isArray(ids)) throw new Error('ids must be an array.');
+          return engine.batchAction(ids, action);
+        },
         settings: data => engine.updateSettings(data),
         chooseDirectory: async () => {
           const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] });

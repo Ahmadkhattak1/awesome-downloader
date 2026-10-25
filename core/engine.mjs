@@ -165,6 +165,21 @@ export class DownloadEngine extends EventEmitter {
     d.speed = 0;
     await this.persist(); this.changed(); this.tick();
   }
+  async batchAction(ids, action) {
+    if (!Array.isArray(ids)) throw new Error('IDs must be an array.');
+    const outcomes = [];
+    for (const id of ids) {
+      try {
+        await this.action(id, action);
+        outcomes.push({ id, status: 'fulfilled' });
+      } catch (error) {
+        outcomes.push({ id, status: 'rejected', reason: error });
+      }
+    }
+    const failed = outcomes.find(o => o.status === 'rejected');
+    if (failed && !outcomes.some(o => o.status === 'fulfilled')) throw failed.reason;
+    return outcomes;
+  }
   tick() {
     if (this.closing) return;
     for (const d of this.downloads) {

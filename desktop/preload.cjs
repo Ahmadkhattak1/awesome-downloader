@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const api = {};
-for (const name of ['snapshot', 'add', 'review', 'action', 'settings', 'chooseDirectory', 'clipboard', 'integration', 'browserSetup', 'registerBrowser','openProgress','closeProgress','resizeProgress']) api[name] = data => ipcRenderer.invoke(`downloader:${name}`, data);
+for (const name of ['snapshot', 'add', 'review', 'action', 'batchAction', 'settings', 'chooseDirectory', 'clipboard', 'integration', 'browserSetup', 'registerBrowser','openProgress','closeProgress','resizeProgress']) api[name] = data => ipcRenderer.invoke(`downloader:${name}`, data);
 api.subscribe = callback => {
   const listener = (_event, data) => callback(data);
   ipcRenderer.on('downloader:change', listener);
