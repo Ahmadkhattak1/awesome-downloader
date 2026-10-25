@@ -58,9 +58,33 @@ registrationForm.before(automaticConnection);
 const retryConnection = element('button','button','Refresh browsers');
 retryConnection.type = 'button'; retryConnection.addEventListener('click',()=>openIntegration());
 automaticConnection.after(retryConnection);
-const installHelp = element('details'); installHelp.append(element('summary','','Install the browser extension'));
-const installText = element('p','','If the extension is already installed, no setup is needed. For a new browser, open its extensions page, enable Developer mode and load the extension folder below. The app connects automatically.');
-installHelp.append(installText,$('#extension-path')); retryConnection.after(installHelp);
+const installHelp = element('section');
+installHelp.append(element('p','','One-time setup for video download buttons. No commands or extension ID needed.'));
+const setupActions = element('div','transfer-buttons');
+for (const browser of ['Chrome','Edge']) {
+  const button = element('button','button',`Open ${browser} extensions`); button.type = 'button';
+  button.addEventListener('click',async()=>{try{await call('browserSetup',{action:'open',browser});}catch(error){notify(messageOf(error),true);}});
+  setupActions.append(button);
+}
+installHelp.append(setupActions);
+const steps = element('ol');
+for(const text of ['Open your browser’s extensions page using a button above.','Turn on Developer mode, then click Load unpacked.','Click Copy folder below. Paste it into the folder picker’s address bar, press Enter, then click Select Folder.','Keep this window open while we connect. Refresh your video page afterwards.']) steps.append(element('li','',text));
+installHelp.append(steps,$('#extension-path'));
+const folderActions = element('div','transfer-buttons');
+for(const [label,action] of [['Copy folder','copy'],['Show folder','folder']]) {
+  const button = element('button','button',label); button.type='button';
+  button.addEventListener('click',async()=>{try{await call('browserSetup',{action});if(action==='copy')notify('Folder copied. Paste it into the Load unpacked folder picker.');}catch(error){notify(messageOf(error),true);}});
+  folderActions.append(button);
+}
+installHelp.append(folderActions); retryConnection.after(installHelp);
+let setupPolling = false;
+const setupPoll = setInterval(async()=>{
+  if(progressMode || !$('#integration-dialog').open || setupPolling)return;
+  setupPolling=true;
+  try { const info=await call('integration'); $('#extension-path').value=info.extensionPath || ''; automaticConnection.textContent=info.connectionError ? `Setup needs attention: ${info.connectionError}` : info.connectedBrowsers?.length ? `${info.connectedBrowsers.map(b=>b.browser).join(', ')} connected. Refresh your video page to see Download this video.` : 'Waiting for you to add the extension. We will connect it automatically.'; }
+  catch(error){automaticConnection.textContent=messageOf(error);}finally{setupPolling=false;}
+},3000);
+window.addEventListener('beforeunload',()=>clearInterval(setupPoll));
 const completionActions=element('div','transfer-buttons');completionActions.id='download-complete-actions';completionActions.hidden=true;
 for(const [label,action] of [['Open','open'],['Open with…','openWith'],['Open folder','reveal'],['Close','close']]){const button=element('button','button',label);button.type='button';button.addEventListener('click',()=>action==='close'?$('#details-dialog').close():performAction(detailDownload(),action));completionActions.append(button);}
 const completedPanel=element('section','completed-panel');
@@ -197,4 +221,10 @@ if(progressMode){
   new MutationObserver(()=>{document.title=$('#details-title').textContent;}).observe($('#details-title'),{childList:true,characterData:true,subtree:true});
   detailId=progressMode;showDialog('#details-dialog');
 }
-start().then(()=>{if(progressMode)showDetails(progressMode);});
+start().then(async()=>{
+  if(progressMode){showDetails(progressMode);return;}
+  if(state.integration.packaged && !state.integration.connectedBrowsers?.length && !localStorage.getItem('browser-setup-introduced') && !$$('dialog[open]').length){
+    await openIntegration();
+    localStorage.setItem('browser-setup-introduced','1');
+  }
+});

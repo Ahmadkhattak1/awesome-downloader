@@ -117,6 +117,16 @@ if (process.argv.includes('--native-host')) {
         integration
       };
       handlers.registerBrowser = data => require('./browser-registration.cjs').registerBrowser(data, { dataDirectory: app.getPath('userData'), integrationRoot });
+      handlers.browserSetup = async ({ action, browser } = {}) => {
+        if (action === 'open') return require('./browser-setup.cjs').openExtensions(browser);
+        if (action === 'copy') { clipboard.writeText(path.join(integrationRoot, 'extension')); return; }
+        if (action === 'folder') {
+          const error = await shell.openPath(path.join(integrationRoot, 'extension'));
+          if (error) throw new Error(error);
+          return;
+        }
+        throw new Error('Unknown browser setup action.');
+      };
       for (const [name, handler] of Object.entries(handlers)) ipcMain.handle(`downloader:${name}`, (event, data) => {
         if (![window,...progressWindows.values()].some(w=>!w.isDestroyed()&&event.senderFrame===w.webContents.mainFrame)) throw new Error('Untrusted renderer.');
         return handler(data);

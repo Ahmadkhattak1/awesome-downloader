@@ -22,11 +22,14 @@ can find it.
 
 There is no browser-store listing yet. This is the one manual setup step:
 
-1. Open the app's **Browser Integration** panel and copy its extension folder path.
-2. Open `chrome://extensions` or `edge://extensions` in your browser.
-3. Enable **Developer mode**, choose **Load unpacked**, and select that folder.
-4. Leave Awesome Downloader open while it detects the extension, then refresh
-   the video page. No extension ID needs to be entered.
+1. The app shows **Browser integration** on first launch. You can also open it
+   from the toolbar later.
+2. Click **Open Chrome extensions** or **Open Edge extensions**.
+3. Enable **Developer mode** and click **Load unpacked**.
+4. In the app, click **Copy folder**. Paste it into the folder picker's address
+   bar, press Enter, then click **Select Folder**.
+5. The setup panel checks automatically and shows when the browser is connected.
+   Refresh your video page. No extension ID or commands need to be entered.
 
 Only install the extension if you trust this project. Its page/network permissions
 allow it to detect media and hand the selected media session to the desktop app.
