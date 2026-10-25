@@ -4,8 +4,7 @@ A Windows download manager with a compact desktop interface and browser video
 buttons. Original open-source implementation; not affiliated with Internet
 Download Manager and not a complete feature-for-feature replacement.
 
-**Early preview:** YouTube transfers can be slow or fail as the service changes.
-Private/sign-in-required, DRM and live media are unsupported. Please report bugs
+**Early preview:** Private/sign-in-required, DRM and live media are unsupported. Please report bugs
 without sharing session tokens or signed media links.
 
 ## Just want to use it?
