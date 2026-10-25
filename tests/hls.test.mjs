@@ -5,8 +5,8 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DownloadEngine } from '../core/engine.mjs';
-import { parseHls, scopedHeaders } from '../core/hls.mjs';
+import { DownloadEngine } from '../dist/core/engine.mjs';
+import { parseHls, scopedHeaders } from '../dist/core/hls.mjs';
 
 test('HLS parser resolves real variants and segment/init URLs', () => {
   const master = parseHls(

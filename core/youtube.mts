@@ -2,9 +2,54 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import ffmpeg from 'ffmpeg-static';
+import { ffmpegExecutable } from './mux.mjs';
+import type { DownloadStatus, OutputFormat } from './types.mjs';
 
-export function youtubeUrl(value) {
+// The subset of yt-dlp's --dump-single-json output this module reads.
+interface YtDlpFormat {
+  format_id: string | number;
+  url?: string;
+  protocol: string;
+  has_drm?: boolean;
+  vcodec: string;
+  acodec: string;
+  ext: string;
+  height?: number;
+  fps?: number;
+  abr?: number;
+  filesize?: number;
+  filesize_approx?: number;
+}
+interface YtDlpInfo {
+  is_live?: boolean;
+  live_status?: string;
+  formats?: YtDlpFormat[];
+  title?: string;
+  duration?: number;
+}
+export interface YoutubeChoice {
+  url: string;
+  provider: 'youtube';
+  youtubeFormat: string;
+  format: 'MP4' | 'MP3';
+  quality: string;
+  fps?: number;
+  audioState: string;
+  title: string;
+  outputFormat: OutputFormat;
+  estimatedSize?: number;
+  duration: number;
+}
+export interface YoutubeProgress {
+  downloaded: number;
+  total: number | null;
+  speed: number;
+  status: DownloadStatus;
+  estimated: boolean;
+}
+type YoutubeError = Error & { code?: string; statusCode?: number };
+
+export function youtubeUrl(value: string) {
   try {
     const u = new URL(value);
     if (u.protocol !== 'https:' || u.username || u.password) return null;
@@ -22,7 +67,7 @@ export function youtubeUrl(value) {
     return null;
   }
 }
-export function choicesFromInfo(info, url) {
+export function choicesFromInfo(info: YtDlpInfo, url: string): YoutubeChoice[] {
   if (info.is_live || info.live_status === 'is_live')
     throw new Error('Live YouTube streams are not supported yet.');
   const formats = (info.formats || []).filter(
@@ -38,26 +83,27 @@ export function choicesFromInfo(info, url) {
     )
     .sort((a, b) => (b.abr || 0) - (a.abr || 0));
   const audio = audios[0];
-  const groups = new Map();
+  const groups = new Map<number | undefined, YtDlpFormat>();
   for (const f of formats.filter(
     (f) => f.vcodec && f.vcodec !== 'none' && f.ext === 'mp4' && f.height,
   )) {
     if (f.acodec === 'none' && !audio) continue;
     const old = groups.get(f.height);
     // Prefer a direct H.264 stream at each height for Windows compatibility.
-    const score = (v) =>
+    const score = (v: YtDlpFormat) =>
       (v.protocol === 'https' ? 100 : 0) + (/^avc/.test(v.vcodec) ? 50 : 0) + (v.fps || 0) / 100;
     if (!old || score(f) > score(old)) groups.set(f.height, f);
   }
   const title = String(info.title || 'YouTube video').slice(0, 180);
-  const result = [...groups.values()]
-    .sort((a, b) => b.height - a.height)
+  const result: YoutubeChoice[] = [...groups.values()]
+    .sort((a, b) => b.height! - a.height!)
     .map((f) => {
+      // Video-only formats are skipped above unless an audio track exists.
       const paired = f.acodec === 'none';
       return {
         url,
         provider: 'youtube',
-        youtubeFormat: String(f.format_id) + (paired ? '+' + audio.format_id : ''),
+        youtubeFormat: String(f.format_id) + (paired ? '+' + audio!.format_id : ''),
         format: 'MP4',
         quality: f.height + 'p',
         fps: f.fps || 0,
@@ -66,7 +112,7 @@ export function choicesFromInfo(info, url) {
         outputFormat: 'mp4',
         estimatedSize:
           (f.filesize || f.filesize_approx || 0) +
-          (paired ? audio.filesize || audio.filesize_approx || 0 : 0),
+          (paired ? audio!.filesize || audio!.filesize_approx || 0 : 0),
         duration: info.duration || 0,
       };
     });
@@ -89,11 +135,13 @@ export function choicesFromInfo(info, url) {
   return result;
 }
 function executable() {
-  return process.versions.electron && process.resourcesPath && !process.defaultApp
-    ? path.join(process.resourcesPath, 'tools', 'yt-dlp.exe')
-    : fileURLToPath(new URL('../vendor/yt-dlp.exe', import.meta.url));
+  // Electron adds these to process; plain Node (tests, npm start sources) does not.
+  const electron = process as NodeJS.Process & { resourcesPath?: string; defaultApp?: boolean };
+  return process.versions.electron && electron.resourcesPath && !electron.defaultApp
+    ? path.join(electron.resourcesPath, 'tools', 'yt-dlp.exe')
+    : fileURLToPath(new URL('../../vendor/yt-dlp.exe', import.meta.url));
 }
-export function youtubeError(raw) {
+export function youtubeError(raw: unknown): YoutubeError {
   const message = String(raw);
   if (/HTTP Error 429|Too Many Requests/i.test(message))
     return Object.assign(
@@ -117,8 +165,15 @@ export function youtubeError(raw) {
       .slice(0, 700) || 'YouTube download failed.',
   );
 }
-function run(args, { signal, onLine, timeout = 120000 } = {}) {
-  return new Promise((resolve, reject) => {
+function run(
+  args: string[],
+  {
+    signal,
+    onLine,
+    timeout = 120000,
+  }: { signal?: AbortSignal; onLine?: (line: string) => void; timeout?: number } = {},
+) {
+  return new Promise<string>((resolve, reject) => {
     const env = { ...process.env };
     if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
     const child = spawn(
@@ -142,7 +197,7 @@ function run(args, { signal, onLine, timeout = 120000 } = {}) {
           error = 'YouTube request timed out.';
           child.kill();
         }, timeout)
-      : null;
+      : undefined;
     child.stdout.on('data', (chunk) => {
       if (onLine) {
         pending += chunk;
@@ -178,10 +233,10 @@ function run(args, { signal, onLine, timeout = 120000 } = {}) {
     });
   });
 }
-const cache = new Map();
+const cache = new Map<string, { promise: Promise<YoutubeChoice[]>; expires: number }>();
 let active = 0;
 let rateLimitUntil = 0;
-export async function youtubeFormats(input) {
+export async function youtubeFormats(input: string) {
   const url = youtubeUrl(input);
   if (!url) throw new Error('A valid YouTube video URL is required.');
   const existing = cache.get(url);
@@ -195,11 +250,11 @@ export async function youtubeFormats(input) {
       active--;
     });
   cache.set(url, { promise, expires: Date.now() + 120000 });
-  if (cache.size > 20) cache.delete(cache.keys().next().value);
+  if (cache.size > 20) cache.delete(cache.keys().next().value!);
   try {
     return await promise;
   } catch (e) {
-    if (e.code === 'YOUTUBE_RATE_LIMIT') rateLimitUntil = Date.now() + 120000;
+    if ((e as YoutubeError).code === 'YOUTUBE_RATE_LIMIT') rateLimitUntil = Date.now() + 120000;
     // Retain short-lived failures as well as successes to avoid repeated menu
     // clicks hammering the same video. This promise already has a rejection handler.
     const entry = cache.get(url);
@@ -215,6 +270,14 @@ export async function downloadYoutube({
   onProgress,
   onMetadata,
   speedLimitKbps = 0,
+}: {
+  url: string;
+  formatKey?: string;
+  directory: string;
+  signal: AbortSignal;
+  onProgress?: (progress: YoutubeProgress) => void;
+  onMetadata?: (choice: YoutubeChoice) => void;
+  speedLimitKbps?: number;
 }) {
   const formats = await youtubeFormats(url);
   signal.throwIfAborted();
@@ -233,7 +296,7 @@ export async function downloadYoutube({
     '--progress-template',
     'download:ADPROGRESS:%(progress)j',
     '--ffmpeg-location',
-    ffmpeg.replace('app.asar', 'app.asar.unpacked'),
+    ffmpegExecutable(),
     '-f',
     audio ? choice.youtubeFormat.slice(6) : choice.youtubeFormat,
     '-o',
@@ -242,9 +305,10 @@ export async function downloadYoutube({
   if (speedLimitKbps) args.push('--limit-rate', String(speedLimitKbps * 1024));
   args.push(
     ...(audio ? ['--extract-audio', '--audio-format', 'mp3'] : ['--merge-output-format', 'mp4']),
-    youtubeUrl(url),
+    // youtubeFormats() above has already rejected anything that is not a YouTube URL.
+    youtubeUrl(url)!,
   );
-  const finished = new Map();
+  const finished = new Map<string, number>();
   let completedBytes = 0;
   await run(args, {
     signal,

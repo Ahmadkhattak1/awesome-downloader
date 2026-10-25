@@ -50,8 +50,8 @@ if (process.argv.includes('--native-host')) {
         } catch (error) {
           if (!['ENOENT', 'EEXIST'].includes(error.code)) throw error;
         }
-        const { DownloadEngine } = await import('../core/engine.mjs');
-        const { startBridge } = await import('../core/bridge.mjs');
+        const { DownloadEngine } = await import('../dist/core/engine.mjs');
+        const { startBridge } = await import('../dist/core/bridge.mjs');
         engine = await new DownloadEngine({
           dataDirectory: app.getPath('userData'),
           downloadDirectory: app.getPath('downloads'),

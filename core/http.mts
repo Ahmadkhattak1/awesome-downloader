@@ -1,7 +1,30 @@
-import http from 'node:http';
+import http, { type IncomingHttpHeaders, type IncomingMessage } from 'node:http';
 import https from 'node:https';
 
-export function validUrl(value) {
+export type HeaderMap = Record<string, string>;
+
+export interface HttpResponse extends IncomingMessage {
+  statusCode: number;
+  finalUrl: string;
+}
+
+export interface ProbeInfo {
+  status: number;
+  headers: IncomingHttpHeaders;
+  url: string;
+  total: number | null;
+  ranges: boolean;
+  validator: string | null;
+}
+
+interface RequestOptions {
+  method?: string;
+  headers?: HeaderMap;
+  signal?: AbortSignal;
+  redirects?: number;
+}
+
+export function validUrl(value: unknown): string {
   if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol))
@@ -11,8 +34,11 @@ export function validUrl(value) {
   return url.href;
 }
 
-export function cleanHeaders(input = {}) {
-  const headers = { 'user-agent': 'AwesomeDownloader/0.1', 'accept-encoding': 'identity' };
+export function cleanHeaders(input: Record<string, unknown> = {}): HeaderMap {
+  const headers: HeaderMap = {
+    'user-agent': 'AwesomeDownloader/0.1',
+    'accept-encoding': 'identity',
+  };
   const allowed = new Set(['referer', 'cookie', 'authorization', 'origin', 'user-agent', 'accept']);
   for (const [key, value] of Object.entries(input)) {
     if (
@@ -26,20 +52,20 @@ export function cleanHeaders(input = {}) {
   return headers;
 }
 
-export async function request(url, { method = 'GET', headers = {}, signal, redirects = 0 } = {}) {
+export async function request(
+  url: string,
+  { method = 'GET', headers = {}, signal, redirects = 0 }: RequestOptions = {},
+): Promise<HttpResponse> {
   url = validUrl(url);
   if (redirects > 10) throw new Error('Too many redirects.');
-  const response = await new Promise((resolve, reject) => {
-    const req = (url.startsWith('https:') ? https : http).request(
-      url,
-      { method, headers, signal },
-      resolve,
-    );
+  const send: typeof http.request = url.startsWith('https:') ? https.request : http.request;
+  const response = await new Promise<IncomingMessage>((resolve, reject) => {
+    const req = send(url, { method, headers, signal }, resolve);
     req.on('error', reject);
     req.setTimeout(30000, () => req.destroy(new Error('Connection timed out.')));
     req.end();
   });
-  if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+  if ([301, 302, 303, 307, 308].includes(response.statusCode ?? 0) && response.headers.location) {
     response.resume();
     const target = validUrl(new URL(response.headers.location, url).href);
     const forwarded = { ...headers };
@@ -50,11 +76,14 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
     }
     return request(target, { method, headers: forwarded, signal, redirects: redirects + 1 });
   }
-  response.finalUrl = url;
-  return response;
+  return Object.assign(response, { finalUrl: url }) as HttpResponse;
 }
 
-export async function probe(url, headers, signal) {
+export async function probe(
+  url: string,
+  headers: HeaderMap,
+  signal?: AbortSignal,
+): Promise<ProbeInfo> {
   let response = await request(url, { method: 'HEAD', headers, signal });
   if ([405, 501].includes(response.statusCode)) {
     response.resume();

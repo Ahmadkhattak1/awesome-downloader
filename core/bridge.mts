@@ -1,18 +1,38 @@
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { youtubeFormats } from './youtube.mjs';
+import type { AddOptions, DownloadEngine } from './engine.mjs';
 
-export async function startBridge(engine, { dataDirectory, port = 17843, onDownload } = {}) {
+export interface BridgeDownload extends AddOptions {
+  startNow: boolean;
+}
+
+export async function startBridge(
+  engine: DownloadEngine,
+  {
+    dataDirectory,
+    port = 17843,
+    onDownload,
+  }: {
+    dataDirectory: string;
+    port?: number;
+    onDownload?: (payload: BridgeDownload) => Promise<string[]> | string[];
+  },
+) {
   const token = randomBytes(32).toString('hex');
   const server = http.createServer(async (req, res) => {
-    const answer = (status, data) => {
+    const answer = (status: number, data: unknown) => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(data));
     };
     // Browser pages cannot submit requests: no CORS and explicit origin rejection.
-    if (req.headers.origin || req.headers.host !== `127.0.0.1:${server.address().port}`)
+    if (
+      req.headers.origin ||
+      req.headers.host !== `127.0.0.1:${(server.address() as AddressInfo).port}`
+    )
       return answer(403, { error: 'Forbidden origin or host.' });
     const auth = Buffer.from(req.headers.authorization || '');
     const expected = Buffer.from(`Bearer ${token}`);
@@ -20,13 +40,13 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
       return answer(401, { error: 'Unauthorized.' });
     if (req.method === 'GET' && req.url === '/health')
       return answer(200, { ok: true, version: '0.1.0' });
-    if (req.method !== 'POST' || !['/downloads', '/formats'].includes(req.url))
+    if (req.method !== 'POST' || !['/downloads', '/formats'].includes(req.url ?? ''))
       return answer(404, { error: 'Not found.' });
     if (!String(req.headers['content-type']).startsWith('application/json'))
       return answer(415, { error: 'JSON required.' });
     let size = 0;
     try {
-      const chunks = [];
+      const chunks: Buffer[] = [];
       for await (const chunk of req) {
         size += chunk.length;
         if (size > 1024 * 1024) {
@@ -40,7 +60,7 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
       if (req.url === '/formats')
         return answer(200, { ok: true, items: await youtubeFormats(body.url) });
       // Browser callers cannot select filesystem destinations or arbitrary app actions.
-      const payload = {
+      const payload: BridgeDownload = {
         url: body.url,
         youtubeFormat: body.youtubeFormat,
         sabr: body.sabr,
@@ -55,19 +75,20 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
       const ids = await (onDownload ? onDownload(payload) : engine.add(payload));
       answer(201, { ok: true, ids });
     } catch (error) {
+      const { statusCode, message } = error as Error & { statusCode?: number };
       if (!res.headersSent)
-        answer([429, 422].includes(error.statusCode) ? error.statusCode : 400, {
-          error: error.message,
+        answer(statusCode === 429 || statusCode === 422 ? statusCode : 400, {
+          error: message,
         });
     }
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', resolve);
   });
-  const actualPort = server.address().port;
+  const actualPort = (server.address() as AddressInfo).port;
   await fs.mkdir(dataDirectory, { recursive: true });
   const configPath = path.join(dataDirectory, 'bridge.json');
   try {
@@ -79,15 +100,15 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
   return {
     port: actualPort,
     async close() {
-      await new Promise((resolve) => {
-        server.close(resolve);
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
         server.closeIdleConnections();
       });
       try {
         const saved = JSON.parse(await fs.readFile(configPath, 'utf8'));
         if (saved.token === token) await fs.unlink(configPath);
       } catch (e) {
-        if (e.code !== 'ENOENT') throw e;
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       }
     },
   };

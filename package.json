@@ -14,19 +14,22 @@
   "author": "Awesome Downloader contributors",
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "test": "node --test tests/*.test.mjs integration/*.test.cjs extension/*.test.cjs",
-    "package": "electron-builder --win dir",
-    "dist": "electron-builder --win nsis --x64 --publish never",
-    "dist:portable": "electron-builder --win portable --x64 --publish never",
+    "build": "tsc",
+    "start": "tsc && electron .",
+    "test": "tsc && node --test tests/*.test.mjs integration/*.test.cjs extension/*.test.cjs",
+    "package": "tsc && electron-builder --win dir",
+    "dist": "tsc && electron-builder --win nsis --x64 --publish never",
+    "dist:portable": "tsc && electron-builder --win portable --x64 --publish never",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@types/node": "22.19.1",
     "electron": "44.9.0",
     "electron-builder": "^26.15.3",
     "playwright": "^1.58.2",
-    "prettier": "3.6.2"
+    "prettier": "3.6.2",
+    "typescript": "5.9.3"
   },
   "build": {
     "appId": "com.awesomedownloader.desktop",
@@ -36,7 +39,7 @@
     },
     "files": [
       "desktop/**/*",
-      "core/**/*",
+      "dist/**/*",
       "renderer/**/*",
       "assets/**/*",
       "integration/**/*",

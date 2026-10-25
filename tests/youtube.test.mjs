@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { youtubeUrl, choicesFromInfo, youtubeError } from '../core/youtube.mjs';
+import { youtubeUrl, choicesFromInfo, youtubeError } from '../dist/core/youtube.mjs';
 test('YouTube refusals explain rate limiting and verification without raw warnings or URLs', () => {
   const rate = youtubeError(
     'Deprecated Feature: Python\nHTTP Error 429: Too Many Requests\nSign in to confirm you are not a bot',
@@ -14,7 +14,7 @@ test('YouTube refusals explain rate limiting and verification without raw warnin
     'ERROR: failed [URL]',
   );
 });
-import { streamProgress } from '../core/stream-progress.mjs';
+import { streamProgress } from '../dist/core/stream-progress.mjs';
 test('YouTube resolver accepts only canonical public video URL shapes', () => {
   assert.equal(
     youtubeUrl('https://youtu.be/wLdZWyLOJCI'),

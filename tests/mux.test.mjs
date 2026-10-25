@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import ffmpeg from 'ffmpeg-static';
-import { DownloadEngine } from '../core/engine.mjs';
+import { DownloadEngine } from '../dist/core/engine.mjs';
 
 test('direct adaptive tracks download separately and complete as audible MP4', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-direct-pair-'));

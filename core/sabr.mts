@@ -1,10 +1,31 @@
 import { promises as fs } from 'node:fs';
-import { SabrStream } from 'googlevideo/sabr-stream';
+import { SabrStream, type SabrStreamConfig } from 'googlevideo/sabr-stream';
 import { buildSabrFormat, EnabledTrackTypes } from 'googlevideo/utils';
 import { VideoPlaybackAbrRequest } from 'googlevideo/protos';
+import type { FormatStream, SabrFormat } from 'googlevideo/shared-types';
+import type { HeaderMap } from './http.mjs';
 
-const googleVideoSabr = (value) => {
-  const url = new URL(value);
+// The session as captured by the browser extension; every field is validated below.
+interface CapturedSabrSession {
+  videoId?: string;
+  serverAbrStreamingUrl?: string;
+  videoPlaybackUstreamerConfig?: string;
+  formats?: FormatStream[];
+  audioItag?: number | string;
+  videoItag?: number | string;
+  requestBody?: string;
+  clientInfo?: { clientName?: number | string; clientVersion?: string };
+}
+export type SabrSession = ReturnType<typeof normalizeSabrSession>;
+export interface SabrProgress {
+  downloaded: number;
+  total: number | null;
+  networkDownloaded: number;
+  tracks: Record<number, number>;
+}
+
+const googleVideoSabr = (value: unknown) => {
+  const url = new URL(String(value));
   if (
     url.protocol !== 'https:' ||
     !(url.hostname === 'googlevideo.com' || url.hostname.endsWith('.googlevideo.com')) ||
@@ -16,7 +37,8 @@ const googleVideoSabr = (value) => {
     throw new Error('Invalid YouTube SABR URL.');
   return url.href;
 };
-export function normalizeSabrSession(value) {
+export function normalizeSabrSession(input: unknown) {
+  const value = input as CapturedSabrSession | null;
   if (
     !value ||
     typeof value !== 'object' ||
@@ -38,7 +60,7 @@ export function normalizeSabrSession(value) {
   // An itag is shared by dubbed languages, DRC and voice-boost variants.
   // Keep precisely the chosen default audio and video, not every matching itag.
   const audioCandidates = value.formats.filter(
-    (f) => f.itag === audioItag && /^audio\/mp4/i.test(f.mimeType) && !f.isDrc && !f.isVb,
+    (f) => f.itag === audioItag && /^audio\/mp4/i.test(f.mimeType ?? '') && !f.isDrc && !f.isVb,
   );
   const audioRaw =
     audioCandidates.find((f) => f.audioTrack?.audioIsDefault) ||
@@ -47,10 +69,15 @@ export function normalizeSabrSession(value) {
   const videoRaw =
     videoItag === undefined
       ? undefined
-      : value.formats.find((f) => f.itag === videoItag && /^video\/mp4/i.test(f.mimeType));
+      : value.formats.find((f) => f.itag === videoItag && /^video\/mp4/i.test(f.mimeType ?? ''));
+  // buildSabrFormat's fields override the raw ones (contentLength becomes a number).
   const formats = [videoRaw, audioRaw]
-    .filter(Boolean)
-    .map((f) => ({ ...f, ...buildSabrFormat(f), audioTrack: f.audioTrack }));
+    .filter((f) => f !== undefined)
+    .map(
+      (f) =>
+        ({ ...f, ...buildSabrFormat(f), audioTrack: f.audioTrack }) as SabrFormat &
+          Pick<FormatStream, 'audioTrack'>,
+    );
   if (!Number.isSafeInteger(audioItag) || !formats.some((f) => f.itag === audioItag && f.hasAudio))
     throw new Error('The selected YouTube audio track is unavailable.');
   if (
@@ -58,7 +85,7 @@ export function normalizeSabrSession(value) {
     (!Number.isSafeInteger(videoItag) || !formats.some((f) => f.itag === videoItag && f.hasVideo))
   )
     throw new Error('The selected YouTube video track is unavailable.');
-  let seed, requestBody;
+  let seed: ReturnType<typeof VideoPlaybackAbrRequest.decode> | undefined, requestBody: Buffer;
   if (value.requestBody !== undefined) {
     if (
       typeof value.requestBody !== 'string' ||
@@ -76,7 +103,7 @@ export function normalizeSabrSession(value) {
     }
   }
   const capturedClient = seed?.streamerContext?.clientInfo;
-  const clientInfo = {
+  const clientInfo: SabrStreamConfig['clientInfo'] = {
     clientName: Number(capturedClient?.clientName || value.clientInfo?.clientName) || 1,
     clientVersion: String(capturedClient?.clientVersion || value.clientInfo?.clientVersion || ''),
     hl: capturedClient?.hl,
@@ -89,7 +116,7 @@ export function normalizeSabrSession(value) {
     ? Buffer.from(seed.streamerContext.poToken).toString('base64')
     : undefined;
   return {
-    videoId: value.videoId,
+    videoId: value.videoId as string,
     serverAbrStreamingUrl,
     videoPlaybackUstreamerConfig: value.videoPlaybackUstreamerConfig,
     clientInfo,
@@ -100,7 +127,12 @@ export function normalizeSabrSession(value) {
     poToken,
   };
 }
-async function writeReadable(readable, file, signal, onChunk) {
+async function writeReadable(
+  readable: ReadableStream<ArrayBufferView>,
+  file: string,
+  signal: AbortSignal,
+  onChunk: (bytes: number) => void,
+) {
   const output = await fs.open(file, 'w');
   const reader = readable.getReader();
   try {
@@ -125,24 +157,31 @@ export async function downloadSabr({
   audioPath,
   signal,
   onProgress = () => {},
+}: {
+  session: unknown;
+  headers?: HeaderMap;
+  videoPath: string;
+  audioPath: string;
+  signal: AbortSignal;
+  onProgress?: (progress: SabrProgress) => void;
 }) {
   const selected = normalizeSabrSession(session);
   let networkDownloaded = 0,
     downloaded = 0;
-  const tracks = {};
-  let total = null;
+  const tracks: Record<number, number> = {};
+  let total: number | null = null;
   const report = () => onProgress({ downloaded, total, networkDownloaded, tracks: { ...tracks } });
-  const commonHeaders = {};
+  const commonHeaders: HeaderMap = {};
   for (const [name, value] of Object.entries(headers || {}))
     if (typeof value === 'string' && value) commonHeaders[name] = value;
-  const fetchFunction = async (input, init = {}) => {
+  const fetchFunction: typeof fetch = async (input, init = {}) => {
     const merged = new Headers(init.headers || {});
     for (const [name, value] of Object.entries(commonHeaders))
       if (!merged.has(name)) merged.set(name, value);
     const response = await fetch(input, { ...init, headers: merged, redirect: 'follow' });
     if (!response.body || !response.ok) return response;
     const body = response.body.pipeThrough(
-      new TransformStream({
+      new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
           networkDownloaded += chunk.byteLength;
           report();
@@ -170,11 +209,11 @@ export async function downloadSabr({
     selected.videoItag === undefined
       ? undefined
       : selected.formats.find((f) => f.itag === selected.videoItag);
-  const selectedTracks = [videoFormat, audioFormat].filter(Boolean);
+  const selectedTracks = [videoFormat, audioFormat].filter((f) => f !== undefined);
   total = selectedTracks.every((f) => Number(f.contentLength) > 0)
     ? selectedTracks.reduce((sum, f) => sum + Number(f.contentLength), 0)
     : null;
-  const progress = (itag) => (bytes) => {
+  const progress = (itag: number) => (bytes: number) => {
     downloaded += bytes;
     tracks[itag] = (tracks[itag] || 0) + bytes;
     report();
@@ -213,7 +252,7 @@ export async function downloadSabr({
       videoPath: selected.videoItag === undefined ? undefined : videoPath,
       duration:
         Math.max(
-          Number(audioFormat.approxDurationMs) || 0,
+          Number(audioFormat?.approxDurationMs) || 0,
           Number(videoFormat?.approxDurationMs) || 0,
         ) / 1000,
     };
