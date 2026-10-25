@@ -3,6 +3,11 @@
 Issues and pull requests are welcome. This is an early Windows preview, not a
 finished replacement for every commercial downloader feature.
 
+Read the [contributor start guide](docs/CONTRIBUTOR-START-HERE.md) before choosing
+work. It explains our roadmap, labels and implementation order. For new feature
+work, pick an approved issue and agree your approach and ownership with the
+maintainer before coding. Propose features outside the backlog for approval first.
+
 ## Development
 
 Use Windows x64 or an Apple Silicon Mac, and Node.js 22 or newer (`.nvmrc` pins the
@@ -53,6 +58,10 @@ Windows installer. These commands do not publish a release. Review
 
 ## Pull requests
 
+- Link the implementation issue and its parent goal, and identify prerequisites.
+- Use `Closes #...` only for an issue fully completed by the PR; use `Refs #...`
+  for partial work and parent goals. Keep each PR focused and wait for prerequisite
+  changes to merge and pass validation before merging dependent work.
 - Explain the problem, the change, and how you tested it.
 - Add regressions for parsing, transfers, authentication, and lifecycle changes.
 - Preserve the compact Windows layout and keyboard accessibility.
