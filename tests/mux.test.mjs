@@ -244,7 +244,8 @@ test('a video track in another codec is detected and converted to H.264', async 
   const run = promisify(execFile);
   const source = path.join(root, 'combined.mp4');
 
-  // The shape YouTube's server can send: AV1 video with AAC audio.
+  // Stands in for the AV1 YouTube's server can send. FFmpeg's built-in MPEG-4 encoder is
+  // used because not every ffmpeg-static build has an AV1 encoder (Windows lacks one).
   await run(
     ffmpeg,
     [
@@ -259,7 +260,7 @@ test('a video track in another codec is detected and converted to H.264', async 
       '-i',
       'sine=f=440:d=1',
       '-c:v',
-      'libsvtav1',
+      'mpeg4',
       '-c:a',
       'aac',
       '-shortest',
@@ -269,7 +270,7 @@ test('a video track in another codec is detected and converted to H.264', async 
   );
 
   const { signal } = new AbortController();
-  assert.equal(await videoCodec(source, signal), 'av1');
+  assert.equal(await videoCodec(source, signal), 'mpeg4');
 
   const converted = await convertVideoToH264(root, source, signal);
   assert.equal(await videoCodec(converted, signal), 'h264');
