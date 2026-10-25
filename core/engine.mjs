@@ -11,6 +11,15 @@ import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
 const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
+export function isTransientNetworkError(error) {
+  if (!error) return false;
+  const code = String(error.code || error.cause?.code || '');
+  if (/^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR_\w+)$/i.test(code)) return true;
+  const msg = String(error.message || '');
+  if (/HTTP 4\d\d/i.test(msg) && !/HTTP 429/i.test(msg)) return false;
+  if (/instead of a byte range|inconsistent byte range|corrupt ranges|more bytes than requested|muxing engine|Invalid/i.test(msg)) return false;
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|socket|network|Connection ended|fetch failed|timeout|HTTP 5\d\d|HTTP 429/i.test(msg);
+}
 export function safeFilename(value) {
   let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180);
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
@@ -30,7 +39,7 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, maxRetries: 3, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true };
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
@@ -71,10 +80,10 @@ export class DownloadEngine extends EventEmitter {
   updateSettings(patch, save = true) {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
     const next = { ...this.settings };
-    for (const [key, max] of [['maxConcurrent', 16], ['connections', 32], ['speedLimitKbps', 1048576]]) {
+    for (const [key, max] of [['maxConcurrent', 16], ['connections', 32], ['speedLimitKbps', 1048576], ['maxRetries', 10]]) {
       if (patch[key] !== undefined) {
         const n = Number(patch[key]);
-        if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : 1) || n > max) throw new Error(`Invalid ${key}.`);
+        if (!Number.isInteger(n) || n < (['speedLimitKbps', 'maxRetries'].includes(key) ? 0 : 1) || n > max) throw new Error(`Invalid ${key}.`);
         next[key] = n;
       }
     }
@@ -153,14 +162,15 @@ export class DownloadEngine extends EventEmitter {
     if (action === 'pause' || action === 'cancel' || action === 'remove') {
       const job = this.jobs.get(id);
       if (job) { job.controller.abort(); await job.promise; }
-      if (action === 'pause' && d.status !== 'complete') d.status = 'paused';
-      if (action === 'cancel' && d.status !== 'complete') { d.status = 'cancelled'; d.needsReview = false; }
+      if (action === 'pause' && d.status !== 'complete') { d.status = 'paused'; d.scheduledAt = null; }
+      if (action === 'cancel' && d.status !== 'complete') { d.status = 'cancelled'; d.needsReview = false; d.scheduledAt = null; }
       if (action === 'remove') this.downloads = this.downloads.filter(x => x.id !== id);
       if (action !== 'pause') { await fs.rm(path.join(this.partsDirectory, id), { recursive: true, force: true }); d.segments = []; if (d.status !== 'complete') d.downloaded = 0; }
+      d.retries = 0;
     } else {
       if (d.needsReview) throw new Error('Confirm this browser download in Download File Info first.');
       if (this.jobs.has(id) || d.status === 'complete') return;
-      d.error = null; d.status = 'queued'; d.scheduledAt = null;
+      d.error = null; d.status = 'queued'; d.scheduledAt = null; d.retries = 0;
     }
     d.speed = 0;
     await this.persist(); this.changed(); this.tick();
@@ -174,8 +184,25 @@ export class DownloadEngine extends EventEmitter {
         const job = { controller, promise: null };
         this.jobs.set(d.id, job);
         job.promise = this.run(d, controller.signal).catch(error => {
-          d.status = controller.signal.aborted ? 'paused' : 'error';
-          d.error = controller.signal.aborted ? null : error.message;
+          if (controller.signal.aborted) {
+            d.status = 'paused';
+            d.error = null;
+            d.retries = 0;
+            return;
+          }
+          const maxRetries = this.settings.maxRetries ?? 3;
+          const currentRetries = d.retries || 0;
+          if (maxRetries > 0 && isTransientNetworkError(error) && currentRetries < maxRetries) {
+            d.retries = currentRetries + 1;
+            const backoffSec = Math.min(60, 2 ** d.retries);
+            d.status = 'scheduled';
+            d.scheduledAt = new Date(Date.now() + backoffSec * 1000).toISOString();
+            d.error = `Network error (${error.message}). Retrying in ${backoffSec}s (${d.retries}/${maxRetries})...`;
+          } else {
+            d.status = 'error';
+            d.error = currentRetries > 0 ? `Failed after ${currentRetries} retry attempt(s): ${error.message}` : error.message;
+            d.retries = 0;
+          }
         }).finally(async () => {
           d.speed = 0;
           // Keep the job owned until all cleanup and its final checkpoint finish.
@@ -279,7 +306,7 @@ export class DownloadEngine extends EventEmitter {
       }
       await out.sync(); complete = true;
     } finally { await out.close(); if (!complete) await fs.unlink(destination); }
-    d.path = destination; d.filename = path.basename(destination); d.status = 'complete';
+    d.path = destination; d.filename = path.basename(destination); d.status = 'complete'; d.retries = 0;
     d.completedAt = new Date().toISOString();
     await this.persist();
     try { await fs.rm(dir, { recursive: true, force: true }); }
