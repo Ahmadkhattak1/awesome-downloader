@@ -77,8 +77,7 @@
           ]
         }
       ],
-      "icon": "stage/build/icon.ico",
-      "signExecutable": false
+      "icon": "stage/build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

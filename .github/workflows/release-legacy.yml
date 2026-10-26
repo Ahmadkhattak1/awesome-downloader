@@ -8,6 +8,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
+      fail-fast: false
       matrix:
         arch: [ia32, x64]
     steps:
