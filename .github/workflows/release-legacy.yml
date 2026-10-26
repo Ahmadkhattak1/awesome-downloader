@@ -15,10 +15,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install (target architecture binaries)
+      - name: Install dependencies (x64)
+        if: matrix.arch == 'x64'
         working-directory: legacy
-        shell: bash
-        run: npm_config_arch=${{ matrix.arch }} npm install --no-audit --no-fund
+        run: npm install --no-audit --no-fund
+      - name: Install dependencies (ia32, without ffmpeg-static's x64-only downloader)
+        if: matrix.arch == 'ia32'
+        working-directory: legacy
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Fetch and verify 32-bit ffmpeg.exe
+        if: matrix.arch == 'ia32'
+        working-directory: legacy
+        env:
+          FFMPEG_IA32_URL: ${{ vars.FFMPEG_IA32_URL }}
+        run: node fetch-ffmpeg.mjs
       - name: Stage and verify legacy sources
         working-directory: legacy
         run: |

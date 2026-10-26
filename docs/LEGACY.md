@@ -46,3 +46,10 @@ The legacy build ships `manifest.legacy.json` (installed as `manifest.json`): Ch
 - **32-bit / legacy Windows version (Windows 7, 8, 8.1) and the custom features added on top** (live extension controls, popup filter and Select all, clipboard link monitor, up to 64 parallel connections): created by **Zelvior (Faizan Raza)** - [github.com/zelvior](https://github.com/zelvior/).
 
 Both parts remain under the project's MIT license.
+
+## 32-bit FFmpeg
+
+`ffmpeg-static` publishes no 32-bit Windows binary, so the ia32 build runs `legacy/fetch-ffmpeg.mjs` instead of that package's installer.
+It downloads a 32-bit `ffmpeg.exe`, checks that it really is an i386 executable, and runs `ffmpeg -version` before building.
+If the default download links stop working, set the repository variable `FFMPEG_IA32_URL` (Settings > Secrets and variables > Actions > Variables)
+to a direct link to a 32-bit `ffmpeg.exe`, `.gz` or `.zip`. For Windows 7, use a build that supports it.

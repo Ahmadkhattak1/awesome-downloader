@@ -10,7 +10,8 @@
     "stage": "node stage.mjs",
     "dist:ia32": "npm run stage && electron-builder --win nsis --ia32 --publish never",
     "dist:x64": "npm run stage && electron-builder --win nsis --x64 --publish never",
-    "verify": "node verify.mjs"
+    "verify": "node verify.mjs",
+    "ffmpeg:ia32": "node fetch-ffmpeg.mjs"
   },
   "devDependencies": {
     "electron": "22.3.27",
@@ -32,12 +33,8 @@
     "asar": true,
     "extraResources": [
       {
-        "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE",
-        "to": "licenses/FFmpeg-LICENSE.txt"
-      },
-      {
-        "from": "node_modules/ffmpeg-static/ffmpeg.exe.README",
-        "to": "licenses/FFmpeg-BUILD.txt"
+        "from": "ffmpeg-notice",
+        "to": "licenses"
       },
       {
         "from": "stage/vendor",
@@ -91,6 +88,7 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Awesome Downloader",
       "artifactName": "Awesome-Downloader-Legacy-Setup-${arch}.exe"
-    }
+    },
+    "npmRebuild": false
   }
 }
