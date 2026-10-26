@@ -24,6 +24,30 @@ test('HLS rejects unsupported formats and selects the associated audio group', (
   assert.equal(paired.variants[0].audioUrl,'https://example.com/audio.m3u8');
   assert.deepEqual(scopedHeaders({ cookie: 'private', authorization: 'Bearer private', referer: 'https://page.test' }, 'https://a.test/a', 'https://b.test/b'), { referer: 'https://page.test' });
 });
+test('HLS reports a transfer rate while downloading', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-hls-speed-'));
+  const pieces = Array.from({ length: 4 }, (_, i) => Buffer.alloc(512 * 1024, i + 1));
+  const server = http.createServer((req, res) => {
+    if (req.url === '/master.m3u8') return res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720\n/video.m3u8');
+    if (req.url === '/video.m3u8') return res.end('#EXTM3U\n' + pieces.map((_, i) => `#EXTINF:5,\n/${i}.ts`).join('\n') + '\n#EXT-X-ENDLIST');
+    const index = Number.parseInt(req.url.slice(1));
+    if (!pieces[index]) { res.writeHead(404); return res.end(); }
+    res.setHeader('content-length', pieces[index].length);
+    let pos = 0;
+    const timer = setInterval(() => { const chunk = pieces[index].subarray(pos, pos + 16384); pos += chunk.length; res.write(chunk); if (pos === pieces[index].length) { clearInterval(timer); res.end(); } }, 20);
+    res.on('close', () => clearInterval(timer));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const engine = await new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'out'), tickMs: 50 }).init();
+  t.after(async () => { await engine.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
+  await engine.updateSettings({ connections: 1 });
+  await engine.add({ url: `http://127.0.0.1:${server.address().port}/master.m3u8` });
+  const d = engine.downloads[0];
+  const until = async check => { const end = Date.now() + 8000; while (!check()) { if (Date.now() > end) throw new Error('speed timeout: ' + d.error); await delay(10); } };
+  await until(() => d.speed > 0 || d.status === 'error' || d.status === 'complete');
+  assert.notEqual(d.status, 'error', d.error);
+  assert.ok(d.speed > 0, `expected a positive transfer rate, got ${d.speed}`);
+});
 test('HLS VOD downloads in parallel, resumes completed segments, and assembles exact byte order', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-hls-test-'));
   const pieces = Array.from({ length: 6 }, (_, i) => Buffer.alloc(256 * 1024, i + 1));

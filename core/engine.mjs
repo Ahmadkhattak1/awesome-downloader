@@ -389,12 +389,13 @@ export class DownloadEngine extends EventEmitter {
     d.total=picked.every(f=>Number(f.contentLength)>0)?picked.reduce((sum,f)=>sum+Number(f.contentLength),0):null;
     d.segments=picked.map(f=>({start:0,end:Number(f.contentLength)>0?Number(f.contentLength)-1:null,downloaded:0}));
     d.connections=picked.length;d.status='downloading';await this.persist();this.changed();
-    let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(networkDownloaded-last)*1000/Math.max(1,now-at);last=networkDownloaded;at=now;this.changed();},this.tickMs);
+    // Report speed from bytes actually written so the rate matches progress even
+    // if a transport reports network bytes irregularly.
+    let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(d.downloaded-last)*1000/Math.max(1,now-at);last=d.downloaded;at=now;this.changed();},this.tickMs);
     let result;
     try{
       result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,onProgress:progress=>{
         d.downloaded=progress.downloaded;if(progress.total!==null)d.total=progress.total;
-        networkDownloaded=progress.networkDownloaded;
         for(let i=0;i<d.segments.length;i++)d.segments[i].downloaded=progress.tracks[picked[i].itag]||0;
       }});
     }finally{clearInterval(timer);}
