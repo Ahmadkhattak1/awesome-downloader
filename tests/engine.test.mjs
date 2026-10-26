@@ -21,7 +21,12 @@ async function fixture(t, options = {}) {
     res.setHeader('etag', options.etag || '"fixture-1"');
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
-    if (req.headers.range && req.url === '/ignore-range') { res.setHeader('content-length', data.length); return res.end(data); }
+    if (req.headers.range && (req.url === '/ignore-range' || req.url === '/range-probe-only')) {
+      if (req.url === '/range-probe-only' && req.headers.range === 'bytes=0-0') {
+        res.statusCode = 206; res.setHeader('content-range', `bytes 0-0/${data.length}`); res.setHeader('content-length', 1); return res.end(data.subarray(0, 1));
+      }
+      res.setHeader('content-length', data.length); return res.end(data);
+    }
     if (req.headers.range && !noRange) {
       [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
       ranges.push([start, end]);
@@ -176,6 +181,14 @@ test('server ignoring ranges falls back to sequential transfer', async t => {
   assert.equal(d.status, 'complete', d.error);
   assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
   assert.equal(d.connections, 1);
+});
+test('single-part transfers recover when a CDN only honors the probe range', async t => {
+  const f = await fixture(t);
+  await f.engine.updateSettings({ connections: 1 });
+  await f.engine.add({ url: `${f.url}/range-probe-only` }); const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
 
 test('cancel releases queue capacity and removes partial files', async t => {

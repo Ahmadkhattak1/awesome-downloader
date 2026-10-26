@@ -397,17 +397,23 @@ export class DownloadEngine extends EventEmitter {
     await this.assemble(d,dir,signal,[output],true);
   }
   async transfer(d, info, segment, file, headers, signal, url=d.url) {
-    const expected = segment.end === null ? null : segment.end - segment.start + 1;
+    let expected = segment.end === null ? null : segment.end - segment.start + 1;
     if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); return; }
     for (let attempt = 0; attempt < 4; attempt++) {
       signal.throwIfAborted();
       try {
-        const ranged = info.ranges && info.total !== null;
+        let ranged = info.ranges && info.total !== null;
         if (!ranged && segment.downloaded) { d.downloaded -= segment.downloaded; segment.downloaded = 0; await fs.writeFile(file, Buffer.alloc(0)); }
         const start = segment.start + segment.downloaded;
         const h = { ...headers };
         if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
+        if (ranged && response.statusCode === 200 && segment.start === 0 && segment.downloaded === 0 && d.segments.length === 1) {
+          info.ranges = false;
+          ranged = false;
+          expected = null;
+          segment.end = null;
+        }
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           response.destroy(); throw new Error(`Server returned HTTP ${response.statusCode}${ranged ? ' instead of a byte range' : ''}.`);
         }
