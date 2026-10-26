@@ -3,30 +3,29 @@ import { spawn } from 'node:child_process';
 import { promises as fs, accessSync, constants as fsConstants } from 'node:fs';
 import path from 'node:path';
 
-function executableOnPath(name) {
+function executablesOnPath(name) {
+  const found = [];
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
     if (!directory) continue;
     const candidate = path.join(directory, name);
-    try { accessSync(candidate, fsConstants.X_OK); return candidate; }
+    try { accessSync(candidate, fsConstants.X_OK); found.push(candidate); }
     catch { /* Try the next directory. */ }
   }
-  return null;
+  return found;
 }
 
 const unpacked = value => String(value).replace('app.asar', 'app.asar.unpacked');
 
 // Ordered FFmpeg candidates. A user override always wins; otherwise the
-// bundled binary is preferred, with the distribution's FFmpeg as a fallback on
-// Linux because some fully static builds crash while demuxing MPEG-TS (HLS).
-// Windows keeps using the bundled executable only.
+// bundled binary is preferred, with every distribution FFmpeg found on PATH as
+// a fallback on Linux because some fully static builds crash while demuxing
+// MPEG-TS (HLS). Listing all matches matters when a broken build sits earlier
+// on PATH than a working one. Windows keeps using the bundled executable only.
 function ffmpegCandidates() {
   const candidates = [];
   if (process.env.AWESOME_FFMPEG_PATH) candidates.push(process.env.AWESOME_FFMPEG_PATH);
   candidates.push(ffmpegPath);
-  if (process.platform !== 'win32') {
-    const system = executableOnPath('ffmpeg');
-    if (system) candidates.push(system);
-  }
+  if (process.platform !== 'win32') candidates.push(...executablesOnPath('ffmpeg'));
   return [...new Set(candidates.filter(Boolean).map(unpacked))];
 }
 
