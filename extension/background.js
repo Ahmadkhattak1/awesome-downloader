@@ -44,6 +44,12 @@ function normalizeMediaUrl(value) {
   }
   return u.href;
 }
+function mediaIdentity(value) {
+  try {
+    const u = new URL(value);
+    return /(^|\.)fbcdn\.net$/i.test(u.hostname) ? `${u.hostname}${u.pathname}` : u.href;
+  } catch { return ''; }
+}
 function unsupported(url, mime = '') { return /\.mpd(?:[?#]|$)/i.test(url) || /dash\+xml/i.test(mime); }
 function isFragment(url) { return /\.(m4s|ts|aac)(?:[?#]|$)/i.test(url) || /\/init[^/]*\.mp4(?:[?#]|$)/i.test(url); }
 const hlsSeen=new Map(); let hlsActive=0;
@@ -118,7 +124,8 @@ async function remember(tabId, items) {
       value.audioUrl=httpUrl(item.audioUrl)||undefined;
       value.codecs=String(item.codecs||'').slice(0,200);
       value.masterUrl=httpUrl(item.masterUrl)||undefined;
-      const existing=prior.findIndex(v=>v.url===url);
+      const identity=mediaIdentity(url);
+      const existing=prior.findIndex(v=>v.url===url || identity && mediaIdentity(v.url)===identity);
       if(existing>=0){const previous=prior[existing];if(previous.format==='HLS'&&!item.format){if(value.title)previous.title=value.title;continue;}prior[existing]={...previous,...value,audioUrl:value.audioUrl||previous.audioUrl,codecs:value.codecs||previous.codecs,masterUrl:value.masterUrl||previous.masterUrl,title:value.title||previous.title,quality:value.quality||previous.quality,bitrate:value.bitrate||previous.bitrate,format:value.format||previous.format,separateAudio:value.separateAudio||previous.separateAudio,unsupported:value.unsupported||previous.unsupported,reason:value.reason||previous.reason};continue;}
       prior.push(value);
     }

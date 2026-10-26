@@ -11,6 +11,17 @@
     if(items.some(i=>i.provider==='youtube'))return items.filter(i=>i.provider==='youtube');
     let list=items.filter(i=>!i.unsupported && !/\.(m4s|ts|aac)(?:[?#]|$)/i.test(i.url)&&!/^https:\/\/(?:www\.)?youtube\.com\/s\//.test(i.url));
     if(wanted) list=list.filter(i=>assetKey(i.url)===wanted);
+    const instagram=new Map();
+    list=list.filter(item=>{
+      try {
+        const u=new URL(item.url);
+        if(!/(^|\.)fbcdn\.net$/i.test(u.hostname)) return true;
+        const key=`${u.hostname}${u.pathname}`;
+        if(instagram.has(key)) return false;
+        instagram.set(key,item);
+        return true;
+      } catch { return true; }
+    });
     const richAssets=new Set(list.filter(i=>i.masterUrl).map(i=>assetKey(i.url)).filter(Boolean));
     const audioUrls=new Set(list.map(i=>i.audioUrl).filter(Boolean));
     list=list.filter(i=>!audioUrls.has(i.url) && (!richAssets.has(assetKey(i.url))||i.masterUrl));

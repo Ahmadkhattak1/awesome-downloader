@@ -29,6 +29,14 @@ test('Instagram chunk URLs are normalized to the complete CDN media URL',async()
  assert.equal(h.nativeRequests[0].url,full);
  assert.equal(h.nativeRequests[0].requestHeaders.referer,'https://www.instagram.com/reels/example/');
 });
+test('Instagram media chunks for one asset replace each other in the cache',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:3}};
+ const base='https://instagram.fktm21-1.fna.fbcdn.net/o1/v/t2/f2/m367/video.mp4?token=';
+ await h.request({action:'remember',items:[{url:base+'one&bytestart=0&byteend=817',mime:'video/mp4'},{url:base+'two&bytestart=818&byteend=1635',mime:'video/mp4'}]},sender);
+ const result=await h.request({action:'listForFrame'},sender);
+ assert.equal(result.items.length,1);
+ assert.equal(result.items[0].url,base+'two');
+});
 test('YouTube menu uses captured player formats without a desktop discovery request',async()=>{
  const h=harness(),sender={id:'extension-id',tab:{id:7,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
  const base='https://r1.googlevideo.com/videoplayback?id=asset&expire=9999999999&itag=';

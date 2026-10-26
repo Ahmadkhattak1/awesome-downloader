@@ -12,3 +12,8 @@ test('choices keep only the matching tweet and deduplicate paired audio',()=>{
   assert.equal(choices.filter(i=>i.format==='MP3').length,1);
   assert.equal(choices.filter(i=>i.audioState==='Video + audio').length,2);
 });
+test('Instagram duplicate media requests produce one choice',()=>{
+ const base='https://instagram.fktm21-1.fna.fbcdn.net/o1/v/t2/f2/m367/video.mp4?';
+ const choices=mediaChoices([{url:base+'token=one&bytestart=0&byteend=817'},{url:base+'token=two&bytestart=818&byteend=1635'}]);
+ assert.equal(choices.length,1);
+});
