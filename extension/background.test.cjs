@@ -20,6 +20,15 @@ test('video selection forwards explicit one-click download intent',async()=>{
   await h.request({action:'download',item:{url:'https://example.com/video.mp4'}},sender);
   assert.equal(h.nativeRequests[1].startNow,false);
 });
+test('Instagram chunk URLs are normalized to the complete CDN media URL',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:3}};
+ const chunk='https://instagram.fktm21-1.fna.fbcdn.net/video.mp4?token=signed&bytestart=0&byteend=817';
+ const full='https://instagram.fktm21-1.fna.fbcdn.net/video.mp4?token=signed';
+ h.events.requestHeaders({tabId:3,url:chunk,requestHeaders:[{name:'Referer',value:'https://www.instagram.com/reels/example/'}]});
+ await h.request({action:'download',item:{url:chunk}},sender);
+ assert.equal(h.nativeRequests[0].url,full);
+ assert.equal(h.nativeRequests[0].requestHeaders.referer,'https://www.instagram.com/reels/example/');
+});
 test('YouTube menu uses captured player formats without a desktop discovery request',async()=>{
  const h=harness(),sender={id:'extension-id',tab:{id:7,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
  const base='https://r1.googlevideo.com/videoplayback?id=asset&expire=9999999999&itag=';

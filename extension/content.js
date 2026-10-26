@@ -6,7 +6,7 @@
   let stopped = false, scanFrame, mutationObserver, scrollTimer, scrolling=false;
   const listeners = new AbortController();
   const resizeObserver = new ResizeObserver(() => position());
-  const direct = value => { try { const u = new URL(value, location.href); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; } };
+  const direct = value => { try { const u = new URL(value, location.href); if (!/^https?:$/.test(u.protocol)) return null; if (/(^|\.)fbcdn\.net$/i.test(u.hostname) && u.searchParams.has('bytestart') && u.searchParams.has('byteend')) { u.searchParams.delete('bytestart'); u.searchParams.delete('byteend'); } return u.href; } catch { return null; } };
   function shutdown() {
     if(stopped)return;
     stopped=true;

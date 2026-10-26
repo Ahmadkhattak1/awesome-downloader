@@ -21,7 +21,8 @@ api.webRequest.onBeforeRequest?.addListener(details=>{
   if(youtubeSabrSeed.size>100)youtubeSabrSeed.delete(youtubeSabrSeed.keys().next().value);
 },{urls:['https://*.googlevideo.com/videoplayback*','https://googlevideo.com/videoplayback*']},['requestBody']);
 function rememberRequest(details) {
-  if(details.tabId<0 || !httpUrl(details.url))return;
+  const url=normalizeMediaUrl(details.url);
+  if(details.tabId<0 || !url)return;
   let tab=requestContext.get(details.tabId);
   if(!tab){tab=new Map();requestContext.set(details.tabId,tab);if(requestContext.size>50)requestContext.delete(requestContext.keys().next().value);}
   const headers={};
@@ -29,11 +30,19 @@ function rememberRequest(details) {
     const name=h.name.toLowerCase();
     if(['cookie','authorization','user-agent','referer','origin'].includes(name)&&typeof h.value==='string'&&h.value.length<=16384&&!/[\r\n]/.test(h.value))headers[name]=h.value;
   }
-  tab.set(details.url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
+  tab.set(url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
 }
 api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*/*','https://*/*']},['requestHeaders',...(globalThis.browser?[]:['extraHeaders'])]);
 function httpUrl(value) {
   try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
+}
+function normalizeMediaUrl(value) {
+  const url=httpUrl(value); if(!url)return null;
+  const u=new URL(url);
+  if(/(^|\.)fbcdn\.net$/i.test(u.hostname) && u.searchParams.has('bytestart') && u.searchParams.has('byteend')) {
+    u.searchParams.delete('bytestart'); u.searchParams.delete('byteend');
+  }
+  return u.href;
 }
 function unsupported(url, mime = '') { return /\.mpd(?:[?#]|$)/i.test(url) || /dash\+xml/i.test(mime); }
 function isFragment(url) { return /\.(m4s|ts|aac)(?:[?#]|$)/i.test(url) || /\/init[^/]*\.mp4(?:[?#]|$)/i.test(url); }
@@ -79,11 +88,11 @@ async function enqueue(item, tabId) {
     if(!audio||videoItag!==undefined&&!video||!globalThis.youtubeMedia.sabrUrl(serverAbrStreamingUrl)||!player.ustreamerConfig)throw new Error('The captured YouTube SABR session is incomplete. Play the video briefly and reopen the menu.');
     sabr={videoId:player.videoId,serverAbrStreamingUrl,videoPlaybackUstreamerConfig:player.ustreamerConfig,clientInfo:{clientName:player.clientName,clientVersion:player.clientVersion},formats:player.formats,videoItag,audioItag,requestBody:captured.requestBody};
   }
-  const url = httpUrl(sabr?.serverAbrStreamingUrl||item.url);
+  const url = normalizeMediaUrl(sabr?.serverAbrStreamingUrl||item.url);
   if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
   const requestHeaders=requestContext.get(tabId)?.get(url);
-  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
+  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:normalizeMediaUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
 function updateCache(change) {
   const next = serial.then(async () => {
@@ -103,7 +112,7 @@ async function remember(tabId, items) {
   await updateCache(map => {
     const prior = map[tabId] || [];
     for (const item of items.slice(0, 100)) {
-      const url = httpUrl(item.url);
+      const url = normalizeMediaUrl(item.url);
       if (!url || isFragment(url)) continue;
       const value={url, mime: String(item.mime || '').slice(0, 100), title: String(item.title || '').slice(0, 180), quality:String(item.quality||'').slice(0,40),bitrate:Number(item.bitrate)||0,format:String(item.format||'').slice(0,20),separateAudio:!!item.separateAudio,reason:String(item.reason||'').slice(0,180),unsupported: unsupported(url, item.mime)||!!item.unsupported};
       value.audioUrl=httpUrl(item.audioUrl)||undefined;
