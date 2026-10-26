@@ -120,9 +120,10 @@ Do not move or delete this folder after loading it into your browser.
 - **No Developer mode or Load unpacked button:** A workplace or school may
   restrict extension installation. Ask its administrator about permitted setup.
 - **HLS or media conversion fails on Linux:** the bundled FFmpeg static build may
-  not work on every distribution. Install your distribution's FFmpeg and start
-  the app with
-  `AWESOME_FFMPEG_PATH=/usr/bin/ffmpeg ./release/Awesome-Downloader-*.AppImage`
+  not work on every distribution. Install your distribution's FFmpeg (for example
+  `sudo apt install ffmpeg`); the app retries with it automatically. If your
+  FFmpeg is installed in a non-standard place, launch the app with
+  `AWESOME_FFMPEG_PATH=/path/to/ffmpeg ./release/Awesome-Downloader-*.AppImage`
   (or launch the installed `awesome-downloader` binary the same way).
 
 Only install the extension if you trust this project. Its page/network permissions
