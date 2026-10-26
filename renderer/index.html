@@ -1,17 +1,644 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'"><title>Awesome Downloader</title><link rel="stylesheet" href="styles.css"><script src="app.js" defer></script></head><body>
-<div class="app-shell"><div class="toolbar" role="toolbar" aria-label="Download commands">
-<button id="new-download" class="tool" data-icon="add" title="Add URL (Ctrl+N)"><span>Add URL</span></button><button id="resume-selected" class="tool" data-icon="resume" disabled><span>Resume</span></button><button id="stop-selected" class="tool" data-icon="stop" disabled><span>Stop</span></button><button id="pause-all" class="tool" data-icon="stopall" disabled><span>Stop all</span></button><span class="tool-divider"></span><button id="remove-selected" class="tool" data-icon="delete" disabled><span>Delete</span></button><button id="remove-completed" class="tool wide" data-icon="clear" disabled><span>Delete Completed</span></button><span class="tool-divider"></span><button id="settings-button" class="tool" data-icon="options"><span>Options</span></button><button id="scheduler-button" class="tool" data-icon="clock"><span>Scheduler</span></button><button id="resume-all" class="tool" data-icon="startqueue"><span>Start Queue</span></button><button id="stop-queue" class="tool" data-icon="stopqueue"><span>Stop Queue</span></button><span class="tool-divider"></span><button id="integration-button" class="tool integration-tool" data-icon="browser"><span>Browser Integration</span></button></div>
-<div class="work-area"><aside class="categories" aria-label="Categories"><div class="pane-heading">Categories <span aria-hidden="true">×</span></div><nav class="category-tree" aria-label="Filter downloads"><button class="tree-item root selected" data-filter="all" aria-current="page"><span class="tree-expander" role="button" tabindex="0" aria-label="Collapse All Downloads categories" aria-expanded="true" aria-controls="all-download-categories">⊟</span><span class="folder-icon"></span>All Downloads</button><div class="tree-children" id="all-download-categories"><button class="tree-item child" data-category="Archives"><span class="folder-icon compressed"></span>Compressed</button><button class="tree-item child" data-category="Documents"><span class="folder-icon documents"></span>Documents</button><button class="tree-item child" data-category="Audio"><span class="folder-icon music"></span>Music</button><button class="tree-item child" data-category="Programs"><span class="folder-icon programs"></span>Programs</button><button class="tree-item child" data-category="Video"><span class="folder-icon videos"></span>Video</button><button class="tree-item child" data-category="Other"><span class="folder-icon"></span>Other</button></div><button class="tree-item root" data-filter="unfinished"><span class="tree-expander spacer" aria-hidden="true"></span><span class="folder-icon unfinished"></span>Unfinished</button><button class="tree-item root" data-filter="completed"><span class="tree-expander spacer" aria-hidden="true"></span><span class="folder-icon finished"></span>Finished</button><button class="tree-item root" id="grabber-button"><span class="tree-expander spacer" aria-hidden="true"></span><span class="folder-icon grabber"></span>Grabber projects</button><button class="tree-item root" data-filter="queued"><span class="tree-expander spacer" aria-hidden="true"></span><span class="folder-icon queues"></span>Queues</button></nav></aside>
-<main class="main-pane"><div class="table-scroll" id="table-scroll" tabindex="0" aria-label="Downloads. Drag over rows to select, use arrow keys to move, and Enter to open properties."><table class="downloads-table" aria-label="Downloads"><colgroup><col class="name-col"><col class="queue-col"><col class="size-col"><col class="status-col"><col class="time-col"><col class="rate-col"><col class="date-col"><col class="description-col"></colgroup><thead><tr><th scope="col"><button data-sort="filename">File Name</button></th><th scope="col" title="Queue">Q</th><th scope="col"><button data-sort="total">Size</button></th><th scope="col"><button data-sort="status">Status</button></th><th scope="col">Time left</th><th scope="col">Transfer rate</th><th scope="col"><button data-sort="createdAt">Last Try...</button></th><th scope="col">Description</th></tr></thead><tbody id="download-list" aria-busy="true"></tbody></table><div id="selection-rectangle" class="selection-rectangle" hidden></div><div id="empty-state" class="empty-state" hidden><span id="empty-message">No downloads to display.</span><br>Click Add URL to start a download.</div></div><div class="list-search"><label for="search">Find:</label><input id="search" type="search" aria-label="Search downloads" placeholder="File name or URL"><button id="open-selected" class="small-button" disabled>Open</button><button id="reveal-selected" class="small-button" disabled>Open folder</button><button id="details-selected" class="small-button" disabled>Properties</button></div></main></div><footer class="status-bar"><span id="list-count">Connecting…</span><span id="status-summary">0 B/sec</span><span id="connection-label">Starting</span></footer></div>
-<div class="notification" id="toast" role="status" hidden><span id="toast-text"></span><button id="dismiss-toast" aria-label="Dismiss notification">×</button></div>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>Awesome Downloader</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body class="light-theme">
+  <div class="app-shell">
+    <!-- Left Navigation Sidebar -->
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="sidebar-brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </div>
+        <div class="brand-info">
+          <span class="brand-name">Awesome</span>
+          <span class="brand-sub">Downloader</span>
+        </div>
+        <span class="version-badge">v0.1.0</span>
+      </div>
 
-<dialog id="add-dialog" aria-labelledby="add-title"><form id="add-form"><div class="dialog-title"><strong id="add-title">Download File Info</strong><button type="button" data-close class="close-button" aria-label="Close">×</button></div><div class="dialog-body"><div class="form-line address-line"><label for="download-urls">URL:</label><textarea id="download-urls" rows="2" required spellcheck="false" placeholder="https://example.com/file.zip"></textarea></div><p class="field-help address-help">Enter one URL per line for a batch download.</p><div class="form-line"><label for="download-category">Category:</label><select id="download-category"><option value="">Automatic</option><option>Video</option><option>Audio</option><option>Archives</option><option>Documents</option><option>Programs</option><option>Other</option></select></div><div class="form-line"><label for="download-filename">Save As:</label><input id="download-filename" placeholder="Original file name (optional)" maxlength="240"></div><div class="form-line"><label for="add-directory">Save to:</label><input id="add-directory" readonly><button type="button" id="add-browse" class="small-button" aria-label="Choose download folder">…</button></div><div class="form-line"><label for="download-description">Description:</label><input id="download-description" maxlength="1000"></div><div class="form-line"><label for="download-schedule">Start at:</label><input id="download-schedule" type="datetime-local"><span class="field-help">Optional</span></div><p class="form-error" id="add-error" role="alert" hidden></p></div><div class="dialog-footer"><button type="button" class="button" id="paste-button">Paste</button><span class="spacer"></span><button type="submit" class="button" id="add-later" data-queue-only="true">Download Later</button><button type="submit" class="button primary" id="add-submit">Start Download</button><button type="button" class="button" data-close>Cancel</button></div></form></dialog>
+      <div class="sidebar-cta">
+        <button id="sidebar-add-btn" class="cta-button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>Add Download</span>
+        </button>
+      </div>
 
-<dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form"><div class="dialog-title"><strong id="settings-title">Options</strong><button type="button" class="close-button" data-close aria-label="Close">×</button></div><div class="dialog-body"><fieldset><legend>Save to</legend><label for="default-directory">Default download folder:</label><div class="directory-field"><input id="default-directory" required><button class="small-button" id="choose-directory" type="button">Browse…</button></div></fieldset><fieldset><legend>Connection</legend><div class="form-line"><label for="max-concurrent">Maximum simultaneous downloads:</label><input type="number" id="max-concurrent" min="1" max="16" required></div><div class="form-line"><label for="connections">Maximum connections per file:</label><input type="number" id="connections" min="1" max="16" required></div><p class="field-help">Multiple connections require server support for byte ranges.</p><div class="form-line"><label for="speed-limit">Speed limit (KB/s, 0 = unlimited):</label><input type="number" id="speed-limit" min="0" max="10000000" required></div></fieldset><p class="form-error" id="settings-error" role="alert" hidden></p></div><div class="dialog-footer"><button type="submit" class="button primary">OK</button><button type="button" class="button" data-close>Cancel</button></div></form></dialog>
+      <div class="sidebar-section-title">Main menu</div>
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-nav="dashboard" id="nav-dashboard">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-nav="files" id="nav-files">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          <span>File Management</span>
+        </button>
+        <button class="nav-item" data-nav="history" id="nav-history">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          <span>History</span>
+        </button>
+      </nav>
 
-<dialog id="scheduler-dialog" aria-labelledby="scheduler-title"><div class="dialog-title"><strong id="scheduler-title">Scheduler</strong><button class="close-button" data-close aria-label="Close">×</button></div><div class="dialog-body"><fieldset><legend>Scheduled downloads</legend><div id="scheduled-list" class="scheduled-list"></div></fieldset><p class="field-help">Scheduled downloads start at the chosen local time while this app is running. Start Queue starts paused and scheduled downloads immediately. Stop Queue pauses active and waiting downloads.</p><div class="scheduler-actions"><button class="button" id="schedule-new">Add scheduled download…</button><button class="button" id="scheduler-start">Start Queue</button><button class="button" id="scheduler-stop">Stop Queue</button></div></div><div class="dialog-footer"><button class="button" data-close>Close</button></div></dialog>
+      <div class="sidebar-section-title">Settings & Tools</div>
+      <nav class="sidebar-nav">
+        <button class="nav-item" id="sidebar-settings-btn">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Preferences</span>
+        </button>
+        <button class="nav-item" id="sidebar-scheduler-btn">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline><path d="M5 3 2 6"></path><path d="M19 3l3 3"></path></svg>
+          <span>Scheduler</span>
+        </button>
+        <button class="nav-item" id="sidebar-integration-btn">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+          <span>Browser Integration</span>
+        </button>
+      </nav>
 
-<dialog id="details-dialog" aria-labelledby="details-title"><div class="dialog-title"><strong id="details-title">Download status</strong><button class="close-button" data-close aria-label="Close">×</button></div><div class="dialog-body"><div class="dialog-tabs" role="tablist" aria-label="Download properties"><button class="active-tab" id="tab-status" role="tab" aria-selected="true" aria-controls="status-panel">Download status</button><button id="tab-speed" role="tab" aria-selected="false" aria-controls="speed-panel">Speed Limiter</button><button id="tab-completion" role="tab" aria-selected="false" aria-controls="completion-panel">Options on completion</button></div><div id="status-panel" role="tabpanel" aria-labelledby="tab-status"><p id="transfer-source" class="transfer-source"></p><dl id="details-content" class="details-content"></dl></div><div id="speed-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-speed" hidden><form id="detail-speed-form"><label for="detail-speed-limit">Global speed limit (KB/s):</label><input id="detail-speed-limit" type="number" min="0" max="10000000" required><p class="field-help">Applies to all downloads. Enter 0 for unlimited speed.</p><button class="button" type="submit">Apply</button><p id="detail-speed-error" class="form-error" hidden></p></form></div><div id="completion-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-completion" hidden><form id="completion-form"><label class="checkbox-label"><input id="notify-complete" type="checkbox"> Show a Windows notification when a download completes</label><label class="checkbox-label"><input id="reveal-complete" type="checkbox"> Open the download folder on completion</label><p class="field-help">These options apply to all downloads.</p><button class="button" type="submit">Apply</button><span id="completion-result" role="status"></span></form><p><button class="button" id="detail-open">Open file</button> <button class="button" id="detail-folder">Open folder</button></p></div><progress id="detail-progress" max="100" value="0" aria-label="Download progress"></progress><div class="transfer-buttons"><button class="button" id="toggle-details">&lt;&lt; Hide details</button><span class="spacer"></span><button class="button" id="detail-resume">Resume</button><button class="button" id="detail-stop">Pause</button><button class="button" id="detail-cancel">Cancel</button></div><div id="connection-details"><p class="connection-caption">Start positions and download progress by connections</p><div id="segment-map" class="segment-map"></div><div class="connections-scroll"><table class="connections-table"><thead><tr><th>N.</th><th>Downloaded</th><th>Info</th></tr></thead><tbody id="segment-bars"></tbody></table></div><p id="segment-note" class="field-help"></p></div><p id="detail-error" class="form-error" hidden></p></div><div class="dialog-footer"><button class="button" data-close>Close</button></div></dialog>
+      <div class="sidebar-footer">
+        <div class="help-card">
+          <div class="help-icon">?</div>
+          <strong>Need Any Help?</strong>
+          <p>Check guides, browser setup and download tips</p>
+          <button id="sidebar-help-btn" class="help-action-btn">Get help</button>
+        </div>
 
-<dialog id="integration-dialog" aria-labelledby="integration-title"><div class="dialog-title"><strong id="integration-title">Browser integration</strong><button class="close-button" data-close aria-label="Close">×</button></div><div class="dialog-body"><p>Install the extension to show download buttons over supported web videos and send links to Awesome Downloader.</p><ol class="setup-steps"><li>Open <code>chrome://extensions</code> or <code>edge://extensions</code>.</li><li>Enable <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select this folder:<input id="extension-path" readonly aria-label="Extension folder"></li><li>Copy the extension ID shown by your browser. In PowerShell, run this command after replacing <strong>YOUR_EXTENSION_ID</strong>. For Edge, change <strong>Chrome</strong> to <strong>Edge</strong>.<textarea id="registration-command" rows="3" readonly aria-label="Browser registration command"></textarea></li></ol><label for="integration-port">Local connection:</label><input id="integration-port" readonly><p class="field-help">Keep this app running. Direct video files are supported; HLS, DASH, and protected streams are not available in this build.</p></div><div class="dialog-footer"><button class="button" data-close>Close</button></div></dialog>
-</body></html>
+        <div class="theme-switch-container">
+          <div class="theme-switch-label">
+            <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+            <span id="theme-text">Dark theme</span>
+          </div>
+          <button id="theme-toggle" class="theme-toggle-switch" aria-label="Toggle dark theme" role="switch" aria-checked="false">
+            <span class="switch-knob"></span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <div class="main-wrapper">
+      <!-- Top Header Bar -->
+      <header class="app-header">
+        <div class="header-left">
+          <h1 id="view-title">Download Management</h1>
+        </div>
+        <div class="header-center">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input id="search" type="search" aria-label="Search downloads" placeholder="Search file or URL...">
+          </div>
+        </div>
+        <div class="header-right">
+          <button id="header-add-btn" class="header-icon-btn primary" title="Add URL (Ctrl+N)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            <span>Add URL</span>
+          </button>
+          <button id="header-resume-all" class="header-icon-btn" title="Start Queue">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </button>
+          <button id="header-pause-all" class="header-icon-btn" title="Stop Queue">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+          </button>
+          <button id="header-theme-toggle" class="header-icon-btn" title="Toggle dark/light theme">
+            <svg class="sun-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+            <svg class="moon-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Scrollable View Container -->
+      <main class="content-scroll">
+        <!-- VIEW 1: Modern Dashboard -->
+        <section id="view-dashboard" class="view-panel active">
+          <!-- Top Row: Analytics + Speed Limit + Browser Extension -->
+          <div class="dashboard-grid top-row">
+            <!-- Download Analytics Card -->
+            <div class="card analytics-card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">Download Analytics</h2>
+                </div>
+                <div class="card-controls">
+                  <div class="chart-tab-group" role="tablist">
+                    <button class="chart-tab active" data-tab="size">● Size File</button>
+                    <button class="chart-tab" data-tab="count">Total Download</button>
+                    <button class="chart-tab" data-tab="type">Type File</button>
+                  </div>
+                  <span class="filter-pill">Week ▾</span>
+                  <button class="view-all-link" id="analytics-view-all">View All</button>
+                </div>
+              </div>
+
+              <!-- Bar Chart Container -->
+              <div class="chart-container">
+                <div class="chart-y-axis">
+                  <span>5 GB</span>
+                  <span>3 GB</span>
+                  <span>1 GB</span>
+                  <span>500 MB</span>
+                  <span>250 MB</span>
+                  <span>0 MB</span>
+                </div>
+                <div class="chart-bars" id="analytics-bars">
+                  <!-- Generated bars: Mon-Sun -->
+                  <div class="bar-col" data-day="Mon">
+                    <div class="bar-fill" style="height: 48%;"></div>
+                    <span class="bar-label">Mon</span>
+                  </div>
+                  <div class="bar-col highlighted" data-day="Tue">
+                    <div class="bar-tooltip">Tuesday<br><strong>4.02 GB</strong></div>
+                    <div class="bar-fill lime-fill" style="height: 78%;"></div>
+                    <span class="bar-label">Tue</span>
+                  </div>
+                  <div class="bar-col" data-day="Wed">
+                    <div class="bar-fill" style="height: 32%;"></div>
+                    <span class="bar-label">Wed</span>
+                  </div>
+                  <div class="bar-col" data-day="Thu">
+                    <div class="bar-fill" style="height: 58%;"></div>
+                    <span class="bar-label">Thu</span>
+                  </div>
+                  <div class="bar-col" data-day="Fri">
+                    <div class="bar-fill" style="height: 52%;"></div>
+                    <span class="bar-label">Fri</span>
+                  </div>
+                  <div class="bar-col" data-day="Sat">
+                    <div class="bar-fill" style="height: 72%;"></div>
+                    <span class="bar-label">Sat</span>
+                  </div>
+                  <div class="bar-col" data-day="Sun">
+                    <div class="bar-fill" style="height: 42%;"></div>
+                    <span class="bar-label">Sun</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right Column Cards: Limitation + Extension banner -->
+            <div class="dashboard-side-col">
+              <!-- Limitation Download Card -->
+              <div class="card limitation-card">
+                <div class="card-header">
+                  <h3 class="card-title">Limitation Download</h3>
+                  <span class="filter-pill">Week ▾</span>
+                </div>
+                <div class="limitation-content">
+                  <div class="gauge-card">
+                    <div class="gauge-meter">
+                      <svg viewBox="0 0 100 55" class="gauge-svg">
+                        <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--gauge-track)" stroke-width="8" stroke-linecap="round"></path>
+                        <path id="gauge-arc" d="M 10 50 A 40 40 0 0 1 82 25" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-linecap="round"></path>
+                      </svg>
+                      <div class="gauge-value" id="gauge-stat-value">824 GB</div>
+                    </div>
+                    <div class="gauge-caption">of 1 TB download limit</div>
+                  </div>
+                  <div class="quota-card">
+                    <div class="quota-meter">
+                      <div class="quota-bar" style="width: 80%;"></div>
+                    </div>
+                    <div class="quota-numbers">
+                      <strong id="quota-used">80/100 GB</strong>
+                      <span>of weekly limit</span>
+                    </div>
+                    <button id="quick-speed-limit-btn" class="limiter-action-btn">Adjust limit</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Browser Extension Card (In place of mockup's upgrade card) -->
+              <div class="card promo-card">
+                <div class="promo-content">
+                  <div class="promo-badge">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
+                    <span>Browser Extension</span>
+                  </div>
+                  <h4>Browser Video Capture</h4>
+                  <p>Download videos & YouTube streams directly from Chrome or Edge.</p>
+                  <button id="promo-setup-btn" class="promo-button">Setup Extension</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Row: Download Queue + File Types -->
+          <div class="dashboard-grid bottom-row">
+            <!-- Download Queue Card -->
+            <div class="card queue-card">
+              <div class="card-header">
+                <div>
+                  <h2 class="card-title">Download Queue</h2>
+                  <span class="card-subtitle" id="queue-count-label">Downloading file (0)</span>
+                </div>
+                <div class="card-controls">
+                  <button id="queue-resume-all" class="queue-btn" title="Resume All">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span>Resume All</span>
+                  </button>
+                  <button id="queue-pause-all" class="queue-btn" title="Pause All">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                    <span>Pause All</span>
+                  </button>
+                  <span class="filter-pill">Week ▾</span>
+                  <button class="view-all-link" id="queue-view-all">View All</button>
+                </div>
+              </div>
+
+              <!-- Queue Items List -->
+              <div class="queue-list" id="dashboard-queue-list">
+                <div class="queue-empty-state">
+                  <span>No active downloads in queue.</span>
+                  <p>Click Add URL above or start video capture from your browser.</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- File Types Card -->
+            <div class="card filetype-card">
+              <div class="card-header">
+                <h3 class="card-title">File type</h3>
+                <button class="view-all-link" id="filetype-view-all">View All</button>
+              </div>
+              <div class="filetype-grid">
+                <div class="filetype-item" data-category="Documents">
+                  <div class="filetype-icon-box doc">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Document (<span id="count-Documents">0</span>)</span>
+                    <span class="filetype-exts">pdf, txt, docs...</span>
+                  </div>
+                </div>
+
+                <div class="filetype-item" data-category="Video">
+                  <div class="filetype-icon-box video">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Video (<span id="count-Video">0</span>)</span>
+                    <span class="filetype-exts">mp4, webm, mkv...</span>
+                  </div>
+                </div>
+
+                <div class="filetype-item" data-category="Audio">
+                  <div class="filetype-icon-box audio">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Audio (<span id="count-Audio">0</span>)</span>
+                    <span class="filetype-exts">mp3, flac, wav...</span>
+                  </div>
+                </div>
+
+                <div class="filetype-item" data-category="Archives">
+                  <div class="filetype-icon-box archive">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Archives (<span id="count-Archives">0</span>)</span>
+                    <span class="filetype-exts">zip, rar, 7z, tar...</span>
+                  </div>
+                </div>
+
+                <div class="filetype-item" data-category="Programs">
+                  <div class="filetype-icon-box games">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="8" cy="12" r="2"></circle><line x1="16" y1="12" x2="16.01" y2="12"></line></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Programs (<span id="count-Programs">0</span>)</span>
+                    <span class="filetype-exts">exe, msi, iso...</span>
+                  </div>
+                </div>
+
+                <div class="filetype-item" data-category="Other">
+                  <div class="filetype-icon-box other">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  </div>
+                  <div class="filetype-details">
+                    <span class="filetype-name">Other (<span id="count-Other">0</span>)</span>
+                    <span class="filetype-exts">bin, dat, misc...</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- VIEW 2: File Management Table -->
+        <section id="view-files" class="view-panel">
+          <!-- Filter pills & Action controls -->
+          <div class="files-header-bar">
+            <div class="filter-pills-row">
+              <button class="pill-btn active" data-filter="all">All Downloads</button>
+              <button class="pill-btn" data-filter="unfinished">Unfinished</button>
+              <button class="pill-btn" data-filter="completed">Completed</button>
+              <button class="pill-btn" data-filter="queued">Queued</button>
+              <span class="pill-separator"></span>
+              <button class="pill-btn category-pill" data-category="Video">Video</button>
+              <button class="pill-btn category-pill" data-category="Audio">Audio</button>
+              <button class="pill-btn category-pill" data-category="Archives">Archives</button>
+              <button class="pill-btn category-pill" data-category="Documents">Documents</button>
+              <button class="pill-btn category-pill" data-category="Programs">Programs</button>
+              <button class="pill-btn category-pill" data-category="Other">Other</button>
+            </div>
+            <div class="table-actions-row">
+              <button id="resume-selected" class="action-btn" disabled>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>Resume</span>
+              </button>
+              <button id="stop-selected" class="action-btn" disabled>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                <span>Stop</span>
+              </button>
+              <button id="open-selected" class="action-btn" disabled>Open</button>
+              <button id="reveal-selected" class="action-btn" disabled>Open folder</button>
+              <button id="details-selected" class="action-btn" disabled>Properties</button>
+              <button id="remove-selected" class="action-btn danger" disabled>Delete</button>
+              <button id="remove-completed" class="action-btn" disabled>Delete Completed</button>
+            </div>
+          </div>
+
+          <!-- Table Wrapper -->
+          <div class="table-scroll" id="table-scroll" tabindex="0" aria-label="Downloads. Drag over rows to select, use arrow keys to move, and Enter to open properties.">
+            <table class="downloads-table" aria-label="Downloads">
+              <colgroup>
+                <col class="name-col">
+                <col class="queue-col">
+                <col class="size-col">
+                <col class="status-col">
+                <col class="time-col">
+                <col class="rate-col">
+                <col class="date-col">
+                <col class="description-col">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col"><button data-sort="filename">File Name</button></th>
+                  <th scope="col" title="Queue">Q</th>
+                  <th scope="col"><button data-sort="total">Size</button></th>
+                  <th scope="col"><button data-sort="status">Status</button></th>
+                  <th scope="col">Time left</th>
+                  <th scope="col">Transfer rate</th>
+                  <th scope="col"><button data-sort="createdAt">Last Try / Date</button></th>
+                  <th scope="col">Description</th>
+                </tr>
+              </thead>
+              <tbody id="download-list" aria-busy="true"></tbody>
+            </table>
+            <div id="selection-rectangle" class="selection-rectangle" hidden></div>
+            <div id="empty-state" class="empty-state" hidden>
+              <span id="empty-message">No downloads to display.</span><br>Click Add URL to start a download.
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom Status Bar -->
+      <footer class="status-bar">
+        <span id="list-count">Connecting…</span>
+        <span id="status-summary">0 B/sec</span>
+        <span id="connection-label">Starting</span>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div class="notification" id="toast" role="status" hidden>
+    <span id="toast-text"></span>
+    <button id="dismiss-toast" aria-label="Dismiss notification">×</button>
+  </div>
+
+  <!-- Legacy Toolbar Buttons Hidden Container (For programmatic compatibility with main menu IPC) -->
+  <div class="legacy-controls" hidden aria-hidden="true">
+    <button id="new-download"></button>
+    <button id="pause-all"></button>
+    <button id="resume-all"></button>
+    <button id="stop-queue"></button>
+    <button id="settings-button"></button>
+    <button id="scheduler-button"></button>
+    <button id="integration-button"></button>
+    <button id="grabber-button"></button>
+    <div class="category-tree">
+      <span class="tree-expander" aria-controls="all-download-categories" aria-expanded="true">⊟</span>
+      <div id="all-download-categories"></div>
+    </div>
+    <div class="list-search"></div>
+  </div>
+
+  <!-- DIALOG: Add Download / Download File Info -->
+  <dialog id="add-dialog" aria-labelledby="add-title">
+    <form id="add-form">
+      <div class="dialog-title">
+        <strong id="add-title">Download File Info</strong>
+        <button type="button" data-close class="close-button" aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <div class="form-line address-line">
+          <label for="download-urls">URL:</label>
+          <textarea id="download-urls" rows="2" required spellcheck="false" placeholder="https://example.com/file.zip"></textarea>
+        </div>
+        <p class="field-help address-help">Enter one URL per line for a batch download.</p>
+        <div class="form-line">
+          <label for="download-category">Category:</label>
+          <select id="download-category">
+            <option value="">Automatic</option>
+            <option>Video</option>
+            <option>Audio</option>
+            <option>Archives</option>
+            <option>Documents</option>
+            <option>Programs</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="form-line">
+          <label for="download-filename">Save As:</label>
+          <input id="download-filename" placeholder="Original file name (optional)" maxlength="240">
+        </div>
+        <div class="form-line">
+          <label for="add-directory">Save to:</label>
+          <input id="add-directory" readonly>
+          <button type="button" id="add-browse" class="small-button" aria-label="Choose download folder">…</button>
+        </div>
+        <div class="form-line">
+          <label for="download-description">Description:</label>
+          <input id="download-description" maxlength="1000">
+        </div>
+        <div class="form-line">
+          <label for="download-schedule">Start at:</label>
+          <input id="download-schedule" type="datetime-local">
+          <span class="field-help">Optional</span>
+        </div>
+        <p class="form-error" id="add-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" class="button" id="paste-button">Paste</button>
+        <span class="spacer"></span>
+        <button type="submit" class="button" id="add-later" data-queue-only="true">Download Later</button>
+        <button type="submit" class="button primary" id="add-submit">Start Download</button>
+        <button type="button" class="button" data-close>Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- DIALOG: Options / Settings -->
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <form id="settings-form">
+      <div class="dialog-title">
+        <strong id="settings-title">Options</strong>
+        <button type="button" class="close-button" data-close aria-label="Close">×</button>
+      </div>
+      <div class="dialog-body">
+        <fieldset>
+          <legend>Save to</legend>
+          <label for="default-directory">Default download folder:</label>
+          <div class="directory-field">
+            <input id="default-directory" required>
+            <button class="small-button" id="choose-directory" type="button">Browse…</button>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Connection</legend>
+          <div class="form-line">
+            <label for="max-concurrent">Maximum simultaneous downloads:</label>
+            <input type="number" id="max-concurrent" min="1" max="16" required>
+          </div>
+          <div class="form-line">
+            <label for="connections">Maximum connections per file:</label>
+            <input type="number" id="connections" min="1" max="16" required>
+          </div>
+          <p class="field-help">Multiple connections require server support for byte ranges.</p>
+          <div class="form-line">
+            <label for="speed-limit">Speed limit (KB/s, 0 = unlimited):</label>
+            <input type="number" id="speed-limit" min="0" max="10000000" required>
+          </div>
+        </fieldset>
+        <p class="form-error" id="settings-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer">
+        <button type="submit" class="button primary">OK</button>
+        <button type="button" class="button" data-close>Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- DIALOG: Scheduler -->
+  <dialog id="scheduler-dialog" aria-labelledby="scheduler-title">
+    <div class="dialog-title">
+      <strong id="scheduler-title">Scheduler</strong>
+      <button class="close-button" data-close aria-label="Close">×</button>
+    </div>
+    <div class="dialog-body">
+      <fieldset>
+        <legend>Scheduled downloads</legend>
+        <div id="scheduled-list" class="scheduled-list"></div>
+      </fieldset>
+      <p class="field-help">Scheduled downloads start at the chosen local time while this app is running. Start Queue starts paused and scheduled downloads immediately. Stop Queue pauses active and waiting downloads.</p>
+      <div class="scheduler-actions">
+        <button class="button" id="schedule-new">Add scheduled download…</button>
+        <button class="button" id="scheduler-start">Start Queue</button>
+        <button class="button" id="scheduler-stop">Stop Queue</button>
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="button" data-close>Close</button>
+    </div>
+  </dialog>
+
+  <!-- DIALOG: Download Status & Progress -->
+  <dialog id="details-dialog" aria-labelledby="details-title">
+    <div class="dialog-title">
+      <strong id="details-title">Download status</strong>
+      <button class="close-button" data-close aria-label="Close">×</button>
+    </div>
+    <div class="dialog-body">
+      <div class="dialog-tabs" role="tablist" aria-label="Download properties">
+        <button class="active-tab" id="tab-status" role="tab" aria-selected="true" aria-controls="status-panel">Download status</button>
+        <button id="tab-speed" role="tab" aria-selected="false" aria-controls="speed-panel">Speed Limiter</button>
+        <button id="tab-completion" role="tab" aria-selected="false" aria-controls="completion-panel">Options on completion</button>
+      </div>
+      <div id="status-panel" role="tabpanel" aria-labelledby="tab-status">
+        <p id="transfer-source" class="transfer-source"></p>
+        <dl id="details-content" class="details-content"></dl>
+      </div>
+      <div id="speed-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-speed" hidden>
+        <form id="detail-speed-form">
+          <label for="detail-speed-limit">Global speed limit (KB/s):</label>
+          <input id="detail-speed-limit" type="number" min="0" max="10000000" required>
+          <p class="field-help">Applies to all downloads. Enter 0 for unlimited speed.</p>
+          <button class="button" type="submit">Apply</button>
+          <p id="detail-speed-error" class="form-error" hidden></p>
+        </form>
+      </div>
+      <div id="completion-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-completion" hidden>
+        <form id="completion-form">
+          <label class="checkbox-label"><input id="notify-complete" type="checkbox"> Show a Windows notification when a download completes</label>
+          <label class="checkbox-label"><input id="reveal-complete" type="checkbox"> Open the download folder on completion</label>
+          <p class="field-help">These options apply to all downloads.</p>
+          <button class="button" type="submit">Apply</button>
+          <span id="completion-result" role="status"></span>
+        </form>
+        <p><button class="button" id="detail-open">Open file</button> <button class="button" id="detail-folder">Open folder</button></p>
+      </div>
+      <progress id="detail-progress" max="100" value="0" aria-label="Download progress"></progress>
+      <div class="transfer-buttons">
+        <button class="button" id="toggle-details">&lt;&lt; Hide details</button>
+        <span class="spacer"></span>
+        <button class="button" id="detail-resume">Resume</button>
+        <button class="button" id="detail-stop">Pause</button>
+        <button class="button" id="detail-cancel">Cancel</button>
+      </div>
+      <div id="connection-details">
+        <p class="connection-caption">Start positions and download progress by connections</p>
+        <div id="segment-map" class="segment-map"></div>
+        <div class="connections-scroll">
+          <table class="connections-table">
+            <thead>
+              <tr><th>N.</th><th>Downloaded</th><th>Info</th></tr>
+            </thead>
+            <tbody id="segment-bars"></tbody>
+          </table>
+        </div>
+        <p id="segment-note" class="field-help"></p>
+      </div>
+      <p id="detail-error" class="form-error" hidden></p>
+    </div>
+    <div class="dialog-footer">
+      <button class="button" data-close>Close</button>
+    </div>
+  </dialog>
+
+  <!-- DIALOG: Browser Integration -->
+  <dialog id="integration-dialog" aria-labelledby="integration-title">
+    <div class="dialog-title">
+      <strong id="integration-title">Browser integration</strong>
+      <button class="close-button" data-close aria-label="Close">×</button>
+    </div>
+    <div class="dialog-body">
+      <p>Install the extension to show download buttons over supported web videos and send links to Awesome Downloader.</p>
+      <ol class="setup-steps">
+        <li>Open <code>chrome://extensions</code> or <code>edge://extensions</code>.</li>
+        <li>Enable <strong>Developer mode</strong>, choose <strong>Load unpacked</strong>, and select this folder:<input id="extension-path" readonly aria-label="Extension folder"></li>
+        <li>Copy the extension ID shown by your browser. In PowerShell, run this command after replacing <strong>YOUR_EXTENSION_ID</strong>. For Edge, change <strong>Chrome</strong> to <strong>Edge</strong>.<textarea id="registration-command" rows="3" readonly aria-label="Browser registration command"></textarea></li>
+      </ol>
+      <label for="integration-port">Local connection:</label>
+      <input id="integration-port" readonly>
+      <p class="field-help">Keep this app running. Direct video files are supported; HLS, DASH, and protected streams are not available in this build.</p>
+    </div>
+    <div class="dialog-footer">
+      <button class="button" data-close>Close</button>
+    </div>
+  </dialog>
+</body>
+</html>
