@@ -8,8 +8,8 @@
   "author": "Zelvior (Faizan Raza) <https://github.com/zelvior/>; core by Ahmad Khattak <https://github.com/AhmadKhattak1/>",
   "scripts": {
     "stage": "node stage.mjs",
-    "dist:ia32": "npm run stage && electron-builder --win nsis --ia32 --publish never",
-    "dist:x64": "npm run stage && electron-builder --win nsis --x64 --publish never",
+    "dist:ia32": "npm run stage && electron-builder --win nsis --ia32 --publish never -c.nsis.artifactName=Awesome-Downloader-32bit.exe",
+    "dist:x64": "npm run stage && electron-builder --win nsis --x64 --publish never -c.nsis.artifactName=Awesome-Downloader-64bit.exe",
     "verify": "node verify.mjs",
     "ffmpeg:ia32": "node fetch-ffmpeg.mjs"
   },
@@ -30,7 +30,7 @@
       "stage/**/*",
       "package.json"
     ],
-    "asar": true,
+    "asar": false,
     "extraResources": [
       {
         "from": "ffmpeg-notice",
@@ -64,9 +64,6 @@
         ]
       }
     ],
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/ffmpeg.exe"
-    ],
     "win": {
       "target": [
         {
@@ -86,7 +83,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Awesome Downloader",
-      "artifactName": "Awesome-Downloader-Legacy-Setup-${arch}.exe"
+      "artifactName": "Awesome-Downloader-${arch}.exe"
     },
     "npmRebuild": false
   }

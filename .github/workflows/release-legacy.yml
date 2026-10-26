@@ -1,6 +1,9 @@
-name: Build legacy Windows release candidate (32-bit, Windows 7/8/8.1)
+name: Build and release Windows installers (32-bit and 64-bit)
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 permissions:
   contents: read
 jobs:
@@ -12,8 +15,8 @@ jobs:
       matrix:
         arch: [ia32, x64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
       - name: Install dependencies (x64)
@@ -38,9 +41,61 @@ jobs:
       - name: Build installer
         working-directory: legacy
         run: npm run dist:${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - name: Check installer name
+        shell: bash
+        run: |
+          if [ "${{ matrix.arch }}" = "ia32" ]; then f=Awesome-Downloader-32bit.exe; else f=Awesome-Downloader-64bit.exe; fi
+          test -f "legacy/release/$f"
+          echo "FILE=legacy/release/$f" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v7
         with:
-          name: unsigned-legacy-windows-${{ matrix.arch }}
-          path: legacy/release/Awesome-Downloader-Legacy-Setup-*.exe
+          name: windows-${{ matrix.arch }}
+          path: ${{ env.FILE }}
           if-no-files-found: error
           retention-days: 7
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./legacy/package.json').version")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="v${VERSION}"; fi
+          cd dist
+          ls -l
+          sha256sum Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe > SHA256SUMS.txt
+          cat > ../notes.md <<NOTES
+          ## Awesome Downloader ${TAG}
+
+          Windows installers (unsigned):
+
+          | File | For |
+          |---|---|
+          | \`Awesome-Downloader-32bit.exe\` | 32-bit Windows 7 / 8 / 8.1 / 10 / 11 |
+          | \`Awesome-Downloader-64bit.exe\` | 64-bit Windows 7 / 8 / 8.1 / 10 / 11 |
+
+          ### Notes
+          - Fixes "Awesome Downloader could not start" (\`ERR_MODULE_NOT_FOUND ... core/engine.mjs\`).
+          - YouTube capture (SABR) is unavailable in this build; direct files, HLS and other sites work.
+          - Windows may show an unsigned-app warning: choose **More info > Run anyway**.
+          - Windows 7 needs updates KB4474419 and KB4490628 installed.
+          - Verify downloads with \`SHA256SUMS.txt\`.
+
+          See docs/LEGACY.md for details.
+          NOTES
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --title "Awesome Downloader ${TAG}" --notes-file ../notes.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --title "Awesome Downloader ${TAG}" --notes-file ../notes.md --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+          fi
