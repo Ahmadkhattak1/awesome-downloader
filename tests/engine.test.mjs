@@ -22,8 +22,8 @@ async function fixture(t, options = {}) {
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
     if (req.headers.range && (req.url === '/ignore-range' || req.url === '/range-probe-only')) {
-      if (req.url === '/range-probe-only' && req.headers.range === 'bytes=0-0') {
-        res.statusCode = 206; res.setHeader('content-range', `bytes 0-0/${data.length}`); res.setHeader('content-length', 1); return res.end(data.subarray(0, 1));
+      if (req.url === '/range-probe-only' && req.headers.range === 'bytes=0-65535') {
+        res.statusCode = 206; res.setHeader('content-range', `bytes 0-65535/${data.length}`); res.setHeader('content-length', 65536); return res.end(data.subarray(0, 65536));
       }
       res.setHeader('content-length', data.length); return res.end(data);
     }
@@ -126,14 +126,14 @@ test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET pro
   const data = randomBytes(4097);
   const server = http.createServer((req, res) => {
     if (req.method === 'HEAD') { res.writeHead(403); return res.end(); }
-    if (req.headers.range !== 'bytes=0-0') { res.writeHead(416); return res.end(); }
+    if (req.headers.range !== 'bytes=0-65535') { res.writeHead(416); return res.end(); }
     res.writeHead(206, {
       'accept-ranges': 'bytes',
-      'content-range': `bytes 0-0/${data.length}`,
-      'content-length': '1',
+      'content-range': `bytes 0-${data.length - 1}/${data.length}`,
+      'content-length': data.length,
       etag: '"probe-1"'
     });
-    res.end(data.subarray(0, 1));
+    res.end(data);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
