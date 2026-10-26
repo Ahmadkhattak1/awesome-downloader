@@ -132,56 +132,36 @@
                 </div>
                 <div class="card-controls">
                   <div class="chart-tab-group" role="tablist">
-                    <button class="chart-tab active" data-tab="size">● Size File</button>
-                    <button class="chart-tab" data-tab="count">Total Download</button>
-                    <button class="chart-tab" data-tab="type">Type File</button>
+                    <button class="chart-tab active" data-tab="size"><span class="tab-dot"></span>Size File</button>
+                    <button class="chart-tab" data-tab="count"><span class="tab-dot"></span>Total Download</button>
+                    <button class="chart-tab" data-tab="type"><span class="tab-dot"></span>Type File</button>
                   </div>
-                  <span class="filter-pill">Week ▾</span>
+                  <div class="dropdown-wrapper">
+                    <button class="filter-pill dropdown-trigger" id="analytics-timeframe-btn" aria-haspopup="true" aria-expanded="false">
+                      <span id="analytics-timeframe-label">Week</span> ▾
+                    </button>
+                    <div class="dropdown-menu" id="analytics-timeframe-menu" hidden>
+                      <button class="dropdown-item active" data-timeframe="week">This Week</button>
+                      <button class="dropdown-item" data-timeframe="month">This Month</button>
+                      <button class="dropdown-item" data-timeframe="all">All Time</button>
+                    </div>
+                  </div>
                   <button class="view-all-link" id="analytics-view-all">View All</button>
                 </div>
               </div>
 
               <!-- Bar Chart Container -->
               <div class="chart-container">
-                <div class="chart-y-axis">
-                  <span>5 GB</span>
-                  <span>3 GB</span>
-                  <span>1 GB</span>
-                  <span>500 MB</span>
-                  <span>250 MB</span>
+                <div class="chart-y-axis" id="analytics-y-axis">
+                  <span>100 MB</span>
+                  <span>75 MB</span>
+                  <span>50 MB</span>
+                  <span>25 MB</span>
+                  <span>10 MB</span>
                   <span>0 MB</span>
                 </div>
                 <div class="chart-bars" id="analytics-bars">
-                  <!-- Generated bars: Mon-Sun -->
-                  <div class="bar-col" data-day="Mon">
-                    <div class="bar-fill" style="height: 48%;"></div>
-                    <span class="bar-label">Mon</span>
-                  </div>
-                  <div class="bar-col highlighted" data-day="Tue">
-                    <div class="bar-tooltip">Tuesday<br><strong>4.02 GB</strong></div>
-                    <div class="bar-fill lime-fill" style="height: 78%;"></div>
-                    <span class="bar-label">Tue</span>
-                  </div>
-                  <div class="bar-col" data-day="Wed">
-                    <div class="bar-fill" style="height: 32%;"></div>
-                    <span class="bar-label">Wed</span>
-                  </div>
-                  <div class="bar-col" data-day="Thu">
-                    <div class="bar-fill" style="height: 58%;"></div>
-                    <span class="bar-label">Thu</span>
-                  </div>
-                  <div class="bar-col" data-day="Fri">
-                    <div class="bar-fill" style="height: 52%;"></div>
-                    <span class="bar-label">Fri</span>
-                  </div>
-                  <div class="bar-col" data-day="Sat">
-                    <div class="bar-fill" style="height: 72%;"></div>
-                    <span class="bar-label">Sat</span>
-                  </div>
-                  <div class="bar-col" data-day="Sun">
-                    <div class="bar-fill" style="height: 42%;"></div>
-                    <span class="bar-label">Sun</span>
-                  </div>
+                  <!-- Generated dynamically based on actual download data -->
                 </div>
               </div>
             </div>
@@ -192,26 +172,35 @@
               <div class="card limitation-card">
                 <div class="card-header">
                   <h3 class="card-title">Limitation Download</h3>
-                  <span class="filter-pill">Week ▾</span>
+                  <div class="dropdown-wrapper">
+                    <button class="filter-pill dropdown-trigger" id="limitation-timeframe-btn" aria-haspopup="true" aria-expanded="false">
+                      <span id="limitation-timeframe-label">Week</span> ▾
+                    </button>
+                    <div class="dropdown-menu" id="limitation-timeframe-menu" hidden>
+                      <button class="dropdown-item active" data-timeframe="week">This Week</button>
+                      <button class="dropdown-item" data-timeframe="month">This Month</button>
+                      <button class="dropdown-item" data-timeframe="all">All Time</button>
+                    </div>
+                  </div>
                 </div>
                 <div class="limitation-content">
                   <div class="gauge-card">
                     <div class="gauge-meter">
                       <svg viewBox="0 0 100 55" class="gauge-svg">
                         <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--gauge-track)" stroke-width="8" stroke-linecap="round"></path>
-                        <path id="gauge-arc" d="M 10 50 A 40 40 0 0 1 82 25" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-linecap="round"></path>
+                        <path id="gauge-arc" d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-linecap="round" stroke-dasharray="125.66" stroke-dashoffset="125.66"></path>
                       </svg>
-                      <div class="gauge-value" id="gauge-stat-value">824 GB</div>
+                      <div class="gauge-value" id="gauge-stat-value">0 B</div>
                     </div>
-                    <div class="gauge-caption">of 1 TB download limit</div>
+                    <div class="gauge-caption" id="gauge-caption">of 1 TB download limit</div>
                   </div>
                   <div class="quota-card">
                     <div class="quota-meter">
-                      <div class="quota-bar" style="width: 80%;"></div>
+                      <div class="quota-bar" id="quota-bar-fill" style="width: 0%;"></div>
                     </div>
                     <div class="quota-numbers">
-                      <strong id="quota-used">80/100 GB</strong>
-                      <span>of weekly limit</span>
+                      <strong id="quota-used"><span class="quota-highlight">0 B</span> / 100 GB</strong>
+                      <span id="quota-caption">of weekly limit</span>
                     </div>
                     <button id="quick-speed-limit-btn" class="limiter-action-btn">Adjust limit</button>
                   </div>

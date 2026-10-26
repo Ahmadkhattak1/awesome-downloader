@@ -582,6 +582,11 @@ body.dark-theme .theme-toggle-switch .switch-knob {
   gap: 8px;
 }
 
+.dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
 .filter-pill {
   font-size: 11px;
   font-weight: 600;
@@ -591,6 +596,63 @@ body.dark-theme .theme-toggle-switch .switch-knob {
   border-radius: var(--radius-full);
   color: var(--text-secondary);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all var(--transition-fast);
+}
+
+.filter-pill:hover {
+  background-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  min-width: 110px;
+  box-shadow: var(--shadow-card);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-menu[hidden] {
+  display: none !important;
+}
+
+.dropdown-item {
+  width: 100%;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  cursor: pointer;
+}
+
+.dropdown-item:hover {
+  background-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dropdown-item.active {
+  color: var(--accent-green-dark);
+  font-weight: 600;
+  background-color: var(--border-subtle);
+}
+
+body.dark-theme .dropdown-item.active {
+  color: var(--accent-green);
 }
 
 .view-all-link {
@@ -616,12 +678,29 @@ body.dark-theme .theme-toggle-switch .switch-knob {
 }
 
 .chart-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 12px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
   border-radius: var(--radius-full);
   transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent-green);
+  box-shadow: 0 0 6px rgba(132, 204, 22, 0.6);
+  display: none;
+}
+
+.chart-tab.active .tab-dot {
+  display: inline-block;
 }
 
 .chart-tab.active {
@@ -705,7 +784,8 @@ body.dark-theme .chart-tab.active {
 
 .bar-tooltip {
   position: absolute;
-  top: -4px;
+  top: -8px;
+  transform: translateY(-100%);
   background-color: var(--bg-surface-elevated);
   border: 1px solid var(--border-color);
   padding: 4px 8px;
@@ -716,7 +796,13 @@ body.dark-theme .chart-tab.active {
   white-space: nowrap;
   pointer-events: none;
   animation: fadeIn 0.2s ease;
-  z-index: 5;
+  z-index: 10;
+  display: none;
+}
+
+.bar-col:hover .bar-tooltip,
+.bar-col.highlighted .bar-tooltip {
+  display: block;
 }
 
 .bar-tooltip strong {
@@ -758,6 +844,10 @@ body.dark-theme .bar-tooltip strong {
   height: 100%;
 }
 
+#gauge-arc {
+  transition: stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .gauge-value {
   position: absolute;
   bottom: 0;
@@ -787,6 +877,11 @@ body.dark-theme .bar-tooltip strong {
   height: 100%;
   background: linear-gradient(90deg, #ef4444, #f97316);
   border-radius: var(--radius-full);
+  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.quota-highlight {
+  color: #ef4444;
 }
 
 .quota-numbers {

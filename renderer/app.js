@@ -14,6 +14,7 @@ const pending = new Set();
 let pendingReviewId = null;
 let selectionDrag = null, suppressRowClick = false;
 const dismissedReviews = new Set();
+let analyticsMode = 'size', analyticsTimeframe = 'week', limitationTimeframe = 'week', selectedBarIndex = null;
 
 /* --- Theme Management (Dark / Light) --- */
 function initTheme() {
@@ -318,16 +319,296 @@ function updateCategoryCounts() {
   }
 }
 
+/* Helper: Filter downloads by timeframe */
+function getFilteredDownloads(timeframe) {
+  const now = new Date();
+  if (timeframe === 'week') {
+    const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
+    const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek, 0, 0, 0);
+    return state.downloads.filter(d => {
+      const dt = new Date(d.completedAt || d.createdAt || 0);
+      return dt >= startOfWeek;
+    });
+  } else if (timeframe === 'month') {
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+    return state.downloads.filter(d => {
+      const dt = new Date(d.completedAt || d.createdAt || 0);
+      return dt >= startOfMonth;
+    });
+  }
+  return state.downloads;
+}
+
+/* Helper: Generate nice Y-Axis labels */
+function generateYAxis(maxVal, isCount) {
+  if (isCount) {
+    const top = Math.max(5, Math.ceil(maxVal / 5) * 5);
+    const step = top / 5;
+    return [
+      String(top),
+      String(Math.round(step * 4)),
+      String(Math.round(step * 3)),
+      String(Math.round(step * 2)),
+      String(Math.round(step * 1)),
+      '0'
+    ];
+  }
+
+  if (maxVal <= 0) {
+    return ['100 MB', '75 MB', '50 MB', '25 MB', '10 MB', '0 MB'];
+  }
+
+  const power = Math.min(4, Math.floor(Math.log(maxVal) / Math.log(1024)));
+  const unitSize = 1024 ** power;
+  const valInUnit = maxVal / unitSize;
+  const niceMultipliers = [1, 2, 5, 10, 20, 25, 50, 100, 250, 500, 1000];
+  const topUnitVal = niceMultipliers.find(m => m >= valInUnit) || (Math.ceil(valInUnit / 10) * 10);
+  const topBytes = topUnitVal * unitSize;
+
+  const fractions = [1, 0.75, 0.5, 0.25, 0.1, 0];
+  return fractions.map(f => f === 0 ? '0 MB' : bytes(topBytes * f));
+}
+
+/* Render Download Analytics Chart */
+function renderAnalyticsChart() {
+  const barsContainer = $('#analytics-bars');
+  const yAxisContainer = $('#analytics-y-axis');
+  if (!barsContainer) return;
+
+  const downloads = getFilteredDownloads(analyticsTimeframe);
+  const now = new Date();
+  const currentDayOfWeek = (now.getDay() + 6) % 7;
+
+  let buckets = [];
+  const isCount = analyticsMode === 'count';
+
+  if (analyticsMode === 'type') {
+    const categories = ['Video', 'Audio', 'Documents', 'Archives', 'Programs', 'Other'];
+    const shortLabels = ['Video', 'Audio', 'Docs', 'Arch', 'Prog', 'Other'];
+    const dataMap = {};
+    for (const cat of categories) {
+      dataMap[cat] = { size: 0, count: 0 };
+    }
+    for (const d of downloads) {
+      const cat = categoryOf(d);
+      if (dataMap[cat]) {
+        dataMap[cat].size += numeric(d.downloaded) || numeric(d.total);
+        dataMap[cat].count += 1;
+      }
+    }
+    buckets = categories.map((cat, i) => ({
+      label: shortLabels[i],
+      fullName: cat,
+      value: dataMap[cat].size,
+      count: dataMap[cat].count,
+      formattedValue: bytes(dataMap[cat].size),
+      tooltip: `${cat}<br><strong>${bytes(dataMap[cat].size)}</strong> (${dataMap[cat].count} files)`
+    }));
+  } else if (analyticsTimeframe === 'week') {
+    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const dayFullNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const values = [0, 0, 0, 0, 0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0, 0];
+
+    for (const d of downloads) {
+      const dt = new Date(d.completedAt || d.createdAt || 0);
+      const dayIdx = (dt.getDay() + 6) % 7;
+      values[dayIdx] += numeric(d.downloaded) || numeric(d.total);
+      counts[dayIdx] += 1;
+    }
+
+    buckets = dayLabels.map((label, i) => {
+      const val = isCount ? counts[i] : values[i];
+      const tipVal = isCount ? `${counts[i]} ${counts[i] === 1 ? 'download' : 'downloads'}` : bytes(values[i]);
+      return {
+        label,
+        fullName: dayFullNames[i],
+        value: val,
+        count: counts[i],
+        formattedValue: tipVal,
+        tooltip: `${dayFullNames[i]}<br><strong>${tipVal}</strong>`
+      };
+    });
+  } else if (analyticsTimeframe === 'month') {
+    const weekLabels = ['W1', 'W2', 'W3', 'W4'];
+    const weekFullNames = ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
+    const values = [0, 0, 0, 0];
+    const counts = [0, 0, 0, 0];
+
+    for (const d of downloads) {
+      const dt = new Date(d.completedAt || d.createdAt || 0);
+      const dom = dt.getDate();
+      const weekIdx = Math.min(3, Math.floor((dom - 1) / 7));
+      values[weekIdx] += numeric(d.downloaded) || numeric(d.total);
+      counts[weekIdx] += 1;
+    }
+
+    buckets = weekLabels.map((label, i) => {
+      const val = isCount ? counts[i] : values[i];
+      const tipVal = isCount ? `${counts[i]} ${counts[i] === 1 ? 'download' : 'downloads'}` : bytes(values[i]);
+      return {
+        label,
+        fullName: weekFullNames[i],
+        value: val,
+        count: counts[i],
+        formattedValue: tipVal,
+        tooltip: `${weekFullNames[i]}<br><strong>${tipVal}</strong>`
+      };
+    });
+  } else {
+    // 'all' time -> Group by past 6 months
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const pastMonths = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      pastMonths.push({ year: d.getFullYear(), month: d.getMonth(), label: monthNames[d.getMonth()] });
+    }
+
+    const values = [0, 0, 0, 0, 0, 0];
+    const counts = [0, 0, 0, 0, 0, 0];
+
+    for (const d of downloads) {
+      const dt = new Date(d.completedAt || d.createdAt || 0);
+      const dy = dt.getFullYear(), dm = dt.getMonth();
+      const idx = pastMonths.findIndex(m => m.year === dy && m.month === dm);
+      if (idx !== -1) {
+        values[idx] += numeric(d.downloaded) || numeric(d.total);
+        counts[idx] += 1;
+      }
+    }
+
+    buckets = pastMonths.map((m, i) => {
+      const val = isCount ? counts[i] : values[i];
+      const tipVal = isCount ? `${counts[i]} ${counts[i] === 1 ? 'download' : 'downloads'}` : bytes(values[i]);
+      return {
+        label: m.label,
+        fullName: `${m.label} ${m.year}`,
+        value: val,
+        count: counts[i],
+        formattedValue: tipVal,
+        tooltip: `${m.label} ${m.year}<br><strong>${tipVal}</strong>`
+      };
+    });
+  }
+
+  // Calculate maximum value for Y-axis scale
+  const maxVal = Math.max(0, ...buckets.map(b => b.value));
+  let topScale = maxVal;
+  if (isCount) {
+    topScale = Math.max(5, Math.ceil(maxVal / 5) * 5);
+  } else if (maxVal > 0) {
+    const power = Math.min(4, Math.floor(Math.log(maxVal) / Math.log(1024)));
+    const unitSize = 1024 ** power;
+    const valInUnit = maxVal / unitSize;
+    const niceMultipliers = [1, 2, 5, 10, 20, 25, 50, 100, 250, 500, 1000];
+    const topUnitVal = niceMultipliers.find(m => m >= valInUnit) || (Math.ceil(valInUnit / 10) * 10);
+    topScale = topUnitVal * unitSize;
+  }
+
+  // Render Y-Axis
+  if (yAxisContainer) {
+    const yLabels = generateYAxis(maxVal, isCount);
+    yAxisContainer.innerHTML = yLabels.map(l => `<span>${l}</span>`).join('');
+  }
+
+  // Determine active highlight index
+  let highlightIdx = selectedBarIndex;
+  if (highlightIdx === null || highlightIdx >= buckets.length) {
+    if (analyticsTimeframe === 'week' && analyticsMode !== 'type') {
+      highlightIdx = currentDayOfWeek;
+    } else {
+      let maxIdx = 0;
+      for (let i = 1; i < buckets.length; i++) {
+        if (buckets[i].value > buckets[maxIdx].value) maxIdx = i;
+      }
+      highlightIdx = maxIdx;
+    }
+  }
+
+  // Render Bars
+  barsContainer.innerHTML = '';
+  buckets.forEach((bucket, idx) => {
+    const isHighlighted = idx === highlightIdx;
+    const heightPercent = topScale > 0 && bucket.value > 0
+      ? Math.min(100, Math.max(8, (bucket.value / topScale) * 100))
+      : 6;
+
+    const col = element('div', `bar-col${isHighlighted ? ' highlighted' : ''}`);
+    col.dataset.index = String(idx);
+    col.dataset.label = bucket.label;
+
+    const tooltip = element('div', 'bar-tooltip');
+    tooltip.innerHTML = bucket.tooltip;
+    col.appendChild(tooltip);
+
+    const fill = element('div', `bar-fill${isHighlighted ? ' lime-fill' : ''}`);
+    fill.style.height = `${heightPercent.toFixed(1)}%`;
+    col.appendChild(fill);
+
+    const label = element('span', 'bar-label', bucket.label);
+    col.appendChild(label);
+
+    col.addEventListener('click', () => {
+      selectedBarIndex = idx;
+      renderAnalyticsChart();
+    });
+
+    barsContainer.appendChild(col);
+  });
+}
+
 /* Update Limitation & Gauge Widgets */
 function updateLimitationStats() {
-  const totalDownloaded = state.downloads.reduce((acc, d) => acc + numeric(d.downloaded), 0);
+  const downloads = getFilteredDownloads(limitationTimeframe);
+  const totalDownloaded = downloads.reduce((acc, d) => acc + numeric(d.downloaded), 0);
+
+  let limitBytes;
+  let limitLabel;
+  let captionLabel;
+  if (limitationTimeframe === 'week') {
+    limitBytes = 100 * 1024 * 1024 * 1024; // 100 GB
+    limitLabel = '100 GB';
+    captionLabel = 'of weekly limit';
+  } else if (limitationTimeframe === 'month') {
+    limitBytes = 500 * 1024 * 1024 * 1024; // 500 GB
+    limitLabel = '500 GB';
+    captionLabel = 'of monthly limit';
+  } else {
+    limitBytes = 1024 * 1024 * 1024 * 1024; // 1 TB
+    limitLabel = '1 TB';
+    captionLabel = 'of total limit';
+  }
+
+  // Left: Semicircle Gauge
   const gaugeVal = $('#gauge-stat-value');
   if (gaugeVal) gaugeVal.textContent = bytes(totalDownloaded);
 
-  const speedLimit = state.settings.speedLimitKbps;
+  const gaugeCaption = $('#gauge-caption');
+  if (gaugeCaption) gaugeCaption.textContent = `of ${limitLabel} download limit`;
+
+  const gaugeArc = $('#gauge-arc');
+  if (gaugeArc) {
+    const totalCircumference = 125.66;
+    const ratio = Math.min(1, totalDownloaded / limitBytes);
+    const offset = totalCircumference * (1 - ratio);
+    gaugeArc.style.strokeDashoffset = String(offset.toFixed(2));
+  }
+
+  // Right: Quota Meter
   const quotaUsed = $('#quota-used');
   if (quotaUsed) {
-    quotaUsed.textContent = speedLimit ? `${speedLimit} KB/s limit` : `${bytes(totalDownloaded)} total`;
+    const usedFormatted = bytes(totalDownloaded);
+    quotaUsed.innerHTML = `<span class="quota-highlight">${usedFormatted}</span> / ${limitLabel}`;
+  }
+
+  const quotaCaption = $('#quota-caption');
+  if (quotaCaption) quotaCaption.textContent = captionLabel;
+
+  const quotaBar = $('#quota-bar-fill');
+  if (quotaBar) {
+    const percent = Math.min(100, (totalDownloaded / limitBytes) * 100);
+    const displayPercent = totalDownloaded > 0 ? Math.max(4, percent) : 0;
+    quotaBar.style.width = `${displayPercent.toFixed(1)}%`;
   }
 }
 
@@ -438,6 +719,7 @@ function render() {
   renderDashboardQueue();
   updateCategoryCounts();
   updateLimitationStats();
+  renderAnalyticsChart();
   updateControls();
 
   if ($('#details-dialog')?.open) renderDetails();
@@ -774,6 +1056,87 @@ function setupEventHandlers() {
       setView('all', card.dataset.category);
     });
   });
+
+  // Dropdown helper
+  function closeAllDropdowns() {
+    $$('.dropdown-menu').forEach(menu => menu.setAttribute('hidden', ''));
+    $$('.dropdown-trigger').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
+  }
+  document.addEventListener('click', closeAllDropdowns);
+
+  // Analytics Chart Tabs: Size File, Total Download, Type File
+  $$('.chart-tab[data-tab]').forEach(tabBtn => {
+    tabBtn.addEventListener('click', () => {
+      $$('.chart-tab[data-tab]').forEach(b => b.classList.remove('active'));
+      tabBtn.classList.add('active');
+      analyticsMode = tabBtn.dataset.tab;
+      selectedBarIndex = null;
+      renderAnalyticsChart();
+    });
+  });
+
+  // Analytics Timeframe Dropdown
+  const analyticsBtn = $('#analytics-timeframe-btn');
+  const analyticsMenu = $('#analytics-timeframe-menu');
+  const analyticsLabel = $('#analytics-timeframe-label');
+  if (analyticsBtn && analyticsMenu) {
+    analyticsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = analyticsMenu.hasAttribute('hidden');
+      closeAllDropdowns();
+      if (isHidden) {
+        analyticsMenu.removeAttribute('hidden');
+        analyticsBtn.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    analyticsMenu.querySelectorAll('.dropdown-item[data-timeframe]').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        analyticsTimeframe = item.dataset.timeframe;
+        analyticsMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        if (analyticsLabel) {
+          analyticsLabel.textContent = analyticsTimeframe === 'week' ? 'Week' : analyticsTimeframe === 'month' ? 'Month' : 'All Time';
+        }
+        analyticsMenu.setAttribute('hidden', '');
+        analyticsBtn.setAttribute('aria-expanded', 'false');
+        selectedBarIndex = null;
+        renderAnalyticsChart();
+      });
+    });
+  }
+
+  // Limitation Timeframe Dropdown
+  const limitationBtn = $('#limitation-timeframe-btn');
+  const limitationMenu = $('#limitation-timeframe-menu');
+  const limitationLabel = $('#limitation-timeframe-label');
+  if (limitationBtn && limitationMenu) {
+    limitationBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = limitationMenu.hasAttribute('hidden');
+      closeAllDropdowns();
+      if (isHidden) {
+        limitationMenu.removeAttribute('hidden');
+        limitationBtn.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    limitationMenu.querySelectorAll('.dropdown-item[data-timeframe]').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        limitationTimeframe = item.dataset.timeframe;
+        limitationMenu.querySelectorAll('.dropdown-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        if (limitationLabel) {
+          limitationLabel.textContent = limitationTimeframe === 'week' ? 'Week' : limitationTimeframe === 'month' ? 'Month' : 'All Time';
+        }
+        limitationMenu.setAttribute('hidden', '');
+        limitationBtn.setAttribute('aria-expanded', 'false');
+        updateLimitationStats();
+      });
+    });
+  }
 
   // Table action buttons
   $('#resume-selected')?.addEventListener('click', () => {
