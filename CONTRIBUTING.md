@@ -23,7 +23,31 @@ yarn start
 
 The download engine in `core/` is TypeScript. `yarn build` compiles it into
 `dist/`; `yarn test`, `yarn start` and the packaging commands build it first.
-Run `yarn format` before committing.
+Run `yarn format` and `yarn lint` before committing; CI runs both.
+
+## Code style
+
+The code follows the [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript),
+enforced by `eslint-config-airbnb-base` in `eslint.config.mjs`. Prettier owns layout, so
+Airbnb's formatting rules are turned off and `curly` is set to always require braces.
+Two parts of the guide that `eslint-config-airbnb-base` does not check are enforced too:
+
+- Descriptive names, never single letters (`id-length`; `_` is allowed for an unused
+  parameter). Name values by what they are: `download`, `segment`, `format`, `index`.
+- A blank line around every function, class, multi-line block and multi-line statement.
+
+These exceptions are deliberate:
+
+- `for...of` loops are allowed, including `for await` over streams. `for...in`, labels
+  and `with` stay banned.
+- `await` inside loops is allowed: retries and in-order writes are sequential on purpose.
+- Download records and their segments (`d`, `segment`, …) are updated in place.
+- Functions may be called before the line that declares them.
+- The extension's shared script globals (`youtubeMedia`, `mediaChoices`,
+  `parseHlsMaster`) are declared rather than imported.
+
+Disable a rule only on the line that needs it, with
+`// eslint-disable-next-line <rule> -- <reason>`.
 
 The legacy manual YouTube URL resolver needs the optional executable described
 in THIRD-PARTY.md; the browser-capture path does not invoke it.

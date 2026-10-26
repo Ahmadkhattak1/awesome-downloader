@@ -7,7 +7,10 @@ import path from 'node:path';
 const ffmpegPath = ffmpegStatic as unknown as string | null;
 
 export function ffmpegExecutable() {
-  if (!ffmpegPath) throw new Error('FFmpeg is not available for this platform.');
+  if (!ffmpegPath) {
+    throw new Error('FFmpeg is not available for this platform.');
+  }
+
   return ffmpegPath.replace('app.asar', 'app.asar.unpacked');
 }
 
@@ -21,10 +24,12 @@ export async function muxTracks(
     ['video', 0, videoCount],
     ['audio', videoCount, count],
   ] as const) {
-    const output = await fs.open(path.join(directory, name + '.track'), 'w');
+    const output = await fs.open(path.join(directory, `${name}.track`), 'w');
+
     try {
-      for (let i = start; i < end; i++) {
-        const input = await fs.open(path.join(directory, `${i}.part`), 'r');
+      for (let partIndex = start; partIndex < end; partIndex += 1) {
+        const input = await fs.open(path.join(directory, `${partIndex}.part`), 'r');
+
         try {
           for await (const chunk of input.createReadStream()) {
             signal.throwIfAborted();
@@ -38,8 +43,10 @@ export async function muxTracks(
       await output.close();
     }
   }
+
   const output = path.join(directory, 'combined.mp4');
   const executable = ffmpegExecutable();
+
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
       executable,
@@ -68,21 +75,26 @@ export async function muxTracks(
       ],
       { windowsHide: true, signal, stdio: ['ignore', 'ignore', 'pipe'] },
     );
+
     let error = '';
+
     child.stderr.on('data', (chunk) => {
       error = (error + chunk).slice(-4096);
     });
+
     child.on('error', reject);
+
     child.on('close', (code) =>
       code === 0
         ? resolve()
         : reject(
             new Error(
-              `Could not combine video and audio: ${error || 'media process exited ' + code}`,
+              `Could not combine video and audio: ${error || `media process exited ${code}`}`,
             ),
           ),
     );
   });
+
   return output;
 }
 
@@ -92,12 +104,17 @@ export async function convertMedia(
   format: string,
   signal: AbortSignal,
 ) {
-  if (!['mp4', 'mp3'].includes(format)) throw new Error('Unsupported output format.');
+  if (!['mp4', 'mp3'].includes(format)) {
+    throw new Error('Unsupported output format.');
+  }
+
   const source = path.join(directory, 'conversion-source.track');
   const out = await fs.open(source, 'w');
+
   try {
     for (const file of files) {
       const input = await fs.open(file, 'r');
+
       try {
         for await (const chunk of input.createReadStream()) {
           signal.throwIfAborted();
@@ -110,7 +127,9 @@ export async function convertMedia(
   } finally {
     await out.close();
   }
-  const output = path.join(directory, 'converted.' + format);
+
+  const output = path.join(directory, `converted.${format}`);
+
   await new Promise<void>((resolve, reject) => {
     const args = [
       '-nostdin',
@@ -122,31 +141,38 @@ export async function convertMedia(
       '-i',
       source,
     ];
+
     args.push(
       ...(format === 'mp3'
         ? ['-map', '0:a:0', '-vn', '-c:a', 'libmp3lame', '-q:a', '2']
         : ['-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', '-movflags', '+faststart']),
       output,
     );
+
     const child = spawn(ffmpegExecutable(), args, {
       windowsHide: true,
       signal,
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+
     let error = '';
+
     child.stderr.on('data', (chunk) => {
       error = (error + chunk).slice(-4096);
     });
+
     child.on('error', reject);
+
     child.on('close', (code) =>
       code === 0
         ? resolve()
         : reject(
             new Error(
-              `Could not create ${format.toUpperCase()}: ${error || 'media process exited ' + code}`,
+              `Could not create ${format.toUpperCase()}: ${error || `media process exited ${code}`}`,
             ),
           ),
     );
   });
+
   return output;
 }

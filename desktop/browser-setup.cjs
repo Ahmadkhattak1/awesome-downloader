@@ -7,33 +7,49 @@ async function openExtensions(browser) {
     Chrome: 'Google/Chrome/Application/chrome.exe',
     Edge: 'Microsoft/Edge/Application/msedge.exe',
   }[browser];
-  if (!relative) throw new Error('Choose Chrome or Edge.');
+
+  if (!relative) {
+    throw new Error('Choose Chrome or Edge.');
+  }
+
   const url = browser === 'Chrome' ? 'chrome://extensions/' : 'edge://extensions/';
-  for (const root of [
+
+  const exists = (file) =>
+    fs.access(file).then(
+      () => true,
+      () => false,
+    );
+
+  const executables = [
     process.env.LOCALAPPDATA,
     process.env.ProgramFiles,
     process.env['ProgramFiles(x86)'],
-  ].filter(Boolean)) {
-    const executable = path.join(root, relative);
-    try {
-      await fs.access(executable);
-    } catch {
-      continue;
+  ]
+    .filter(Boolean)
+    .map((root) => path.join(root, relative));
+
+  for (const executable of executables) {
+    if (await exists(executable)) {
+      await new Promise((resolve, reject) => {
+        const child = spawn(executable, [url], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+
+        child.once('error', reject);
+
+        child.once('spawn', () => {
+          child.unref();
+          resolve();
+        });
+      });
+
+      return;
     }
-    await new Promise((resolve, reject) => {
-      const child = spawn(executable, [url], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      child.once('error', reject);
-      child.once('spawn', () => {
-        child.unref();
-        resolve();
-      });
-    });
-    return;
   }
+
   throw new Error(`${browser} was not found. Open ${url} in your browser manually.`);
 }
+
 module.exports = { openExtensions };

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// eslint-disable-next-line import/no-unresolved -- the import plugin cannot resolve package "exports" subpaths
 import { VideoPlaybackAbrRequest } from 'googlevideo/protos';
 import { normalizeSabrSession } from '../dist/core/sabr.mjs';
 
@@ -19,6 +20,7 @@ test('captured SABR protobuf supplies browser client identity and proof token', 
       unsentSabrContexts: [],
     },
   }).finish();
+
   const value = normalizeSabrSession({
     videoId: 'wLdZWyLOJCI',
     serverAbrStreamingUrl: 'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1',
@@ -47,6 +49,7 @@ test('captured SABR protobuf supplies browser client identity and proof token', 
       },
     ],
   });
+
   assert.equal(value.clientInfo.clientVersion, '2.20261022.00.00');
   assert.equal(value.poToken, 'BwgJ');
   assert.equal(value.formats.find((format) => format.itag === 140).hasAudio, true);
@@ -60,6 +63,7 @@ test('one default audio variant and one video survive repeated normalization', (
     contentLength: '100',
     lastModified: '1',
   };
+
   const session = {
     videoId: 'wLdZWyLOJCI',
     serverAbrStreamingUrl: 'https://r1.googlevideo.com/videoplayback?sabr=1',
@@ -79,13 +83,16 @@ test('one default audio variant and one video survive repeated normalization', (
       },
     ],
   };
-  const first = normalizeSabrSession(session),
-    second = normalizeSabrSession(first);
+
+  const first = normalizeSabrSession(session);
+  const second = normalizeSabrSession(first);
+
   for (const result of [first, second]) {
     assert.equal(result.formats.length, 2);
-    assert.equal(result.formats.find((f) => f.hasAudio).audioTrackId, 'default');
+    assert.equal(result.formats.find((format) => format.hasAudio).audioTrackId, 'default');
+
     assert.equal(
-      result.formats.reduce((sum, f) => sum + Number(f.contentLength), 0),
+      result.formats.reduce((sum, format) => sum + Number(format.contentLength), 0),
       1000,
     );
   }
