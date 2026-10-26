@@ -28,7 +28,7 @@
   "devDependencies": {
     "@stylistic/eslint-plugin": "5.4.0",
     "@types/node": "22.19.1",
-    "electron": "44.9.0",
+    "electron": "44.9.3",
     "electron-builder": "^26.15.3",
     "eslint": "9.36.0",
     "eslint-config-airbnb-extended": "3.3.0",
