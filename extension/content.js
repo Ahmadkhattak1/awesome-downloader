@@ -6,7 +6,7 @@
   let stopped = false, scanFrame, mutationObserver, scrollTimer, scrolling=false;
   const listeners = new AbortController();
   const resizeObserver = new ResizeObserver(() => position());
-  const direct = value => { try { const u = new URL(value, location.href); if (!/^https?:$/.test(u.protocol)) return null; if (/(^|\.)fbcdn\.net$/i.test(u.hostname) && u.searchParams.has('bytestart') && u.searchParams.has('byteend')) { u.searchParams.delete('bytestart'); u.searchParams.delete('byteend'); } return u.href; } catch { return null; } };
+  const direct = value => { try { const u = new URL(value, location.href); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; } };
   function shutdown() {
     if(stopped)return;
     stopped=true;
@@ -76,7 +76,7 @@
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
             if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
             if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
-            const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster,hostname:location.hostname});
+            const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
             if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
             choices.forEach((item,index)=>{
               const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;

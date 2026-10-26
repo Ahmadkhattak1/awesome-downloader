@@ -44,23 +44,15 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 
 export async function probe(url, headers, signal) {
   let response = await request(url, { method: 'HEAD', headers, signal });
-  const probeRange = 'bytes=0-65535';
   const headStatus = response.statusCode;
   const headHasMetadata = response.headers['content-length'] || response.headers['content-range'] ||
     response.headers['accept-ranges'] === 'bytes';
   if (![200, 206].includes(response.statusCode) || !headHasMetadata) {
     response.resume();
-    response = await request(url, { headers: { ...headers, Range: probeRange }, signal });
+    response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
       response.destroy();
       throw new Error(`Server returned HTTP ${headStatus}.`);
-    }
-  } else if (response.headers['accept-ranges'] === 'bytes') {
-    response.destroy();
-    response = await request(url, { headers: { ...headers, Range: probeRange }, signal });
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      response.destroy();
-      throw new Error(`Server returned HTTP ${response.statusCode}.`);
     }
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
@@ -68,12 +60,7 @@ export async function probe(url, headers, signal) {
   if (info.status < 200 || info.status >= 300) throw new Error(`Server returned HTTP ${info.status}.`);
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);
-  const rangeMatch = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(info.headers['content-range'] || '');
-  const requestedEnd = 65535;
-  const validRange = rangeMatch && Number(rangeMatch[1]) === 0 &&
-    Number(rangeMatch[2]) === Math.min(requestedEnd, Number(rangeMatch[3]) - 1) &&
-    Number(rangeMatch[3]) === total;
   return { ...info, total: Number.isSafeInteger(total) && total >= 0 ? total : null,
-    ranges: info.status === 206 && Boolean(validRange),
+    ranges: info.headers['accept-ranges'] === 'bytes' || info.status === 206,
     validator: info.headers.etag && !info.headers.etag.startsWith('W/') ? info.headers.etag : info.headers['last-modified'] || null };
 }

@@ -21,12 +21,7 @@ async function fixture(t, options = {}) {
     res.setHeader('etag', options.etag || '"fixture-1"');
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
-    if (req.headers.range && (req.url === '/ignore-range' || req.url === '/range-probe-only')) {
-      if (req.url === '/range-probe-only' && req.headers.range === 'bytes=0-65535') {
-        res.statusCode = 206; res.setHeader('content-range', `bytes 0-65535/${data.length}`); res.setHeader('content-length', 65536); return res.end(data.subarray(0, 65536));
-      }
-      res.setHeader('content-length', data.length); return res.end(data);
-    }
+    if (req.headers.range && req.url === '/ignore-range') { res.setHeader('content-length', data.length); return res.end(data); }
     if (req.headers.range && !noRange) {
       [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
       ranges.push([start, end]);
@@ -126,14 +121,14 @@ test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET pro
   const data = randomBytes(4097);
   const server = http.createServer((req, res) => {
     if (req.method === 'HEAD') { res.writeHead(403); return res.end(); }
-    if (req.headers.range !== 'bytes=0-65535') { res.writeHead(416); return res.end(); }
+    if (req.headers.range !== 'bytes=0-0') { res.writeHead(416); return res.end(); }
     res.writeHead(206, {
       'accept-ranges': 'bytes',
-      'content-range': `bytes 0-${data.length - 1}/${data.length}`,
-      'content-length': data.length,
+      'content-range': `bytes 0-0/${data.length}`,
+      'content-length': '1',
       etag: '"probe-1"'
     });
-    res.end(data);
+    res.end(data.subarray(0, 1));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
@@ -174,21 +169,11 @@ test('restart recovers paused offsets from actual disk files', async t => {
   } finally { await restored.close(); }
 });
 
-test('server ignoring ranges falls back to sequential transfer', async t => {
+test('server ignoring ranges fails without publishing corrupt files', async t => {
   const f = await fixture(t);
   await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
-  await until(() => ['complete', 'error'].includes(d.status));
-  assert.equal(d.status, 'complete', d.error);
-  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
-  assert.equal(d.connections, 1);
-});
-test('single-part transfers recover when a CDN only honors the probe range', async t => {
-  const f = await fixture(t);
-  await f.engine.updateSettings({ connections: 1 });
-  await f.engine.add({ url: `${f.url}/range-probe-only` }); const d = f.engine.downloads[0];
-  await until(() => ['complete', 'error'].includes(d.status));
-  assert.equal(d.status, 'complete', d.error);
-  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
+  assert.equal(d.path, null);
 });
 
 test('cancel releases queue capacity and removes partial files', async t => {
