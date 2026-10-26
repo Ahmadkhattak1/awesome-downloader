@@ -1,17 +1,22 @@
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const exec = promisify(execFile);
 
+// `mac` is the browser's folder under ~/Library/Application Support, which holds
+// its profiles and, except for Opera, its NativeMessagingHosts folder on macOS.
 const BROWSERS = {
-  Chrome: { registry: 'Google\\Chrome', data: 'Google/Chrome/User Data', dataRoot: 'local' },
-  Edge: { registry: 'Microsoft\\Edge', data: 'Microsoft/Edge/User Data', dataRoot: 'local' },
-  Brave: { registry: 'BraveSoftware\\Brave-Browser', data: 'BraveSoftware/Brave-Browser/User Data', dataRoot: 'local' },
-  // Opera documents that its Windows native host is registered under Chrome.
-  Opera: { registry: 'Google\\Chrome', data: 'Opera Software/Opera Stable', dataRoot: 'roaming', rootProfile: true },
-  Firefox: { registry: 'Mozilla', firefox: true }
+  Chrome: { registry: 'Google\\Chrome', data: 'Google/Chrome/User Data', dataRoot: 'local', mac: 'Google/Chrome' },
+  Edge: { registry: 'Microsoft\\Edge', data: 'Microsoft/Edge/User Data', dataRoot: 'local', mac: 'Microsoft Edge' },
+  Brave: { registry: 'BraveSoftware\\Brave-Browser', data: 'BraveSoftware/Brave-Browser/User Data', dataRoot: 'local', mac: 'BraveSoftware/Brave-Browser' },
+  // Opera documents that its Windows native host is registered under Chrome;
+  // on macOS it likewise shares Chrome's NativeMessagingHosts folder.
+  Opera: { registry: 'Google\\Chrome', data: 'Opera Software/Opera Stable', dataRoot: 'roaming', rootProfile: true, mac: 'com.operasoftware.Opera' },
+  Firefox: { registry: 'Mozilla', firefox: true, mac: 'Mozilla' }
 };
+const macSupport = home => path.join(home, 'Library', 'Application Support');
 
 function browserSpec(browser) {
   const spec = BROWSERS[browser];
@@ -19,7 +24,7 @@ function browserSpec(browser) {
   return spec;
 }
 
-async function registerBrowser({ browser, extensionId }, { dataDirectory, integrationRoot }) {
+async function registerBrowser({ browser, extensionId }, { dataDirectory, integrationRoot, platform = process.platform, home = os.homedir() }) {
   const spec=browserSpec(browser);
   if (typeof extensionId !== 'string' || !(spec.firefox ? /^[A-Za-z0-9@._{}-]{1,128}$/ : /^[a-p]{32}$/).test(extensionId)) throw new Error('Copy the extension ID from your browser’s extensions page.');
   const host = 'com.awesome.downloader';
@@ -28,12 +33,16 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   // Opera and Chrome intentionally share the Chrome registry location and
   // therefore one allow-list manifest instead of replacing each other.
   const manifestName=browser==='Opera'?'Chrome':browser;
-  const manifestPath = path.join(folder, `${manifestName}.json`);
-  const manifest = { name: host, description: 'Awesome Downloader browser bridge', path: path.join(integrationRoot, 'integration', 'native-host.exe'), type: 'stdio' };
+  // macOS has no registry: browsers read the manifest from a fixed per-user folder.
+  const mac = platform === 'darwin';
+  const manifestFolder = mac ? path.join(macSupport(home), BROWSERS[manifestName].mac, 'NativeMessagingHosts') : folder;
+  const manifestPath = path.join(manifestFolder, mac ? `${host}.json` : `${manifestName}.json`);
+  const manifest = { name: host, description: 'Awesome Downloader browser bridge', path: path.join(integrationRoot, 'integration', mac ? 'native-host' : 'native-host.exe'), type: 'stdio' };
   if (spec.firefox) manifest.allowed_extensions = [extensionId];
   else manifest.allowed_origins = [`chrome-extension://${extensionId}/`];
   await fs.access(manifest.path);
   await fs.mkdir(folder, { recursive: true });
+  await fs.mkdir(manifestFolder, { recursive: true });
   let previous;
   try { previous = await fs.readFile(manifestPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   if(previous&&!spec.firefox){
@@ -44,14 +53,19 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   }
   const content = JSON.stringify(manifest, null, 2);
   const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
-  if (previous && previous !== content) await fs.writeFile(`${manifestPath}.${stamp}.bak`, previous);
-  let registry = null;
-  try { registry = (await exec('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
-  catch (error) { if (error.code !== 1) throw error; }
-  const previousPath = registry?.match(/REG_SZ\s+(.+)\r?\n?/)?.[1]?.trim();
-  if (registry && previousPath !== manifestPath) await fs.writeFile(path.join(folder, `${browser}.${stamp}.registry-backup.txt`), registry);
-  if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
-  if (previousPath !== manifestPath) await exec('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
+  // Backups stay in our own folder so browsers never see a stray manifest.
+  if (previous && previous !== content) await fs.writeFile(path.join(folder, `${manifestName}.json.${stamp}.bak`), previous);
+  if (mac) {
+    if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
+  } else {
+    let registry = null;
+    try { registry = (await exec('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
+    catch (error) { if (error.code !== 1) throw error; }
+    const previousPath = registry?.match(/REG_SZ\s+(.+)\r?\n?/)?.[1]?.trim();
+    if (registry && previousPath !== manifestPath) await fs.writeFile(path.join(folder, `${browser}.${stamp}.registry-backup.txt`), registry);
+    if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
+    if (previousPath !== manifestPath) await exec('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
+  }
   let extensionPath = path.join(integrationRoot, 'extension');
   if (spec.firefox) {
     extensionPath = path.join(folder, 'firefox-extension');
@@ -61,13 +75,14 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   return { ok: true, manifestPath, extensionPath };
 }
 // Read only extension registrations, never browser history, cookies, or page data.
-async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, roamingAppData = process.env.APPDATA }, { register = registerBrowser } = {}) {
+async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, roamingAppData = process.env.APPDATA, platform = process.platform, home = os.homedir() }, { register = registerBrowser } = {}) {
   const results = [];
+  const mac = platform === 'darwin';
   const expected = await fs.realpath(path.join(integrationRoot, 'extension'));
   for (const [browser, spec] of Object.entries(BROWSERS).filter(([,value])=>!value.firefox)) {
-    const base=spec.dataRoot==='roaming'?roamingAppData:localAppData;
+    const base=mac?macSupport(home):spec.dataRoot==='roaming'?roamingAppData:localAppData;
     if(!base)continue;
-    const root = path.join(base, spec.data);
+    const root = path.join(base, mac ? spec.mac : spec.data);
     let profiles;
     try { profiles = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
     if(spec.rootProfile)profiles=[{name:'.',isDirectory:()=>true},...profiles];
@@ -92,14 +107,22 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
     }
     if (ids.size) {
       let result;
-      for(const extensionId of ids)result=await register({ browser, extensionId }, { dataDirectory, integrationRoot });
+      for(const extensionId of ids)result=await register({ browser, extensionId }, { dataDirectory, integrationRoot, platform, home });
       results.push({ browser, connected: true });
     }
   }
   return results;
 }
-async function prepareNativeHost(integrationRoot, executable) {
+async function prepareNativeHost(integrationRoot, executable, platform = process.platform) {
   const folder = path.join(integrationRoot, 'integration');
+  if (platform === 'darwin') {
+    // Browsers start hosts without the user's PATH; run the app's own runtime as Node.
+    const script = '#!/bin/sh\ndir=$(cd "$(dirname "$0")" && pwd)\nELECTRON_RUN_AS_NODE=1 exec "$(cat "$dir/runtime-path.txt")" "$dir/native-host.cjs"\n';
+    await fs.writeFile(path.join(folder, 'native-host'), script, { mode: 0o755 });
+    await fs.chmod(path.join(folder, 'native-host'), 0o755);
+    await fs.writeFile(path.join(folder, 'runtime-path.txt'), executable, 'utf8');
+    return;
+  }
   const target = path.join(folder, 'native-host.exe');
   try { await fs.access(target); }
   catch {

@@ -48,6 +48,23 @@ NSIS installer, without publishing. `npm run dist:portable` builds a portable
 executable. See [release requirements](docs/RELEASING.md) before distributing
 either. Current builds are unsigned and have no auto-updater.
 
+### macOS (from source)
+
+macOS support is preview-only and there is no macOS build yet. On macOS with
+Node.js 22+, run from source:
+
+```sh
+npm ci
+npm start
+```
+
+Browser integration works as on Windows: load the unpacked extension shown in
+Browser Integration into your browser. The app writes its native-host manifest to
+`~/Library/Application Support/<browser>/NativeMessagingHosts/` and a small
+`integration/native-host` shell launcher in this checkout. For the
+optional legacy extractor, save the official `yt-dlp_macos` release as
+`vendor/yt-dlp`.
+
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `npm ci` installs the locked media dependencies.
 
