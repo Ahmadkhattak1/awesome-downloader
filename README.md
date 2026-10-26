@@ -48,6 +48,23 @@ NSIS installer, without publishing. `npm run dist:portable` builds a portable
 executable. See [release requirements](docs/RELEASING.md) before distributing
 either. Current builds are unsigned and have no auto-updater.
 
+### macOS (preview)
+
+On macOS with Node.js 22+, `npm ci`, `npm test` and `npm start` work as above.
+`npm run dist:mac` builds `release/Awesome-Downloader-<version>-macOS-<arch>.dmg`
+for the machine's architecture (build on Apple Silicon for arm64, on Intel for
+x64, since `ffmpeg-static` installs one architecture). The app is ad-hoc signed,
+not notarized: a copy downloaded from the internet needs
+`xattr -dr com.apple.quarantine "/Applications/Awesome Downloader.app"` once.
+
+Browser integration works as on Windows: load the unpacked extension shown in
+Browser Integration into Chrome or Edge. The app writes its native-host manifest
+to `~/Library/Application Support/<browser>/NativeMessagingHosts/` and a small
+`native-host` shell launcher in `~/.awesome-downloader/BrowserIntegration`.
+"Open with…" asks for an application instead of using a system dialog. For the
+optional legacy extractor, save the official `yt-dlp_macos` release as
+`vendor/yt-dlp`.
+
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `npm ci` installs the locked media dependencies.
 

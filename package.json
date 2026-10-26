@@ -1,7 +1,7 @@
 {
   "name": "awesome-downloader",
   "version": "0.1.0",
-  "description": "A Windows download manager with segmented transfers and browser video capture",
+  "description": "A Windows and macOS download manager with segmented transfers and browser video capture",
   "main": "desktop/main.cjs",
   "private": true,
   "repository": { "type": "git", "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git" },
@@ -13,7 +13,9 @@
     "test": "node --test tests/*.test.mjs integration/*.test.cjs extension/*.test.cjs",
     "package": "electron-builder --win dir",
     "dist": "electron-builder --win nsis --x64 --publish never",
-    "dist:portable": "electron-builder --win portable --x64 --publish never"
+    "dist:portable": "electron-builder --win portable --x64 --publish never",
+    "package:mac": "electron-builder --mac dir",
+    "dist:mac": "electron-builder --mac dmg --publish never"
   },
   "devDependencies": {
     "electron": "44.9.0",
@@ -39,8 +41,6 @@
     ],
     "asar": true,
     "extraResources": [
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" },
       { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" },
       { "from": "node_modules/googlevideo/LICENSE", "to": "licenses/googlevideo-LICENSE.txt" },
       {
@@ -48,6 +48,7 @@
         "to": "tools",
         "filter": [
           "yt-dlp.exe",
+          "yt-dlp",
           "*.txt"
         ]
       },
@@ -71,14 +72,31 @@
         ]
       }
     ],
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/ffmpeg.exe"
-    ],
     "electronDist": "node_modules/electron/dist",
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "build/icon.ico",
-      "signExecutable": false
+      "signExecutable": false,
+      "extraResources": [
+        { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
+        { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" }
+      ],
+      "asarUnpack": ["node_modules/ffmpeg-static/ffmpeg.exe"]
+    },
+    "mac": {
+      "target": [{ "target": "dmg" }],
+      "icon": "build/icon.png",
+      "category": "public.app-category.utilities",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "extraResources": [
+        { "from": "node_modules/ffmpeg-static/ffmpeg.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
+        { "from": "node_modules/ffmpeg-static/ffmpeg.README", "to": "licenses/FFmpeg-BUILD.txt" }
+      ],
+      "asarUnpack": ["node_modules/ffmpeg-static/ffmpeg"]
+    },
+    "dmg": {
+      "artifactName": "Awesome-Downloader-${version}-macOS-${arch}.dmg"
     },
     "portable": {
       "artifactName": "Awesome-Downloader-${version}-Windows.exe"
