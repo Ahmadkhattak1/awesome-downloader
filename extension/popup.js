@@ -1,7 +1,7 @@
 const api = globalThis.browser || chrome;
 let tab;
 let items = [];
-const status = document.querySelector('#status');
+const statusMessage = document.querySelector('#status');
 const list = document.querySelector('#items');
 
 async function download(item) {
@@ -55,9 +55,9 @@ async function refresh() {
     button.onclick = async () => {
       try {
         await download(item);
-        status.textContent = 'Added to desktop downloader.';
+        statusMessage.textContent = 'Added to desktop downloader.';
       } catch (error) {
-        status.textContent = error.message;
+        statusMessage.textContent = error.message;
       }
     };
 
@@ -71,7 +71,7 @@ document.querySelector('#collect').onclick = async () => {
     await api.tabs.sendMessage(tab.id, { action: 'collectLinks' });
     await refresh();
   } catch (error) {
-    status.textContent = `Reload this web page to enable link detection. ${error.message}`;
+    statusMessage.textContent = `Reload this web page to enable link detection. ${error.message}`;
   }
 };
 
@@ -81,7 +81,7 @@ document.querySelector('#selected').onclick = async () => {
   );
 
   if (!selected.length) {
-    status.textContent = 'Select at least one link.';
+    statusMessage.textContent = 'Select at least one link.';
     return;
   }
 
@@ -92,12 +92,12 @@ document.querySelector('#selected').onclick = async () => {
       await download(item);
       added += 1;
     } catch (error) {
-      status.textContent = `Added ${added}/${selected.length}. ${error.message}`;
+      statusMessage.textContent = `Added ${added}/${selected.length}. ${error.message}`;
       return;
     }
   }
 
-  status.textContent = `Added ${added} downloads.`;
+  statusMessage.textContent = `Added ${added} downloads.`;
 };
 
 document.querySelector('#intercept').onchange = (event) =>
@@ -107,9 +107,9 @@ document.querySelector('#intercept').onchange = (event) =>
   [tab] = await api.tabs.query({ active: true, currentWindow: true });
   const settings = await api.storage.local.get(['interceptDownloads', 'lastError']);
   document.querySelector('#intercept').checked = !!settings.interceptDownloads;
-  status.textContent = settings.lastError || '';
+  statusMessage.textContent = settings.lastError || '';
   await api.storage.local.remove('lastError');
   await refresh();
 })().catch((error) => {
-  status.textContent = error.message;
+  statusMessage.textContent = error.message;
 });

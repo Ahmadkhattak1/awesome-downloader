@@ -1,18 +1,10 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { FlatCompat } from '@eslint/eslintrc';
-import js from '@eslint/js';
 import stylistic from '@stylistic/eslint-plugin';
+// eslint-disable-next-line import/no-unresolved -- the package has only an exports map, which this resolver cannot read.
+import { configs as airbnb } from 'eslint-config-airbnb-extended/legacy';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 // eslint-disable-next-line import/no-unresolved -- the package has only an exports map, which this resolver cannot read.
 import tseslint from 'typescript-eslint';
-
-// eslint-config-airbnb-base ships in the legacy format; FlatCompat loads it unchanged.
-const compat = new FlatCompat({
-  baseDirectory: path.dirname(fileURLToPath(import.meta.url)),
-  recommendedConfig: js.configs.recommended,
-});
 
 // The project follows Airbnb's style guide with these deliberate exceptions
 // (see CONTRIBUTING.md). Prettier owns layout, so eslint-config-prettier comes last.
@@ -95,8 +87,13 @@ export default [
       'test-results/',
     ],
   },
-  ...compat.extends('airbnb-base'),
-  { languageOptions: { ecmaVersion: 2024 }, rules: exceptions },
+  // The legacy set is eslint-config-airbnb-base's rules as flat config, for ESLint 9.
+  ...airbnb.base.recommended,
+  {
+    // The legacy set targets ES2018 through parserOptions, which would override this.
+    languageOptions: { ecmaVersion: 2024, parserOptions: { ecmaVersion: 2024 } },
+    rules: exceptions,
+  },
   {
     files: ['**/*.cjs'],
     languageOptions: { sourceType: 'commonjs', globals: globals.node },
@@ -121,6 +118,11 @@ export default [
   {
     files: ['extension/background.js'],
     languageOptions: { globals: globals.serviceworker },
+  },
+  {
+    // Shared scripts also export themselves for the Node tests when `module` exists.
+    files: ['extension/hls.js', 'extension/media-choices.js', 'extension/youtube-media.js'],
+    languageOptions: { globals: { module: 'readonly' } },
   },
   {
     files: ['core/**/*.mts'],
@@ -153,7 +155,7 @@ export default [
   // Prettier disables Airbnb's `curly: multi-line` because wrapping can break it;
   // always requiring braces keeps the intent and works with Prettier.
   { rules: { curly: ['error', 'all'] } },
-  // Two parts of the Airbnb guide that eslint-config-airbnb-base does not enforce:
+  // Two parts of the Airbnb guide that its shared rules do not enforce:
   // descriptive names instead of single letters (23.1), and a blank line after blocks
   // (19.8), extended to separate every function and multi-line statement.
   {
