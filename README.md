@@ -60,8 +60,9 @@ The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `npm ci` installs the locked media dependencies.
 On Linux, install the extractor with your package manager (for example
 `sudo apt install yt-dlp`) or place an executable named `yt-dlp` in `vendor/`.
-Set `AWESOME_FFMPEG_PATH=/usr/bin/ffmpeg` to use a distribution FFmpeg instead of
-the bundled static binary.
+The app falls back to a distribution FFmpeg automatically when the bundled
+static binary cannot handle an input; install it with `sudo apt install ffmpeg`.
+Set `AWESOME_FFMPEG_PATH=/path/to/ffmpeg` to force a specific executable.
 
 ## Contribute
 
