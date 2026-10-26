@@ -1006,8 +1006,39 @@ function renderDetails() {
     return;
   }
   const status = statusOf(d), percent = percentage(d), content = $('#details-content');
-  const title = $('#details-title'); if (title) title.textContent = `${percent !== null ? `${Math.floor(percent)}% ` : ''}${d.filename || 'Download status'}`;
+  const title = $('#details-title');
+  if (title) {
+    title.textContent = percent !== null ? `Downloading ${Math.floor(percent)}%` : status === 'completed' ? 'Download Complete' : status === 'paused' ? 'Download Paused' : (d.filename || 'Download status');
+  }
   const src = $('#transfer-source'); if (src) { src.textContent = d.url || ''; src.title = d.url || ''; }
+
+  const cat = categoryOf(d);
+  const iconEl = $('#detail-file-icon');
+  if (iconEl) {
+    iconEl.className = `detail-file-icon ${iconClassForCategory(cat)}`;
+    iconEl.innerHTML = categorySvg(cat);
+  }
+
+  const fnEl = $('#detail-filename'); if (fnEl) { fnEl.textContent = d.filename || 'download_file'; fnEl.title = d.filename || ''; }
+  const fsEl = $('#detail-filesize'); if (fsEl) fsEl.textContent = sizeLabel(d);
+
+  const fillEl = $('#detail-progress-bar-fill');
+  if (fillEl) fillEl.style.width = `${percent || 0}%`;
+
+  const pillEl = $('#detail-progress-pill');
+  if (pillEl) {
+    pillEl.textContent = percent !== null ? `${percent.toFixed(1)}%` : '';
+    pillEl.style.display = percent !== null && percent > 0 ? 'inline-block' : 'none';
+  }
+
+  const bytesEl = $('#detail-metric-bytes');
+  if (bytesEl) bytesEl.textContent = `${bytes(d.downloaded)} of ${sizeLabel(d)}`;
+
+  const timeEl = $('#detail-metric-time');
+  if (timeEl) timeEl.textContent = status === 'downloading' ? timeLeft(d) || 'Estimating…' : status === 'completed' ? 'Finished' : '—';
+
+  const speedEl = $('#detail-metric-speed');
+  if (speedEl) speedEl.textContent = status === 'downloading' ? `${bytes(d.speed)}/sec` : '0 B/sec';
 
   const names = { completed: 'Complete', downloading: 'Receiving data…', connecting: 'Connecting…', paused: 'Stopped', queued: 'Queued', scheduled: 'Scheduled', failed: 'Error', cancelled: 'Cancelled', assembling: 'Finalizing…' };
   const rows = [
@@ -1041,20 +1072,32 @@ function renderDetails() {
   for (let index = 0; index < segments.length; index++) {
     const segment = segments[index];
     const row = element('tr');
-    const segmentStatus = segment.status === 'complete' || segment.status === 'completed' ? 'Completed.' : segment.status || (status === 'downloading' ? 'Receiving data…' : names[status] || status);
-    row.append(element('td', '', String(index + 1)), element('td', '', bytes(segment.downloaded)), element('td', '', segmentStatus));
+    const segmentStatus = segment.status === 'complete' || segment.status === 'completed' ? 'Completed' : segment.status || (status === 'downloading' ? 'Receiving data…' : names[status] || status);
+    const total = numeric(segment.total);
+    const segPercent = total ? Math.min(100, Math.round(numeric(segment.downloaded) / total * 100)) : (segment.status === 'complete' ? 100 : 0);
+
+    const colNum = element('td', 'seg-num', String(index + 1));
+    const colBytes = element('td', 'seg-bytes', bytes(segment.downloaded));
+    const colStatus = element('td', 'seg-status', segmentStatus);
+    const colProgress = element('td', 'seg-progress');
+    const track = element('div', 'seg-mini-track');
+    const fill = element('div', 'seg-mini-fill');
+    fill.style.width = `${segPercent}%`;
+    track.append(fill);
+    colProgress.append(track);
+
+    row.append(colNum, colBytes, colStatus, colProgress);
     if (bars) bars.append(row);
 
     const bar = element('progress');
     bar.max = 100;
-    const total = numeric(segment.total);
-    bar.value = total ? Math.min(100, numeric(segment.downloaded) / total * 100) : 0;
+    bar.value = segPercent;
     bar.setAttribute('aria-label', `Connection ${index + 1} progress`);
     if (!total && status === 'downloading') bar.removeAttribute('value');
     if (map) map.append(bar);
   }
 
-  const note = $('#segment-note'); if (note) note.textContent = segments.length ? `${segments.length} connection(s)` : status === 'completed' ? 'Download completed.' : 'Connection progress appears when the transfer starts.';
+  const note = $('#segment-note'); if (note) note.textContent = segments.length ? `${segments.length} active connection(s)` : status === 'completed' ? 'Download completed.' : 'Connection progress appears when the transfer starts.';
   const err = $('#detail-error'); if (err) { err.textContent = d.error || ''; err.hidden = !d.error; }
 
   const setDisabled = (id, val) => { const el = $(id); if (el) el.disabled = Boolean(val); };
@@ -1063,8 +1106,34 @@ function renderDetails() {
   setDisabled('#detail-stop', !canPause(d) || pending.has(d.id));
   setDisabled('#detail-cancel', ['completed', 'cancelled'].includes(status) || pending.has(d.id));
 
-  const transferBtns = $('.transfer-buttons'); if (transferBtns) transferBtns.hidden = status === 'completed';
-  const completeActions = $('#download-complete-actions'); if (completeActions) completeActions.hidden = status !== 'completed';
+  const isPaused = ['paused', 'queued', 'scheduled', 'failed', 'cancelled'].includes(status);
+  const btnResume = $('#detail-resume');
+  const btnStop = $('#detail-stop');
+  const btnCancel = $('#detail-cancel');
+  const transferBtns = $('.transfer-buttons');
+  const completeActions = $('#download-complete-actions');
+
+  if (status === 'completed') {
+    if (transferBtns) transferBtns.hidden = true;
+    if (completeActions) completeActions.hidden = false;
+  } else {
+    if (transferBtns) transferBtns.hidden = false;
+    if (completeActions) completeActions.hidden = true;
+
+    if (btnResume && btnStop) {
+      if (isPaused) {
+        btnResume.hidden = false;
+        btnStop.hidden = true;
+      } else {
+        btnResume.hidden = true;
+        btnStop.hidden = false;
+      }
+    }
+    if (btnCancel) {
+      btnCancel.hidden = false;
+    }
+  }
+
   $('#details-dialog')?.classList.toggle('is-complete', status === 'completed');
 }
 
@@ -1573,7 +1642,7 @@ function setupEventHandlers() {
     if (!details) return;
     details.hidden = !details.hidden;
     document.body.classList.toggle('details-collapsed', details.hidden);
-    $('#toggle-details').textContent = details.hidden ? '>> Show details' : '<< Hide details';
+    $('#toggle-details').textContent = details.hidden ? 'Show Details' : 'Hide Details';
     if (progressMode) try { await call('resizeProgress', { expanded: !details.hidden }); } catch (e) { notify(messageOf(e), true); }
   });
 

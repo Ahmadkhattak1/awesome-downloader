@@ -571,59 +571,126 @@
   <!-- DIALOG: Download Status & Progress -->
   <dialog id="details-dialog" aria-labelledby="details-title">
     <div class="dialog-title">
-      <strong id="details-title">Download status</strong>
+      <div class="dialog-title-left">
+        <svg class="dialog-title-icon" viewBox="0 0 24 24" width="16" height="16" fill="#84cc16"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        <strong id="details-title">Downloading 0%</strong>
+      </div>
       <button class="close-button" data-close aria-label="Close">×</button>
     </div>
     <div class="dialog-body">
+      <!-- Tabs: Status / Speed / Completion -->
       <div class="dialog-tabs" role="tablist" aria-label="Download properties">
         <button class="active-tab" id="tab-status" role="tab" aria-selected="true" aria-controls="status-panel">Download status</button>
         <button id="tab-speed" role="tab" aria-selected="false" aria-controls="speed-panel">Speed Limiter</button>
         <button id="tab-completion" role="tab" aria-selected="false" aria-controls="completion-panel">Options on completion</button>
       </div>
+
+      <!-- MAIN STATUS PANEL (Matching Modern Mockup) -->
       <div id="status-panel" role="tabpanel" aria-labelledby="tab-status">
-        <p id="transfer-source" class="transfer-source"></p>
-        <dl id="details-content" class="details-content"></dl>
+        <!-- Top File Header Card -->
+        <div class="detail-file-card">
+          <div class="detail-file-icon" id="detail-file-icon"></div>
+          <div class="detail-file-meta">
+            <div class="detail-filename-row">
+              <span class="detail-filename" id="detail-filename">download_file</span>
+              <span class="detail-filesize" id="detail-filesize">--</span>
+            </div>
+            <p id="transfer-source" class="transfer-source"></p>
+          </div>
+        </div>
+
+        <!-- Progress Bar with Percentage Pill -->
+        <div class="detail-progress-container">
+          <div class="detail-progress-bar-wrap">
+            <div class="detail-progress-bar-fill" id="detail-progress-bar-fill" style="width: 0%;">
+              <span class="detail-progress-pill" id="detail-progress-pill">0%</span>
+            </div>
+          </div>
+          <progress id="detail-progress" max="100" value="0" aria-label="Download progress" hidden></progress>
+        </div>
+
+        <!-- Metrics Row (Bytes, Time, Speed) -->
+        <div class="detail-metrics-row">
+          <span class="detail-metric-bytes" id="detail-metric-bytes">0 B / 0 B</span>
+          <span class="detail-metric-time" id="detail-metric-time">--:--:--</span>
+          <span class="detail-metric-speed" id="detail-metric-speed">0 B/sec</span>
+        </div>
+
+        <!-- Actions Row: Hide details + Pause/Resume + Cancel -->
+        <div class="transfer-buttons">
+          <button class="button pill-outline-btn" id="toggle-details" type="button">Hide Details</button>
+          <span class="spacer"></span>
+          <button class="button action-pill-btn resume-btn" id="detail-resume" type="button" hidden>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"></polygon></svg>
+            <span>Resume</span>
+          </button>
+          <button class="button action-pill-btn pause-btn" id="detail-stop" type="button">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
+            <span>Pause</span>
+          </button>
+          <button class="button action-pill-btn cancel-btn" id="detail-cancel" type="button">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <span>Cancel</span>
+          </button>
+        </div>
+
+        <!-- Collapsible Connection Details Table -->
+        <div id="connection-details">
+          <div class="connections-scroll">
+            <table class="connections-table">
+              <thead>
+                <tr>
+                  <th style="width: 36px; text-align: center;">#</th>
+                  <th style="width: 120px;">Downloaded</th>
+                  <th>Status</th>
+                  <th style="width: 130px;">Progress</th>
+                </tr>
+              </thead>
+              <tbody id="segment-bars"></tbody>
+            </table>
+          </div>
+          <div id="segment-map" class="segment-map" hidden></div>
+          <p id="segment-note" class="field-help"></p>
+        </div>
+
+        <!-- Completion Actions (Open file / Open folder) -->
+        <div id="download-complete-actions" class="download-complete-actions" hidden>
+          <div class="complete-banner">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#84cc16" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Download completed successfully!</span>
+          </div>
+          <div class="complete-btn-row">
+            <button class="button primary" id="detail-open" type="button">Open File</button>
+            <button class="button" id="detail-folder" type="button">Open Folder</button>
+          </div>
+        </div>
+
+        <!-- Technical Metadata Details -->
+        <dl id="details-content" class="details-content" hidden></dl>
       </div>
+
+      <!-- SPEED LIMITER PANEL -->
       <div id="speed-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-speed" hidden>
         <form id="detail-speed-form">
           <label for="detail-speed-limit">Global speed limit (KB/s):</label>
           <input id="detail-speed-limit" type="number" min="0" max="10000000" required>
           <p class="field-help">Applies to all downloads. Enter 0 for unlimited speed.</p>
-          <button class="button" type="submit">Apply</button>
+          <button class="button primary" type="submit">Apply</button>
           <p id="detail-speed-error" class="form-error" hidden></p>
         </form>
       </div>
+
+      <!-- COMPLETION OPTIONS PANEL -->
       <div id="completion-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-completion" hidden>
         <form id="completion-form">
           <label class="checkbox-label"><input id="notify-complete" type="checkbox"> Show a Windows notification when a download completes</label>
           <label class="checkbox-label"><input id="reveal-complete" type="checkbox"> Open the download folder on completion</label>
           <p class="field-help">These options apply to all downloads.</p>
-          <button class="button" type="submit">Apply</button>
+          <button class="button primary" type="submit">Apply</button>
           <span id="completion-result" role="status"></span>
         </form>
-        <p><button class="button" id="detail-open">Open file</button> <button class="button" id="detail-folder">Open folder</button></p>
       </div>
-      <progress id="detail-progress" max="100" value="0" aria-label="Download progress"></progress>
-      <div class="transfer-buttons">
-        <button class="button" id="toggle-details">&lt;&lt; Hide details</button>
-        <span class="spacer"></span>
-        <button class="button" id="detail-resume">Resume</button>
-        <button class="button" id="detail-stop">Pause</button>
-        <button class="button" id="detail-cancel">Cancel</button>
-      </div>
-      <div id="connection-details">
-        <p class="connection-caption">Start positions and download progress by connections</p>
-        <div id="segment-map" class="segment-map"></div>
-        <div class="connections-scroll">
-          <table class="connections-table">
-            <thead>
-              <tr><th>N.</th><th>Downloaded</th><th>Info</th></tr>
-            </thead>
-            <tbody id="segment-bars"></tbody>
-          </table>
-        </div>
-        <p id="segment-note" class="field-help"></p>
-      </div>
+
       <p id="detail-error" class="form-error" hidden></p>
     </div>
     <div class="dialog-footer">
