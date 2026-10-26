@@ -21,7 +21,7 @@ one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
 
 ## Features
 
-- HTTP(S) downloads with parallel ranges where the server supports them.
+- HTTP(S) downloads with up to 64 parallel ranges per file where the server supports them.
 - Pause/resume for supported transfers, history, scheduling and speed limits.
 - Chrome/Edge media detection and quality selection; selected video/audio tracks
   are combined locally with FFmpeg.
@@ -64,6 +64,13 @@ You can fork the project and submit a pull request without repository write acce
 
 High-priority work: YouTube throughput and session refresh, clean-machine
 installer testing, browser-store packaging, and accessibility.
+
+## Credits
+
+- **Core application and the standard 64-bit version:** created by [Ahmad Khattak](https://github.com/AhmadKhattak1/).
+- **32-bit / legacy Windows version (Windows 7, 8, 8.1) and the custom features added on top** (live extension controls, popup filter and Select all, clipboard link monitor, up to 64 parallel connections): created by **Zelvior (Faizan Raza)** - [github.com/zelvior](https://github.com/zelvior/).
+
+Both parts remain under the project's MIT license.
 
 ## Privacy and licensing
 

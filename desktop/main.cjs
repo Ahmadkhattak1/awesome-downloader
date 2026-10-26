@@ -67,9 +67,12 @@ if (process.argv.includes('--native-host')) {
         await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
       }
       let connectedBrowsers = [], connectionError = '';
-      await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe'));
+      let nativeHostError = '';
+      try { await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe')); }
+      catch (error) { nativeHostError = error.message; }
       await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? [] : [root]}));
       const connectBrowsers = async () => {
+        if (nativeHostError) { connectionError = nativeHostError; return; }
         try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
         catch (error) { connectionError = error.message; }
       };
@@ -159,6 +162,7 @@ if (process.argv.includes('--native-host')) {
               await dialog.showMessageBox(window, { message: `Imported ${urls.length} downloads.`, detail: 'The imported downloads are paused. Select Start Queue to begin.' });
             } catch (e) { dialog.showErrorBox('Could not import downloads', e.message); }
           } }] },
+          { type: 'separator' }, { label: 'Monitor clipboard for download links', type: 'checkbox', checked: engine.settings.watchClipboard === true, click: item => { Promise.resolve().then(() => engine.updateSettings({ watchClipboard: item.checked })).catch(e => dialog.showErrorBox('Could not change setting', e.message)); } },
           { type: 'separator' }, { label: 'Exit', click: () => app.quit() } ] },
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
@@ -181,6 +185,22 @@ if (process.argv.includes('--native-host')) {
         if (engine.settings.notifyOnComplete && Notification.isSupported()) new Notification({ title: 'Download complete', body: d.filename }).show();
         if (engine.settings.revealOnComplete && d.path) shell.showItemInFolder(d.path);
       });
+      // Optional clipboard link monitor: off by default, never downloads without a click.
+      let lastClipboard = clipboard.readText();
+      const clipboardTimer = setInterval(() => {
+        try {
+          if (!engine.settings.watchClipboard) { lastClipboard = clipboard.readText(); return; }
+          const text = clipboard.readText().trim();
+          if (!text || text === lastClipboard) return;
+          lastClipboard = text;
+          if (text.length > 2048 || /\s/.test(text) || !/^https?:\/\/[^/]+\/.+\.(zip|7z|rar|iso|exe|msi|pdf|mp4|mkv|webm|mp3|m4a|flac|wav|docx?|xlsx?|pptx?|apk|dmg|gz|tar|torrent)(?:[?#].*)?$/i.test(text)) return;
+          if (!Notification.isSupported()) return;
+          const note = new Notification({ title: 'Download link copied', body: 'Click to add it to Awesome Downloader.' });
+          note.on('click', () => { if (window.isDestroyed()) return; window.show(); window.focus(); window.webContents.send('downloader:command', 'paste'); });
+          note.show();
+        } catch { /* clipboard can be locked by another application */ }
+      }, 1500);
+      clipboardTimer.unref();
       const icon = nativeImage.createFromPath(appIconPath).resize({width:16,height:16});
       tray = new Tray(icon);
       tray.setToolTip('Awesome Downloader');

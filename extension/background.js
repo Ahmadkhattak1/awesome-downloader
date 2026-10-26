@@ -139,6 +139,17 @@ api.webRequest.onHeadersReceived.addListener(details => {
 }, {urls: ['http://*/*', 'https://*/*']}, ['responseHeaders']);
 api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
 api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
+// Only runs when the manifest has no world:MAIN scripts (legacy manifest for Chrome 102-110).
+async function registerLegacyMainWorldScripts() {
+  try {
+    const declared = (api.runtime.getManifest().content_scripts || []).some(script => script.world === 'MAIN');
+    if (declared || !api.scripting?.registerContentScripts) return;
+    const existing = await api.scripting.getRegisteredContentScripts({ids: ['awesome-youtube-main']});
+    if (existing.length) return;
+    await api.scripting.registerContentScripts([{id: 'awesome-youtube-main', js: ['youtube-media.js', 'youtube-page.js'], matches: ['https://www.youtube.com/*', 'https://youtube.com/*', 'https://m.youtube.com/*'], runAt: 'document_start', world: 'MAIN', persistAcrossSessions: true}]);
+  } catch (error) { await api.storage.local.set({lastError: error.message}); }
+}
+registerLegacyMainWorldScripts();
 api.runtime.onInstalled.addListener(async () => {
   try {
     await api.contextMenus.removeAll();
@@ -197,6 +208,9 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       const data = await api.storage.session.get(CACHE_KEY);
       return {ok:true, items:(data[CACHE_KEY]?.[sender.tab.id] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url))};
     }
+    // Live sync with the desktop app: popup-only, never from page content scripts.
+    if (message.action === 'status' && !sender.tab) return nativeSend({action: 'status'});
+    if (message.action === 'control' && !sender.tab) return nativeSend({action: 'control', id: message.id, control: message.control});
     throw new Error('Unsupported extension request.');
   };
   task().then(respond, error => respond({ok: false, error: error.message}));

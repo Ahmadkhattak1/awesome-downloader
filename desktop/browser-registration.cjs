@@ -80,7 +80,12 @@ async function prepareNativeHost(integrationRoot, executable) {
   const target = path.join(folder, 'native-host.exe');
   try { await fs.access(target); }
   catch {
-    const compiler = path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+    // 64-bit Windows keeps the original compiler first; 32-bit and older systems fall back.
+    const windir = process.env.WINDIR || 'C:\\Windows', net = path.join(windir, 'Microsoft.NET');
+    const compilers = [path.join(net, 'Framework64', 'v4.0.30319', 'csc.exe'), path.join(net, 'Framework', 'v4.0.30319', 'csc.exe'), path.join(net, 'Framework', 'v3.5', 'csc.exe')];
+    let compiler = null;
+    for (const candidate of compilers) { try { await fs.access(candidate); compiler = candidate; break; } catch { /* try next */ } }
+    if (!compiler) throw new Error('The .NET Framework compiler was not found. Install .NET Framework 4.0 or newer to enable browser integration.');
     await exec(compiler, ['/nologo', '/target:exe', `/out:${target}`, path.join(folder, 'NativeHostLauncher.cs')], { windowsHide: true });
   }
   await fs.writeFile(path.join(folder, 'runtime-path.txt'), executable, 'utf8');

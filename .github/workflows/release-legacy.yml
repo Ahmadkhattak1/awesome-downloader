@@ -1,0 +1,35 @@
+name: Build legacy Windows release candidate (32-bit, Windows 7/8/8.1)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        arch: [ia32, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install (target architecture binaries)
+        working-directory: legacy
+        shell: bash
+        run: npm_config_arch=${{ matrix.arch }} npm install --no-audit --no-fund
+      - name: Stage and verify legacy sources
+        working-directory: legacy
+        run: |
+          npm run stage
+          npm run verify
+      - name: Build installer
+        working-directory: legacy
+        run: npm run dist:${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-legacy-windows-${{ matrix.arch }}
+          path: legacy/release/Awesome-Downloader-Legacy-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 7

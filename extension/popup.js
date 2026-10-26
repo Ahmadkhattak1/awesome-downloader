@@ -28,6 +28,31 @@ document.querySelector('#selected').onclick=async()=> {
   for (const item of selected) { try { await download(item); added++; } catch(e) { status.textContent=`Added ${added}/${selected.length}. ${e.message}`; return; } }
   status.textContent=`Added ${added} downloads.`;
 };
+const filterBox=document.querySelector('#filter');
+function applyFilter(){const q=filterBox.value.trim().toLowerCase();list.querySelectorAll('.item').forEach(row=>{row.hidden=!!q&&!row.textContent.toLowerCase().includes(q);});}
+filterBox.oninput=applyFilter;
+document.querySelector('#select-all').onclick=()=>{const boxes=[...list.querySelectorAll('.item:not([hidden]) input[type=checkbox]:not(:disabled)')];const all=boxes.length>0&&boxes.every(box=>box.checked);boxes.forEach(box=>{box.checked=!all;});};
+const live=document.querySelector('#live'), liveItems=document.querySelector('#live-items');
+function formatSpeed(n){return n>=1048576?(n/1048576).toFixed(1)+' MB/s':n>=1024?Math.round(n/1024)+' KB/s':n>0?n+' B/s':'';}
+async function control(id,action){try{const result=await api.runtime.sendMessage({action:'control',id,control:action});if(!result?.ok)throw new Error(result?.error||'Desktop request failed.');await refreshLive();}catch(e){status.textContent=e.message;}}
+async function refreshLive(){
+  try{
+    const result=await api.runtime.sendMessage({action:'status'});
+    if(!result?.ok)throw new Error(result?.error||'');
+    const rows=(result.items||[]).filter(d=>!['complete','cancelled'].includes(d.status)).slice(0,6);
+    live.hidden=!rows.length;liveItems.replaceChildren();
+    for(const d of rows){
+      const row=document.createElement('div');row.className='live-row';
+      const name=document.createElement('span');name.textContent=`${d.filename} — ${d.percent===null?d.status:d.percent+'%'} ${formatSpeed(d.speed)}`.trim();name.title=d.error||d.status;
+      row.append(name);
+      const actions=d.status==='paused'||d.status==='error'?[['▶','Resume',d.status==='error'?'retry':'resume']]:[['❚❚','Pause','pause']];
+      actions.push(['✕','Cancel','cancel']);
+      for(const [text,title,act] of actions){const button=document.createElement('button');button.textContent=text;button.title=title;button.onclick=()=>control(d.id,act);row.append(button);}
+      liveItems.append(row);
+    }
+  }catch{live.hidden=true;}
+}
+setInterval(refreshLive,2000);
 document.querySelector('#intercept').onchange=event=>api.storage.local.set({interceptDownloads:event.target.checked});
 (async()=> {
   [tab]=await api.tabs.query({active:true,currentWindow:true});
@@ -36,4 +61,5 @@ document.querySelector('#intercept').onchange=event=>api.storage.local.set({inte
   status.textContent=settings.lastError || '';
   await api.storage.local.remove('lastError');
   await refresh();
+  await refreshLive();
 })().catch(e=>{status.textContent=e.message;});

@@ -1,3 +1,4 @@
+import './compat.mjs';
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -30,7 +31,7 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, watchClipboard: false };
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
@@ -58,6 +59,12 @@ export class DownloadEngine extends EventEmitter {
         total: s.end === null ? null : s.end - s.start + 1,
         status: s.done || (s.end !== null && s.downloaded === s.end - s.start + 1) ? 'complete' : d.status })) })), settings: { ...this.settings } };
   }
+  // Compact, credential-free view used by the browser extension popup.
+  statusList(limit = 25) {
+    return this.downloads.filter(d => !d.needsReview).slice(-limit).reverse().map(d => ({ id: d.id, filename: d.filename, status: d.status,
+      downloaded: d.downloaded || 0, total: d.total ?? null, speed: d.speed || 0,
+      percent: d.total ? Math.min(100, Math.floor((d.downloaded || 0) / d.total * 100)) : null, error: d.error ? String(d.error).slice(0, 200) : null }));
+  }
   async persist() {
     const content = JSON.stringify({ version: 1, settings: this.settings, downloads: this.downloads.map(d => ({ ...d, headers: undefined, sabr: undefined })) }, null, 2);
     this.persistChain = this.persistChain.catch(() => {}).then(async () => {
@@ -71,7 +78,7 @@ export class DownloadEngine extends EventEmitter {
   updateSettings(patch, save = true) {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
     const next = { ...this.settings };
-    for (const [key, max] of [['maxConcurrent', 16], ['connections', 32], ['speedLimitKbps', 1048576]]) {
+    for (const [key, max] of [['maxConcurrent', 16], ['connections', 64], ['speedLimitKbps', 1048576]]) {
       if (patch[key] !== undefined) {
         const n = Number(patch[key]);
         if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : 1) || n > max) throw new Error(`Invalid ${key}.`);
@@ -90,7 +97,7 @@ export class DownloadEngine extends EventEmitter {
         next.categoryDirectories[category] = path.resolve(folder);
       }
     }
-    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
+    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog', 'watchClipboard']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
     if (next.speedLimitKbps !== this.settings.speedLimitKbps) this.rateNext = 0;
     this.settings = next;
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });
