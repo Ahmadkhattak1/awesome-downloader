@@ -54,6 +54,13 @@ export async function probe(url, headers, signal) {
       response.destroy();
       throw new Error(`Server returned HTTP ${headStatus}.`);
     }
+  } else if (response.headers['accept-ranges'] === 'bytes') {
+    response.destroy();
+    response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      response.destroy();
+      throw new Error(`Server returned HTTP ${response.statusCode}.`);
+    }
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   response.destroy();
@@ -61,6 +68,6 @@ export async function probe(url, headers, signal) {
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);
   return { ...info, total: Number.isSafeInteger(total) && total >= 0 ? total : null,
-    ranges: info.headers['accept-ranges'] === 'bytes' || info.status === 206,
+    ranges: info.status === 206,
     validator: info.headers.etag && !info.headers.etag.startsWith('W/') ? info.headers.etag : info.headers['last-modified'] || null };
 }

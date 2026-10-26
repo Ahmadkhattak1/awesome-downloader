@@ -169,11 +169,13 @@ test('restart recovers paused offsets from actual disk files', async t => {
   } finally { await restored.close(); }
 });
 
-test('server ignoring ranges fails without publishing corrupt files', async t => {
+test('server ignoring ranges falls back to sequential transfer', async t => {
   const f = await fixture(t);
   await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
-  await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
-  assert.equal(d.path, null);
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.equal(d.connections, 1);
 });
 
 test('cancel releases queue capacity and removes partial files', async t => {
