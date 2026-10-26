@@ -53,6 +53,24 @@ test('captured SABR request context is handed to the desktop with the selected t
  const rejected=await h.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,2);
 });
+test('SABR request context copied by the YouTube page is used when webRequest cannot read the body',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:9,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ const stream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+ await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:stream,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[
+  {itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},
+  {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}
+ ]}},sender);
+ // Chrome reports streamed Request bodies as an error instead of raw bytes.
+ h.events.beforeRequest({requestId:'streamed',tabId:9,url:stream,requestBody:{error:'Unknown error.'}});
+ h.events.response({requestId:'streamed',tabId:9,url:stream,statusCode:200,responseHeaders:[]});
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ assert.match((await h.request({action:'download',item:{...item,startNow:true}},sender)).error,/Play this YouTube video/);
+ assert.equal((await h.request({action:'sabrRequest',url:stream,requestBody:'BAUG'},{id:'extension-id',tab:{id:9,url:'https://example.com/'}})).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:'https://example.com/videoplayback?sabr=1',requestBody:'BAUG'},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:stream+'&rn=4',requestBody:'BAUG'},sender)).ok,true);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'BAUG');assert.equal(h.nativeRequests[0].sabr.serverAbrStreamingUrl,stream+'&rn=4');
+});
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
   const url='https://example.com/video.m3u8';

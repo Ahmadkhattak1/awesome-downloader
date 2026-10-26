@@ -172,6 +172,16 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       }
       return {ok:true};
     }
+    // The page copies SABR request context that webRequest cannot read; same trust as playerResponse.
+    if(message.action==='sabrRequest' && sender.tab) {
+      const page=new URL(sender.url || sender.tab.url || 'https://invalid.local');
+      if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))throw new Error('Invalid player source.');
+      const url=globalThis.youtubeMedia.sabrUrl(message.url), requestBody=message.requestBody;
+      if(!url||typeof requestBody!=='string'||!requestBody.length||requestBody.length>350000||!/^[A-Za-z0-9+/]+={0,2}$/.test(requestBody))throw new Error('Invalid SABR request.');
+      youtubeSabrObserved.set(sender.tab.id,{tabId:sender.tab.id,url,requestBody});
+      if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
+      return {ok:true};
+    }
     if (message.action === 'remember' && sender.tab) { await remember(sender.tab.id, message.items || []); return {ok: true}; }
     if (message.action === 'download') {
       const tabId=sender.tab?.id ?? message.tabId;
