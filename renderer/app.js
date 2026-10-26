@@ -187,11 +187,31 @@ function paintSelection() {
     }
   });
 
+  // Update dashboard queue rows as well
+  $$('.queue-row').forEach(row => {
+    const active = selectedIds.has(row.dataset.id);
+    row.classList.toggle('selected', active);
+    const chk = row.querySelector('.row-checkbox');
+    if (chk) {
+      chk.classList.toggle('checked', active);
+      chk.setAttribute('aria-checked', String(active));
+    }
+  });
+
   const countBadge = $('#selected-count-badge');
   if (countBadge) {
     countBadge.textContent = selectedIds.size > 0 ? `${selectedIds.size} selected` : '0 selected';
     countBadge.hidden = selectedIds.size === 0;
   }
+
+  // Update queue header batch buttons
+  const hasSelection = selectedIds.size > 0;
+  const queueResumeSelected = $('#queue-resume-selected');
+  const queuePauseSelected = $('#queue-pause-selected');
+  const queueDeleteSelected = $('#queue-delete-selected');
+  if (queueResumeSelected) queueResumeSelected.hidden = !hasSelection;
+  if (queuePauseSelected) queuePauseSelected.hidden = !hasSelection;
+  if (queueDeleteSelected) queueDeleteSelected.hidden = !hasSelection;
 
   updateControls();
 }
@@ -227,35 +247,73 @@ function categorySymbol(cat) {
   }
 }
 
+function categorySvg(cat) {
+  switch (cat) {
+    case 'Programs':
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 16-9 5-9-5V8l9-5 9 5v8Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 12v9"/></svg>';
+    case 'Documents':
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+    case 'Video':
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+    case 'Audio':
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    case 'Archives':
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>';
+    default:
+      return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+  }
+}
+
 /* Render Dashboard Download Queue Cards */
 function renderDashboardQueue() {
   const container = $('#dashboard-queue-list');
   if (!container) return;
 
   const activeDownloads = state.downloads.filter(d => statusOf(d) !== 'completed' && statusOf(d) !== 'cancelled');
+  const queueDownloads = activeDownloads.length ? activeDownloads : state.downloads.filter(d => statusOf(d) !== 'cancelled');
   const queueCountLabel = $('#queue-count-label');
-  if (queueCountLabel) queueCountLabel.textContent = `Downloading file (${activeDownloads.length})`;
+  if (queueCountLabel) queueCountLabel.textContent = `Downloading file (${activeDownloads.length || queueDownloads.length})`;
 
-  if (!activeDownloads.length) {
+  if (!queueDownloads.length) {
     container.innerHTML = `
       <div class="queue-empty-state">
-        <span>No active downloads in queue.</span>
+        <span>No downloads in queue.</span>
         <p>Click <strong>Add URL</strong> above or start video capture from your browser.</p>
       </div>`;
     return;
   }
 
-  container.replaceChildren(...activeDownloads.slice(0, 10).map(d => {
+  container.replaceChildren(...queueDownloads.slice(0, 10).map(d => {
     const status = statusOf(d);
     const percent = percentage(d);
     const cat = categoryOf(d);
     const iconClass = iconClassForCategory(cat);
+    const isSelected = selectedIds.has(d.id);
 
-    const row = element('div', 'queue-row');
+    const row = element('div', `queue-row${isSelected ? ' selected' : ''}`);
     row.dataset.id = d.id;
+    row.dataset.status = status;
+
+    // Multi-select Checkbox on the left
+    const chk = element('span', `row-checkbox${isSelected ? ' checked' : ''}`);
+    chk.setAttribute('role', 'checkbox');
+    chk.setAttribute('aria-checked', String(isSelected));
+    chk.title = isSelected ? 'Deselect file' : 'Select file';
+    chk.appendChild(element('span', 'checkbox-icon', '✓'));
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (selectedIds.has(d.id)) {
+        selectedIds.delete(d.id);
+      } else {
+        selectedIds.add(d.id);
+      }
+      selectedId = selectedIds.has(d.id) ? d.id : (selectedIds.values().next().value || null);
+      paintSelection();
+    });
 
     // File icon
-    const icon = element('div', `queue-icon ${iconClass}`, categorySymbol(cat));
+    const icon = element('div', `queue-icon ${iconClass}`);
+    icon.innerHTML = categorySvg(cat);
 
     // Info (name & size)
     const info = element('div', 'queue-info');
@@ -264,65 +322,89 @@ function renderDashboardQueue() {
     const size = element('span', 'queue-size', sizeLabel(d));
     info.append(name, size);
 
-    // Progress Column
+    // Progress Column (Bar on top, stats below)
     const progCol = element('div', 'queue-progress-col');
-    const progHeader = element('div', 'queue-progress-header');
-    const statusText = status === 'completed' ? 'Complete' :
-      status === 'downloading' ? (percent !== null ? `Downloading ${percent.toFixed(0)}%` : 'Receiving data…') :
-      status === 'connecting' ? 'Connecting…' :
-      status === 'paused' ? `Paused ${percent ? percent.toFixed(0) + '%' : ''}` :
-      status === 'assembling' ? 'Finalizing…' : status;
-    
-    progHeader.append(element('span', '', statusText));
 
     const barWrap = element('div', 'queue-progress-bar-wrap');
     const barFill = element('div', 'queue-progress-bar-fill');
     barFill.style.width = `${percent || (status === 'completed' ? 100 : 0)}%`;
     barWrap.append(barFill);
-    progCol.append(progHeader, barWrap);
 
-    // Meta stats (bytes & speed)
-    const meta = element('div', 'queue-meta');
+    const progSub = element('div', 'queue-progress-sub');
+    const statusText = status === 'completed' ? 'Complete' :
+      status === 'downloading' ? (percent !== null ? `Downloading ${percent.toFixed(0)}%` : 'Receiving data…') :
+      status === 'connecting' ? 'Connecting…' :
+      status === 'paused' ? `Paused ${percent ? percent.toFixed(0) + '%' : ''}` :
+      status === 'assembling' ? 'Finalizing…' : status;
+    const statusSpan = element('span', 'queue-status-text', statusText);
+
+    let metaText = '';
     if (status === 'downloading') {
-      meta.textContent = `${bytes(d.downloaded)} of ${sizeLabel(d)} | ${bytes(d.speed)}/s`;
+      metaText = `${bytes(d.downloaded)} of ${sizeLabel(d)}${d.speed ? ` | ${bytes(d.speed)}/s` : ''}`;
+    } else if (status === 'completed') {
+      metaText = sizeLabel(d);
     } else {
-      meta.textContent = `${bytes(d.downloaded)} downloaded`;
+      metaText = `${bytes(d.downloaded)} of ${sizeLabel(d)}`;
     }
+    const metaSpan = element('span', 'queue-meta-text', metaText);
+
+    progSub.append(statusSpan, metaSpan);
+    progCol.append(barWrap, progSub);
 
     // Actions
     const actions = element('div', 'queue-actions');
 
-    // Pause / Resume
-    const toggleBtn = element('button', `queue-action-btn ${canPause(d) ? 'pause-btn' : ''}`);
-    toggleBtn.title = canPause(d) ? 'Pause' : 'Resume';
-    toggleBtn.innerHTML = canPause(d) ?
-      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>' :
-      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"></polygon></svg>';
-    toggleBtn.addEventListener('click', (e) => {
+    // Circular Play / Pause button
+    const isDownloading = canPause(d);
+    const circleBtn = element('button', `queue-circle-btn ${isDownloading ? 'pause-circle' : 'resume-circle'}`);
+    circleBtn.title = isDownloading ? 'Pause download' : 'Resume download';
+    circleBtn.innerHTML = isDownloading
+      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1.5"></rect><rect x="14" y="4" width="4" height="16" rx="1.5"></rect></svg>'
+      : '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"></polygon></svg>';
+    circleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      performAction(d, canPause(d) ? 'pause' : 'resume');
+      performAction(d, isDownloading ? 'pause' : 'resume');
     });
 
-    // Cancel / Delete
-    const cancelBtn = element('button', 'queue-action-btn');
-    cancelBtn.title = 'Cancel download';
-    cancelBtn.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+    // Cancel / Delete button
+    const cancelBtn = element('button', 'queue-action-icon-btn cancel-btn');
+    cancelBtn.title = 'Cancel/Delete download';
+    cancelBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
     cancelBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      performAction(d, 'cancel');
+      performAction(d, 'remove');
     });
 
-    // Open Folder
-    const folderBtn = element('button', 'queue-action-btn');
+    // Open Folder button
+    const folderBtn = element('button', 'queue-action-icon-btn folder-btn');
     folderBtn.title = 'Open download folder';
-    folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
+    folderBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
     folderBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       performAction(d, 'reveal');
     });
 
-    actions.append(toggleBtn, cancelBtn, folderBtn);
-    row.append(icon, info, progCol, meta, actions);
+    actions.append(circleBtn, cancelBtn, folderBtn);
+    row.append(chk, icon, info, progCol, actions);
+
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button') || e.target.closest('.row-checkbox')) return;
+      if (e.ctrlKey || e.metaKey) {
+        if (selectedIds.has(d.id)) selectedIds.delete(d.id);
+        else selectedIds.add(d.id);
+        selectedId = selectedIds.has(d.id) ? d.id : (selectedIds.values().next().value || null);
+      } else {
+        if (selectedIds.has(d.id) && selectedIds.size === 1) {
+          selectedIds.delete(d.id);
+          selectedId = null;
+        } else {
+          selectedIds.clear();
+          selectedIds.add(d.id);
+          selectedId = d.id;
+        }
+      }
+      paintSelection();
+    });
 
     row.addEventListener('dblclick', () => showDetails(d.id));
     return row;
@@ -1131,6 +1213,32 @@ function setupEventHandlers() {
   $('#analytics-view-all')?.addEventListener('click', () => setNavView('files'));
   $('#filetype-view-all')?.addEventListener('click', () => setNavView('files'));
 
+  $('#queue-resume-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    const resumable = selectedList.filter(canResume);
+    for (const d of resumable) await performAction(d, 'resume');
+  });
+
+  $('#queue-pause-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    const pausable = selectedList.filter(canPause);
+    for (const d of pausable) await performAction(d, 'pause');
+  });
+
+  $('#queue-delete-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    if (!selectedList.length) return;
+    const msg = selectedList.length === 1
+      ? `Delete “${selectedList[0].filename || 'this download'}”?`
+      : `Delete ${selectedList.length} downloads?`;
+    if (!window.confirm(msg)) return;
+    for (const d of selectedList) {
+      await call('action', { id: d.id, action: 'remove' });
+    }
+    selectedIds.clear();
+    await refresh();
+  });
+
   // Filetype Category Cards click
   $$('.filetype-item[data-category]').forEach(card => {
     card.addEventListener('click', () => {
@@ -1484,18 +1592,23 @@ function setupEventHandlers() {
     };
 
     tableScroll.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || event.target.closest('thead') || event.target.closest('button')) return;
+      if (event.button !== 0 || event.target.closest('thead') || event.target.closest('button') || event.target.closest('.row-checkbox')) return;
       const point = tablePoint(event), row = event.target.closest('.download-row');
       selectionDrag = { pointerId: event.pointerId, startX: point.x, startY: point.y, row, base: (event.ctrlKey || event.metaKey) ? new Set(selectedIds) : new Set(), moved: false };
-      tableScroll.setPointerCapture(event.pointerId);
-      event.preventDefault();
+      if (!row) {
+        tableScroll.setPointerCapture(event.pointerId);
+        event.preventDefault();
+      }
     });
 
     tableScroll.addEventListener('pointermove', event => {
       if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
       const point = tablePoint(event), dx = point.x - selectionDrag.startX, dy = point.y - selectionDrag.startY;
-      if (!selectionDrag.moved && Math.hypot(dx, dy) < 4) return;
-      selectionDrag.moved = true;
+      if (!selectionDrag.moved && Math.hypot(dx, dy) < 6) return;
+      if (!selectionDrag.moved) {
+        selectionDrag.moved = true;
+        try { tableScroll.setPointerCapture(event.pointerId); } catch {}
+      }
       const left = Math.min(selectionDrag.startX, point.x), top = Math.min(selectionDrag.startY, point.y);
       const right = Math.max(selectionDrag.startX, point.x), bottom = Math.max(selectionDrag.startY, point.y);
       Object.assign(selectionRectangle.style, { left: `${left}px`, top: `${top}px`, width: `${Math.max(1, right - left)}px`, height: `${Math.max(1, bottom - top)}px` });

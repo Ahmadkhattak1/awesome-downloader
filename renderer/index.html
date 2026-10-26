@@ -237,16 +237,26 @@
                   <span class="card-subtitle" id="queue-count-label">Downloading file (0)</span>
                 </div>
                 <div class="card-controls">
+                  <button id="queue-resume-selected" class="queue-btn" title="Resume Selected" hidden>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="6 4 18 12 6 20 6 4"></polygon></svg>
+                    <span>Resume</span>
+                  </button>
+                  <button id="queue-pause-selected" class="queue-btn" title="Pause Selected" hidden>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
+                    <span>Pause</span>
+                  </button>
+                  <button id="queue-delete-selected" class="queue-btn danger" title="Delete Selected" hidden>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <span>Delete</span>
+                  </button>
                   <button id="queue-resume-all" class="queue-btn" title="Resume All">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 4 18 12 6 20 6 4"></polygon></svg>
                     <span>Resume All</span>
                   </button>
                   <button id="queue-pause-all" class="queue-btn" title="Pause All">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"></rect><rect x="14" y="4" width="4" height="16" rx="1"></rect></svg>
                     <span>Pause All</span>
                   </button>
-                  <span class="filter-pill">Week ▾</span>
-                  <button class="view-all-link" id="queue-view-all">View All</button>
                 </div>
               </div>
 

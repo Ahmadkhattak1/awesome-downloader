@@ -84,9 +84,9 @@ if (process.argv.includes('--native-host')) {
         openProgress: async ({id}) => {
           const d=engine.downloads.find(d=>d.id===id); if(!d)throw new Error('Download not found.');
           if(progressWindows.has(id)){showProgress(progressWindows.get(id));return;}
-          const progress=new BrowserWindow({width:565,height:485,minWidth:540,minHeight:440,title:d.filename,icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
-          progress.setMenu(null);progressWindows.set(id,progress);progressWindowSizes.set(progress,{expanded:{width:565,height:485}});
-          if(d.status==='complete'){progress.setMinimumSize(470,270);progress.setSize(480,280);progress.setTitle('Download complete');}
+          const progress=new BrowserWindow({width:580,height:460,minWidth:520,minHeight:400,title:d.filename,icon:appIconPath,backgroundColor:'#0f172a',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+          progress.setMenu(null);progressWindows.set(id,progress);progressWindowSizes.set(progress,{expanded:{width:580,height:460}});
+          if(d.status==='complete'){progress.setTitle('Download complete');}
           progress.on('closed',()=>progressWindows.delete(id));
           progress.webContents.setWindowOpenHandler(()=>({action:'deny'}));
           progress.webContents.on('will-navigate',event=>event.preventDefault());
