@@ -4,14 +4,28 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness() {
-  const events={}, nativeRequests=[];
+  const events={}, nativeRequests=[], downloadCalls=[];
   const event=name=>({addListener(fn){events[name]=fn;}});
   const data={};
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+  let nativeFailure=null;
+  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){if(nativeFailure)throw new Error(nativeFailure);nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
   browser.tabs.sendMessage=async()=>({ok:true});
+  const downloadItems=new Map();
+  let cancelFailure=null;
+  Object.assign(browser.downloads,{
+    async pause(id){downloadCalls.push(['pause',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state==='complete')throw new Error('Download is already complete.');item.state='paused';},
+    async resume(id){downloadCalls.push(['resume',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state!=='paused')throw new Error('Download is not paused.');item.state='in_progress';},
+    async cancel(id){downloadCalls.push(['cancel',id]);if(cancelFailure)throw new Error(cancelFailure);if(!downloadItems.delete(id))throw new Error('Download not found.');},
+    async search(query){const item=downloadItems.get(query.id);return item?[structuredClone(item)]:[];}
+  });
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,data,nativeRequests,downloadCalls,
+    createDownload(item){const record={state:'in_progress',tabId:-1,referrer:'',filename:'',...item};downloadItems.set(record.id,record);return structuredClone(record);},
+    download(id){return downloadItems.get(id);},
+    failNative(message){nativeFailure=message;},
+    failCancel(message){cancelFailure=message;},
+    request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -100,4 +114,62 @@ test('media cache is bounded, deduplicated, and cleared on navigation',async()=>
   assert.equal(result.items.length,100); assert.equal(new Set(result.items.map(i=>i.url)).size,100);
   h.events.updated(9,{status:'loading'});
   result=await h.request({action:'listForFrame'},sender); assert.equal(result.items.length,0);
+});
+
+test('interception pauses, hands off, then cancels the browser download',async()=>{
+  const h=harness();
+  h.data.interceptDownloads=true;
+  const item=h.createDownload({id:1,url:'https://example.com/setup.exe',filename:'C:\\Downloads\\setup.exe',referrer:'https://example.com/page'});
+  await h.events.download(item);
+  assert.deepEqual(h.downloadCalls,[['pause',1],['cancel',1]]);
+  assert.equal(h.nativeRequests.length,1);
+  assert.equal(h.nativeRequests[0].url,'https://example.com/setup.exe');
+  assert.equal(h.nativeRequests[0].filename,'setup.exe');
+  assert.equal(h.nativeRequests[0].referer,'https://example.com/page');
+  assert.equal(h.download(1),undefined);
+});
+
+test('interception respects its setting and never hands off finished or non-HTTP transfers',async()=>{
+  const h=harness();
+  await h.events.download(h.createDownload({id:1,url:'https://example.com/file.bin'}));
+  assert.equal(h.downloadCalls.length,0);assert.equal(h.nativeRequests.length,0);
+  h.data.interceptDownloads=true;
+  await h.events.download(h.createDownload({id:2,url:'https://example.com/file.bin',state:'complete'}));
+  assert.equal(h.downloadCalls.length,0);assert.equal(h.nativeRequests.length,0);
+  assert.equal(h.data.lastError,undefined);
+  await h.events.download(h.createDownload({id:3,url:'blob:https://example.com/uuid'}));
+  assert.equal(h.downloadCalls.length,0);assert.equal(h.nativeRequests.length,0);
+});
+
+test('desktop rejection resumes the paused browser download and records why',async()=>{
+  const h=harness();
+  h.data.interceptDownloads=true;
+  h.failNative('Start Awesome Downloader before sending downloads.');
+  await h.events.download(h.createDownload({id:5,url:'https://example.com/file.bin'}));
+  assert.deepEqual(h.downloadCalls,[['pause',5],['resume',5]]);
+  assert.equal(h.download(5).state,'in_progress');
+  assert.match(h.data.lastError,/Browser download was kept/);
+});
+
+test('concurrent duplicate clicks share one handoff and every copy is canceled',async()=>{
+  const h=harness();
+  h.data.interceptDownloads=true;
+  const first=h.createDownload({id:7,url:'https://example.com/file.bin',tabId:3,referrer:'https://example.com/a'});
+  const second=h.createDownload({id:8,url:'https://example.com/file.bin',tabId:3,referrer:'https://example.com/a'});
+  await Promise.all([h.events.download(first),h.events.download(second)]);
+  assert.equal(h.nativeRequests.length,1);
+  assert.deepEqual(h.downloadCalls.filter(([action])=>action==='pause'),[['pause',7],['pause',8]]);
+  assert.deepEqual(h.downloadCalls.filter(([action])=>action==='cancel'),[['cancel',7],['cancel',8]]);
+  assert.equal(h.download(7),undefined);assert.equal(h.download(8),undefined);
+});
+
+test('a failed browser cancel after acceptance never resumes the desktop copy',async()=>{
+  const h=harness();
+  h.data.interceptDownloads=true;
+  h.failCancel('Download not found.');
+  await h.events.download(h.createDownload({id:9,url:'https://example.com/file.bin'}));
+  assert.equal(h.nativeRequests.length,1);
+  assert.deepEqual(h.downloadCalls,[['pause',9],['cancel',9]]);
+  assert.deepEqual(h.downloadCalls.filter(([action])=>action==='resume'),[]);
+  assert.match(h.data.lastError,/continues the transfer/);
 });

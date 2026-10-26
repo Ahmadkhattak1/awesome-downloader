@@ -202,14 +202,40 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   task().then(respond, error => respond({ok: false, error: error.message}));
   return true;
 });
+// Concurrent clicks on one link create several browser downloads with the same
+// URL. Share a single desktop handoff so only one native message is sent and
+// the desktop keeps one entry.
+const pendingHandoffs=new Map();
+function sharedHandoff(url,item) {
+  let pending=pendingHandoffs.get(url);
+  if(pending)return pending;
+  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId)
+    .finally(()=>pendingHandoffs.delete(url));
+  pendingHandoffs.set(url,pending);
+  pending.catch(()=>{});
+  return pending;
+}
 api.downloads.onCreated.addListener(async item => {
-  let paused=false;
+  const url=item.finalUrl||item.url;
+  let paused=false,accepted=false;
   try {
     const {interceptDownloads = false} = await api.storage.local.get('interceptDownloads');
-    if (!interceptDownloads || !httpUrl(item.finalUrl || item.url)) return;
+    if (!interceptDownloads || !httpUrl(url)) return;
+    // A download that already finished belongs to the browser; handing it off
+    // would save the same file twice.
+    if (item.state === 'complete') return;
     // IDM's observed ownership model: pause during handoff, resume on failure.
-    await api.downloads.pause(item.id); paused=true;
-    await enqueue({url: item.finalUrl || item.url, filename: item.filename?.split(/[\\/]/).pop(), referer: item.referrer},item.tabId);
-    await api.downloads.cancel(item.id);
-  } catch (e) { if(paused)await api.downloads.resume(item.id).catch(()=>{}); await api.storage.local.set({lastError: `Browser download was kept: ${e.message}`}); }
+    try {
+      await api.downloads.pause(item.id); paused=true;
+      await sharedHandoff(url,item); accepted=true;
+      await api.downloads.cancel(item.id);
+    } catch (error) {
+      // Once the desktop accepted the handoff it owns the transfer; resuming
+      // the paused browser copy would download the file a second time.
+      if (paused && !accepted) await api.downloads.resume(item.id).catch(()=>{});
+      throw error;
+    }
+  } catch (error) {
+    await api.storage.local.set({lastError: accepted ? `The browser download could not be canceled; Awesome Downloader continues the transfer: ${error.message}` : `Browser download was kept: ${error.message}`});
+  }
 });
