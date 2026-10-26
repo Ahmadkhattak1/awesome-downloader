@@ -10,19 +10,50 @@ maintainer before coding. Propose features outside the backlog for approval firs
 
 ## Development
 
-Use Windows x64 and Node.js 22 or newer with npm. Fork this repository, clone your
-fork, and create a branch for one focused change.
+Use Windows x64 and Node.js 22 or newer. `.nvmrc` pins the major version, so
+`nvm use` picks it, and CI reads the same file. The project uses Yarn 4 through
+Corepack, which ships with Node.js; run `corepack enable` once. Fork this
+repository, clone your fork, and create a branch for one focused change.
 
 ```powershell
-npm ci
-npm test
-npm start
+yarn install
+yarn test
+yarn start
 ```
+
+The download engine in `core/` is TypeScript. `yarn build` compiles it into
+`dist/`; `yarn test`, `yarn start` and the packaging commands build it first.
+Run `yarn format` and `yarn lint` before committing; CI runs both.
+
+## Code style
+
+The code follows the [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript),
+enforced by the legacy set of `eslint-config-airbnb-extended` (the `eslint-config-airbnb-base`
+rules, ported to ESLint 9) in `eslint.config.mjs`. Prettier owns layout, so
+Airbnb's formatting rules are turned off and `curly` is set to always require braces.
+Two parts of the guide that the Airbnb rules do not check are enforced too:
+
+- Descriptive names, never single letters (`id-length`; `_` is allowed for an unused
+  parameter). Name values by what they are: `download`, `segment`, `format`, `index`.
+- A blank line around every function, class, multi-line block and multi-line statement.
+
+These exceptions are deliberate:
+
+- `for...of` loops are allowed, including `for await` over streams. `for...in`, labels
+  and `with` stay banned.
+- `await` inside loops is allowed: retries and in-order writes are sequential on purpose.
+- Download records and their segments (`d`, `segment`, …) are updated in place.
+- Functions may be called before the line that declares them.
+- The extension's shared script globals (`youtubeMedia`, `mediaChoices`,
+  `parseHlsMaster`) are declared rather than imported.
+
+Disable a rule only on the line that needs it, with
+`// eslint-disable-next-line <rule> -- <reason>`.
 
 The legacy manual YouTube URL resolver needs the optional executable described
 in THIRD-PARTY.md; the browser-capture path does not invoke it.
 
-Run `npm run package` to build the unpacked app or `npm run dist` for a local
+Run `yarn package` to build the unpacked app or `yarn dist` for a local
 Windows installer. These commands do not publish a release. Review
 [release requirements](docs/RELEASING.md) before distributing binaries.
 

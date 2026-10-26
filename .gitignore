@@ -21,3 +21,11 @@ coverage/
 .local-evidence/
 *.log
 test-results/
+dist/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.pnp.*
+.DS_Store

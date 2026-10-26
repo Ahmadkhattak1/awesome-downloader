@@ -35,14 +35,14 @@ agreement; missing labels do not mean it is automatically ready or blocked.
 
 ## What the labels mean
 
-| Label | Meaning | What to do |
-| --- | --- | --- |
-| `type: goal` | A larger outcome delivered through several steps | Read it for context; choose a linked implementation issue |
-| `status: ready` | No unfinished implementation prerequisite is recorded | Propose your approach and agree ownership |
-| `status: blocked` | A named prerequisite must merge and pass validation first | Follow that dependency; planning is welcome |
-| `help wanted` | Contributions are welcome | Still check readiness and discuss scope |
-| `bug` / `enhancement` / `documentation` | The kind of work | These do not indicate priority or merge approval |
-| `good first issue` | A deliberately scoped newcomer task, when applied | Read its acceptance criteria before claiming it |
+| Label                                   | Meaning                                                   | What to do                                                |
+| --------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
+| `type: goal`                            | A larger outcome delivered through several steps          | Read it for context; choose a linked implementation issue |
+| `status: ready`                         | No unfinished implementation prerequisite is recorded     | Propose your approach and agree ownership                 |
+| `status: blocked`                       | A named prerequisite must merge and pass validation first | Follow that dependency; planning is welcome               |
+| `help wanted`                           | Contributions are welcome                                 | Still check readiness and discuss scope                   |
+| `bug` / `enhancement` / `documentation` | The kind of work                                          | These do not indicate priority or merge approval          |
+| `good first issue`                      | A deliberately scoped newcomer task, when applied         | Read its acceptance criteria before claiming it           |
 
 Labels are maintained manually. They are not automated merge gates and may lag
 behind discussions. If a label and dependency disagree, ask the maintainer to
@@ -52,13 +52,13 @@ prerequisite is ready.
 
 ## How the goals fit together
 
-| Goal | Implementation order |
-| --- | --- |
-| [Linux #6](https://github.com/Ahmadkhattak1/awesome-downloader/issues/6) | Shared adapters #14 → runtime/integration #22 → packaging/validation #23 |
-| [macOS #7](https://github.com/Ahmadkhattak1/awesome-downloader/issues/7) | Shared adapters #14 → runtime/integration #24 → packaging/validation #25 |
-| [Windows ARM64 #8](https://github.com/Ahmadkhattak1/awesome-downloader/issues/8) | Shared adapters #14 → runtime/dependencies #26 → installer/hardware validation #27 |
-| [Firefox #10](https://github.com/Ahmadkhattak1/awesome-downloader/issues/10) | Capture/integration #28 → persistent installation/setup #29 |
-| [YouTube playlists #21](https://github.com/Ahmadkhattak1/awesome-downloader/issues/21) | Discovery/model #30 → selection/queue/batch controls #31 |
+| Goal                                                                                   | Implementation order                                                               |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [Linux #6](https://github.com/Ahmadkhattak1/awesome-downloader/issues/6)               | Shared adapters #14 → runtime/integration #22 → packaging/validation #23           |
+| [macOS #7](https://github.com/Ahmadkhattak1/awesome-downloader/issues/7)               | Shared adapters #14 → runtime/integration #24 → packaging/validation #25           |
+| [Windows ARM64 #8](https://github.com/Ahmadkhattak1/awesome-downloader/issues/8)       | Shared adapters #14 → runtime/dependencies #26 → installer/hardware validation #27 |
+| [Firefox #10](https://github.com/Ahmadkhattak1/awesome-downloader/issues/10)           | Capture/integration #28 → persistent installation/setup #29                        |
+| [YouTube playlists #21](https://github.com/Ahmadkhattak1/awesome-downloader/issues/21) | Discovery/model #30 → selection/queue/batch controls #31                           |
 
 The shared adapters are one task, not three copies. After #14 is merged and
 validated, Linux, macOS and ARM64 implementation can proceed in parallel.
