@@ -44,9 +44,16 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 
 export async function probe(url, headers, signal) {
   let response = await request(url, { method: 'HEAD', headers, signal });
-  if ([405, 501].includes(response.statusCode)) {
+  const headStatus = response.statusCode;
+  const headHasMetadata = response.headers['content-length'] || response.headers['content-range'] ||
+    response.headers['accept-ranges'] === 'bytes';
+  if (![200, 206].includes(response.statusCode) || !headHasMetadata) {
     response.resume();
     response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      response.destroy();
+      throw new Error(`Server returned HTTP ${headStatus}.`);
+    }
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   response.destroy();
