@@ -11,6 +11,10 @@
     if(items.some(i=>i.provider==='youtube'))return items.filter(i=>i.provider==='youtube');
     let list=items.filter(i=>!i.unsupported && !/\.(m4s|ts|aac)(?:[?#]|$)/i.test(i.url)&&!/^https:\/\/(?:www\.)?youtube\.com\/s\//.test(i.url));
     if(wanted) list=list.filter(i=>assetKey(i.url)===wanted);
+    if(/(^|\.)instagram\.com$/i.test(context.hostname||'')) {
+      list.sort((a,b)=>(b.bitrate||0)-(a.bitrate||0));
+      list=list.slice(0,1);
+    }
     const instagram=new Map();
     list=list.filter(item=>{
       try {

@@ -76,7 +76,7 @@
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
             if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
             if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
-            const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
+            const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster,hostname:location.hostname});
             if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
             choices.forEach((item,index)=>{
               const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;
