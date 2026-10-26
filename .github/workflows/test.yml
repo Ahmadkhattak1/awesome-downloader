@@ -1,18 +1,24 @@
-name: Windows tests
+name: Tests
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
   test:
-    runs-on: windows-latest
+    # The code being tested is not Windows-specific, so it is checked on macOS as well.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - run: corepack enable
+      # Enable Corepack on the Node that setup-node installs, so `yarn` is the Yarn 4
+      # pinned in package.json rather than the runner's global Yarn 1.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: yarn
+          node-version-file: '.nvmrc'
+      - run: corepack enable
       - run: yarn install --immutable
       - run: yarn format:check
       - run: yarn test
