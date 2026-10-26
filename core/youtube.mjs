@@ -85,7 +85,7 @@ export async function downloadYoutube({url,formatKey,directory,signal,onProgress
   if(!choice)throw new Error('This YouTube format is no longer available. Refresh the video menu.');
   onMetadata?.(choice);
   const audio=choice.youtubeFormat.startsWith('audio:');
-  const args=['--newline','--progress','--progress-delta','0.5','--progress-template','download:ADPROGRESS:%(progress)j','--ffmpeg-location',ffmpeg.replace('app.asar','app.asar.unpacked'),'-f',audio?choice.youtubeFormat.slice(6):choice.youtubeFormat,'-o',path.join(directory,'media.%(ext)s')];
+  const args=['--newline','--progress','--progress-delta','0.5','--progress-template','download:ADPROGRESS:%(progress)j','-N','16','--ffmpeg-location',ffmpeg.replace('app.asar','app.asar.unpacked'),'-f',audio?choice.youtubeFormat.slice(6):choice.youtubeFormat,'-o',path.join(directory,'media.%(ext)s')];
   if(speedLimitKbps)args.push('--limit-rate',String(speedLimitKbps*1024));
   args.push(...(audio?['--extract-audio','--audio-format','mp3']:['--merge-output-format','mp4']),youtubeUrl(url));
   const finished=new Map();let completedBytes=0;

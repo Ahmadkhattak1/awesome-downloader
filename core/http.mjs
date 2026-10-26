@@ -1,6 +1,9 @@
 import http from 'node:http';
 import https from 'node:https';
 
+export const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 64, maxFreeSockets: 32 });
+export const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 30000, maxSockets: 64, maxFreeSockets: 32 });
+
 export function validUrl(value) {
   if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
   const url = new URL(value);
@@ -18,11 +21,13 @@ export function cleanHeaders(input = {}) {
   return headers;
 }
 
-export async function request(url, { method = 'GET', headers = {}, signal, redirects = 0 } = {}) {
+export async function request(url, { method = 'GET', headers = {}, signal, redirects = 0, agent } = {}) {
   url = validUrl(url);
   if (redirects > 10) throw new Error('Too many redirects.');
+  const isHttps = url.startsWith('https:');
+  const selectedAgent = agent !== undefined ? agent : (isHttps ? httpsAgent : httpAgent);
   const response = await new Promise((resolve, reject) => {
-    const req = (url.startsWith('https:') ? https : http).request(url, { method, headers, signal }, resolve);
+    const req = (isHttps ? https : http).request(url, { method, headers, signal, agent: selectedAgent }, resolve);
     req.on('error', reject);
     req.setTimeout(30000, () => req.destroy(new Error('Connection timed out.')));
     req.end();

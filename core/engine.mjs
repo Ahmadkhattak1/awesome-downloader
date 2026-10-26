@@ -243,14 +243,85 @@ export class DownloadEngine extends EventEmitter {
     }, this.tickMs);
     const siblings = new AbortController();
     const transferSignal = AbortSignal.any([signal, siblings.signal]);
+    const activeSegments = new Set();
+    const minSplitBytes = 1024 * 1024; // IDM minimum 1MB chunk to split
+
+    const findAvailableSegment = () => {
+      // 1. Pick an incomplete, unassigned segment
+      for (let i = 0; i < d.segments.length; i++) {
+        const seg = d.segments[i];
+        const expected = seg.end === null ? null : seg.end - seg.start + 1;
+        if (!seg.done && !activeSegments.has(i) && (expected === null || seg.downloaded < expected)) {
+          activeSegments.add(i);
+          return i;
+        }
+      }
+
+      // 2. IDM Halving Work-Stealing: dynamically split the largest actively streaming segment
+      if (!info.ranges || info.total === null) return null;
+
+      let targetIndex = -1;
+      let maxRemaining = 0;
+      for (const i of activeSegments) {
+        const seg = d.segments[i];
+        if (seg.stealing || seg.done || !seg.streaming) continue;
+        const expected = seg.end - seg.start + 1;
+        const remaining = expected - seg.downloaded;
+        if (remaining > maxRemaining && remaining >= minSplitBytes) {
+          maxRemaining = remaining;
+          targetIndex = i;
+        }
+      }
+
+      if (targetIndex === -1) return null;
+
+      const target = d.segments[targetIndex];
+      target.stealing = true;
+      const remaining = (target.end - target.start + 1) - target.downloaded;
+      const half = Math.floor(remaining / 2);
+      const newStart = target.end - half + 1;
+      const newEnd = target.end;
+
+      target.end = newStart - 1;
+      target.stealing = false;
+
+      const newIndex = d.segments.length;
+      const newSeg = { start: newStart, end: newEnd, downloaded: 0, done: false };
+      d.segments.push(newSeg);
+      activeSegments.add(newIndex);
+      d.connections = Math.min(this.settings.connections, activeSegments.size);
+      this.changed();
+      return newIndex;
+    };
+
+    const worker = async () => {
+      while (true) {
+        transferSignal.throwIfAborted();
+        const segIndex = findAvailableSegment();
+        if (segIndex === null) break;
+        const segment = d.segments[segIndex];
+        try {
+          await this.transfer(d, info, segment, path.join(dir, `${segIndex}.part`), headers, transferSignal);
+          segment.done = true;
+        } finally {
+          activeSegments.delete(segIndex);
+          d.connections = activeSegments.size;
+        }
+      }
+    };
+
+    const workerCount = Math.min(this.settings.connections, d.segments.length || 1);
     try {
-      const outcomes = await Promise.allSettled(d.segments.map((segment, i) => this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers, transferSignal).catch(error => { siblings.abort(); throw error; })));
+      const outcomes = await Promise.allSettled(Array.from({ length: workerCount }, () => worker().catch(error => { siblings.abort(); throw error; })));
       const failure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
       if (failure) throw failure.reason;
-    } finally { clearInterval(progress); }
+    } finally {
+      clearInterval(progress);
+      d.connections = Math.max(1, d.segments.length);
+    }
     await this.assemble(d, dir, signal);
   }
-  async assemble(d, dir, signal, files = d.segments.map((_,i) => path.join(dir, `${i}.part`)), converted = false) {
+  async assemble(d, dir, signal, files = d.segments.map((s, i) => ({ file: path.join(dir, `${i}.part`), start: s.start ?? 0, index: i })).sort((a, b) => (a.start === b.start ? a.index - b.index : a.start - b.start)).map(x => x.file), converted = false) {
     signal.throwIfAborted();
     d.status = 'assembling'; d.speed = 0; this.changed();
     if(d.outputFormat&&!converted){
@@ -272,10 +343,13 @@ export class DownloadEngine extends EventEmitter {
     let complete = false;
     try {
       for (const file of files) {
+        signal.throwIfAborted();
         const input = await fs.open(file, 'r');
         try {
-          for await (const chunk of input.createReadStream()) { signal.throwIfAborted(); await out.writeFile(chunk); }
+          const stream = input.createReadStream({ highWaterMark: 2 * 1024 * 1024 });
+          for await (const chunk of stream) { signal.throwIfAborted(); await out.writeFile(chunk); }
         } finally { await input.close(); }
+        try { await fs.unlink(file); } catch {}
       }
       await out.sync(); complete = true;
     } finally { await out.close(); if (!complete) await fs.unlink(destination); }
@@ -398,7 +472,7 @@ export class DownloadEngine extends EventEmitter {
   }
   async transfer(d, info, segment, file, headers, signal, url=d.url) {
     const expected = segment.end === null ? null : segment.end - segment.start + 1;
-    if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); return; }
+    if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); segment.done = true; return; }
     for (let attempt = 0; attempt < 4; attempt++) {
       signal.throwIfAborted();
       try {
@@ -406,27 +480,49 @@ export class DownloadEngine extends EventEmitter {
         if (!ranged && segment.downloaded) { d.downloaded -= segment.downloaded; segment.downloaded = 0; await fs.writeFile(file, Buffer.alloc(0)); }
         const start = segment.start + segment.downloaded;
         const h = { ...headers };
-        if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
+        const reqEnd = segment.end;
+        if (ranged) { h.Range = `bytes=${start}-${reqEnd}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           response.destroy(); throw new Error(`Server returned HTTP ${response.statusCode}${ranged ? ' instead of a byte range' : ''}.`);
         }
         if (ranged) {
           const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers['content-range'] || '');
-          if (!match || Number(match[1]) !== start || Number(match[2]) !== segment.end || Number(match[3]) !== info.total) { response.destroy(); throw new Error('Server returned an inconsistent byte range.'); }
+          if (!match || Number(match[1]) !== start || Number(match[2]) !== reqEnd || Number(match[3]) !== info.total) { response.destroy(); throw new Error('Server returned an inconsistent byte range.'); }
         }
         if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') { response.destroy(); throw new Error('Server ignored identity encoding; refusing to save corrupt ranges.'); }
         const out = await fs.open(file, 'a');
+        segment.streaming = true;
         try {
           for await (const chunk of response) {
             signal.throwIfAborted();
-            if (expected !== null && segment.downloaded + chunk.length > expected) throw new Error('Server sent more bytes than requested.');
+            const curExpected = segment.end === null ? null : segment.end - segment.start + 1;
+            if (curExpected !== null && segment.downloaded + chunk.length > curExpected) {
+              const sliceLen = curExpected - segment.downloaded;
+              if (sliceLen > 0) {
+                const slice = chunk.subarray(0, sliceLen);
+                await this.throttle(slice.length, signal);
+                await out.writeFile(slice);
+                segment.downloaded += slice.length;
+                d.downloaded += slice.length;
+              }
+              break;
+            }
             await this.throttle(chunk.length, signal);
-            await out.writeFile(chunk); segment.downloaded += chunk.length; d.downloaded += chunk.length;
+            await out.writeFile(chunk);
+            segment.downloaded += chunk.length;
+            d.downloaded += chunk.length;
+            if (curExpected !== null && segment.downloaded === curExpected) break;
           }
           await out.sync();
-        } finally { await out.close(); response.destroy(); }
-        if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
+        } finally {
+          segment.streaming = false;
+          await out.close();
+          response.destroy();
+        }
+        const finalExpected = segment.end === null ? null : segment.end - segment.start + 1;
+        if (finalExpected !== null && segment.downloaded !== finalExpected) throw new Error('Connection ended before the segment finished.');
+        segment.done = true;
         return;
       } catch (error) {
         if (signal.aborted || attempt === 3) throw error;

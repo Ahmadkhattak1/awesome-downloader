@@ -83,6 +83,15 @@ async function until(check, timeout = 8000) {
 }
 const digest = b => createHash('sha256').update(b).digest('hex');
 
+test('dynamic work stealing re-segments slow connections and reconstructs exact file', async t => {
+  const f = await fixture(t, { slow: true });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads.find(x => x.id === id);
+  await until(() => ['complete', 'error'].includes(d.status), 15000);
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
 test('parallel ranged transfers reconstruct exact bytes and preserve existing filenames', async t => {
   const f = await fixture(t);
   await fs.mkdir(path.join(f.root, 'downloads')); await fs.writeFile(path.join(f.root, 'downloads', 'file.bin'), 'existing');
