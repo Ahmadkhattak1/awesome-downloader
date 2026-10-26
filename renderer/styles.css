@@ -815,25 +815,40 @@ body.dark-theme .bar-tooltip strong {
 /* Limitation Download Widget */
 .limitation-content {
   display: flex;
-  gap: 14px;
+  gap: 16px;
+  margin-top: 6px;
 }
 
 .gauge-card, .quota-card {
   flex: 1;
   background-color: var(--bg-canvas);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 14px;
+  border-radius: 16px;
+  padding: 22px 18px;
+  min-height: 140px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  text-align: center;
+}
+
+body.light-theme .gauge-card,
+body.light-theme .quota-card {
+  background-color: #fbfcfd;
+  border-color: #edf2f7;
+}
+
+body.dark-theme .gauge-card,
+body.dark-theme .quota-card {
+  background-color: #131b2e;
+  border-color: #1e293b;
 }
 
 .gauge-meter {
   position: relative;
-  width: 110px;
-  height: 60px;
+  width: 130px;
+  height: 70px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -851,69 +866,59 @@ body.dark-theme .bar-tooltip strong {
 .gauge-value {
   position: absolute;
   bottom: 0;
-  font-size: 17px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.5px;
 }
 
 .gauge-caption {
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: 8px;
   text-align: center;
 }
 
 .quota-meter {
   width: 100%;
-  height: 8px;
+  height: 14px;
   background-color: var(--gauge-track);
   border-radius: var(--radius-full);
   overflow: hidden;
-  margin-bottom: 8px;
 }
 
 .quota-bar {
   height: 100%;
-  background: linear-gradient(90deg, #ef4444, #f97316);
+  background: linear-gradient(90deg, #fb7185, #ef4444);
   border-radius: var(--radius-full);
   transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.quota-highlight {
-  color: #ef4444;
-}
-
 .quota-numbers {
   text-align: center;
-  margin-bottom: 8px;
+  margin-top: 14px;
 }
 
 .quota-numbers strong {
   display: block;
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.quota-highlight {
+  color: #ef4444;
+  font-weight: 800;
 }
 
 .quota-numbers span {
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
-}
-
-.limiter-action-btn {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
-  color: var(--text-secondary);
-}
-
-.limiter-action-btn:hover {
-  background-color: var(--border-subtle);
-  color: var(--text-primary);
+  margin-top: 4px;
+  display: block;
 }
 
 /* Extension Promo Card */
@@ -1351,37 +1356,93 @@ body.dark-theme .bar-tooltip strong {
 }
 
 .downloads-table tr.download-row.selected {
-  background-color: var(--accent-primary-bg);
+  background-color: rgba(34, 197, 94, 0.08);
+}
+
+.th-file-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .file-name {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
-.file-type-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-sm);
-  background-color: var(--border-subtle);
+.row-checkbox {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--border-color);
+  background-color: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--accent-primary);
+  cursor: pointer;
   flex-shrink: 0;
+  transition: all var(--transition-fast);
+  user-select: none;
 }
 
-.download-row[data-status=completed] .file-type-icon {
-  background-color: var(--accent-green-bg);
-  color: var(--accent-green-dark);
+.row-checkbox .checkbox-icon {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  color: transparent;
+  transition: color var(--transition-fast);
 }
 
-.download-row[data-status=failed] .file-type-icon {
-  background-color: var(--accent-red-bg);
-  color: var(--accent-red);
+.row-checkbox:hover {
+  border-color: var(--accent-green);
+}
+
+/* Checked state - Dark Forest Green background with Neon Lime checkmark */
+.row-checkbox.checked {
+  background-color: #173322;
+  border-color: #22c55e;
+}
+
+.row-checkbox.checked .checkbox-icon {
+  color: #4ade80;
+}
+
+body.light-theme .row-checkbox.checked {
+  background-color: #dcfce7;
+  border-color: #22c55e;
+}
+
+body.light-theme .row-checkbox.checked .checkbox-icon {
+  color: #16a34a;
+}
+
+.row-checkbox.indeterminate {
+  background-color: #173322;
+  border-color: #22c55e;
+}
+
+.row-checkbox.indeterminate .checkbox-icon {
+  color: #4ade80;
+}
+
+.file-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.selection-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  background-color: var(--accent-primary-bg);
+  border: 1px solid var(--accent-primary);
+  color: var(--accent-primary-hover);
+  border-radius: var(--radius-full);
+}
+
+body.dark-theme .selection-badge {
+  color: var(--accent-primary);
 }
 
 .row-status {

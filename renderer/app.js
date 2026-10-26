@@ -165,11 +165,34 @@ function matches(d) {
 }
 
 function paintSelection() {
+  const visible = visibleDownloads.map(d => d.id);
+  const allSelected = visible.length > 0 && visible.every(id => selectedIds.has(id));
+  const someSelected = visible.some(id => selectedIds.has(id));
+
+  const selectAll = $('#select-all-checkbox');
+  if (selectAll) {
+    selectAll.classList.toggle('checked', allSelected);
+    selectAll.classList.toggle('indeterminate', someSelected && !allSelected);
+    selectAll.setAttribute('aria-checked', allSelected ? 'true' : someSelected ? 'mixed' : 'false');
+  }
+
   $$('.download-row').forEach(row => {
     const active = selectedIds.has(row.dataset.id);
     row.classList.toggle('selected', active);
     row.setAttribute('aria-selected', String(active));
+    const chk = row.querySelector('.row-checkbox');
+    if (chk) {
+      chk.classList.toggle('checked', active);
+      chk.setAttribute('aria-checked', String(active));
+    }
   });
+
+  const countBadge = $('#selected-count-badge');
+  if (countBadge) {
+    countBadge.textContent = selectedIds.size > 0 ? `${selectedIds.size} selected` : '0 selected';
+    countBadge.hidden = selectedIds.size === 0;
+  }
+
   updateControls();
 }
 
@@ -567,11 +590,11 @@ function updateLimitationStats() {
   let captionLabel;
   if (limitationTimeframe === 'week') {
     limitBytes = 100 * 1024 * 1024 * 1024; // 100 GB
-    limitLabel = '100 GB';
+    limitLabel = '100GB';
     captionLabel = 'of weekly limit';
   } else if (limitationTimeframe === 'month') {
     limitBytes = 500 * 1024 * 1024 * 1024; // 500 GB
-    limitLabel = '500 GB';
+    limitLabel = '500GB';
     captionLabel = 'of monthly limit';
   } else {
     limitBytes = 1024 * 1024 * 1024 * 1024; // 1 TB
@@ -581,10 +604,20 @@ function updateLimitationStats() {
 
   // Left: Semicircle Gauge
   const gaugeVal = $('#gauge-stat-value');
-  if (gaugeVal) gaugeVal.textContent = bytes(totalDownloaded);
+  if (gaugeVal) {
+    const size = numeric(totalDownloaded);
+    if (!size) {
+      gaugeVal.textContent = '0GB';
+    } else {
+      const power = Math.min(4, Math.floor(Math.log(size) / Math.log(1024)));
+      const val = size / (1024 ** power);
+      const formatted = val >= 10 || Number.isInteger(val) ? val.toFixed(0) : val.toFixed(1);
+      gaugeVal.textContent = `${formatted}${['B', 'KB', 'MB', 'GB', 'TB'][power]}`;
+    }
+  }
 
   const gaugeCaption = $('#gauge-caption');
-  if (gaugeCaption) gaugeCaption.textContent = `of ${limitLabel} download limit`;
+  if (gaugeCaption) gaugeCaption.textContent = `of ${limitationTimeframe === 'all' ? '1 TB' : limitLabel} Limit download`;
 
   const gaugeArc = $('#gauge-arc');
   if (gaugeArc) {
@@ -597,8 +630,11 @@ function updateLimitationStats() {
   // Right: Quota Meter
   const quotaUsed = $('#quota-used');
   if (quotaUsed) {
-    const usedFormatted = bytes(totalDownloaded);
-    quotaUsed.innerHTML = `<span class="quota-highlight">${usedFormatted}</span> / ${limitLabel}`;
+    let usedFormatted = bytes(totalDownloaded);
+    if (totalDownloaded >= 1024 * 1024 * 1024) {
+      usedFormatted = (totalDownloaded / (1024 ** 3)).toFixed(0);
+    }
+    quotaUsed.innerHTML = `<span class="quota-highlight">${usedFormatted}</span>/${limitLabel}`;
   }
 
   const quotaCaption = $('#quota-caption');
@@ -615,19 +651,38 @@ function updateLimitationStats() {
 /* Render Table Row for File Management */
 function rowFor(d) {
   const status = statusOf(d), percent = percentage(d);
+  const isSelected = selectedIds.has(d.id);
   const row = element('tr', 'download-row');
   row.dataset.id = d.id;
   row.dataset.status = status;
-  row.classList.toggle('selected', selectedIds.has(d.id));
-  row.setAttribute('aria-selected', String(selectedIds.has(d.id)));
+  row.classList.toggle('selected', isSelected);
+  row.setAttribute('aria-selected', String(isSelected));
 
   const nameCell = element('td');
   nameCell.title = d.filename || d.url;
   const name = element('span', 'file-name');
-  name.append(
-    element('span', 'file-type-icon', status === 'completed' ? '✓' : status === 'failed' ? '!' : '↓'),
-    element('span', '', d.filename || 'Preparing file…')
-  );
+
+  // Custom rounded checkbox matching screenshot
+  const chk = element('span', `row-checkbox${isSelected ? ' checked' : ''}`);
+  chk.setAttribute('role', 'checkbox');
+  chk.setAttribute('aria-checked', String(isSelected));
+  chk.title = isSelected ? 'Deselect file' : 'Select file';
+  const checkIcon = element('span', 'checkbox-icon', '✓');
+  chk.appendChild(checkIcon);
+
+  chk.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (selectedIds.has(d.id)) {
+      selectedIds.delete(d.id);
+    } else {
+      selectedIds.add(d.id);
+    }
+    selectedId = selectedIds.has(d.id) ? d.id : (selectedIds.values().next().value || null);
+    paintSelection();
+  });
+
+  const fileTitle = element('span', 'file-title', d.filename || 'Preparing file…');
+  name.append(chk, fileTitle);
   nameCell.append(name);
 
   const names = {
@@ -661,7 +716,26 @@ function rowFor(d) {
 
   row.addEventListener('click', event => {
     if (suppressRowClick) return;
-    selectDownload(d.id, { additive: event.ctrlKey || event.metaKey, toggle: event.ctrlKey || event.metaKey });
+    if (event.target.closest('.row-checkbox')) return;
+    if (event.ctrlKey || event.metaKey) {
+      if (selectedIds.has(d.id)) selectedIds.delete(d.id);
+      else selectedIds.add(d.id);
+      selectedId = selectedIds.has(d.id) ? d.id : (selectedIds.values().next().value || null);
+    } else if (event.shiftKey && selectedId) {
+      const ids = visibleDownloads.map(x => x.id);
+      const from = ids.indexOf(selectedId);
+      const to = ids.indexOf(d.id);
+      if (from !== -1 && to !== -1) {
+        const [start, end] = from < to ? [from, to] : [to, from];
+        for (let i = start; i <= end; i++) selectedIds.add(ids[i]);
+      } else {
+        selectedIds.add(d.id);
+      }
+      selectedId = d.id;
+    } else {
+      selectDownload(d.id, { additive: false, toggle: false });
+    }
+    paintSelection();
   });
   row.addEventListener('dblclick', () => showDetails(d.id));
   row.addEventListener('contextmenu', event => {
@@ -673,15 +747,23 @@ function rowFor(d) {
 }
 
 function updateControls() {
-  const d = selected(), busy = d && pending.has(d.id);
+  const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+  const count = selectedList.length;
+  const anyBusy = selectedList.some(d => pending.has(d.id));
   const setDisabled = (id, val) => { const el = $(id); if (el) el.disabled = Boolean(val); };
 
-  setDisabled('#resume-selected', (!canResume(d) && !d?.needsReview) || busy);
-  setDisabled('#stop-selected', !canPause(d) || busy);
-  setDisabled('#remove-selected', !d || busy);
-  setDisabled('#open-selected', !d || statusOf(d) !== 'completed');
-  setDisabled('#reveal-selected', !d);
-  setDisabled('#details-selected', !d);
+  const canResumeAny = selectedList.some(d => canResume(d) || d?.needsReview);
+  const canPauseAny = selectedList.some(canPause);
+
+  setDisabled('#resume-selected', count === 0 || !canResumeAny || anyBusy);
+  setDisabled('#stop-selected', count === 0 || !canPauseAny || anyBusy);
+  setDisabled('#remove-selected', count === 0 || anyBusy);
+
+  const d = selected();
+  setDisabled('#open-selected', count !== 1 || !d || statusOf(d) !== 'completed');
+  setDisabled('#reveal-selected', count === 0 || !d);
+  setDisabled('#details-selected', count !== 1 || !d);
+
   setDisabled('#pause-all', !state.downloads.some(canPause));
   setDisabled('#header-pause-all', !state.downloads.some(canPause));
   setDisabled('#queue-pause-all', !state.downloads.some(canPause));
@@ -1138,16 +1220,75 @@ function setupEventHandlers() {
     });
   }
 
-  // Table action buttons
-  $('#resume-selected')?.addEventListener('click', () => {
-    const d = selected();
-    if (d?.needsReview) { openReview(d.id); return; }
-    performAction(d, d && ['failed', 'cancelled'].includes(statusOf(d)) ? 'retry' : 'resume');
+  // Master Select-All Checkbox
+  $('#select-all-checkbox')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const visibleIds = visibleDownloads.map(d => d.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+    if (allSelected) {
+      visibleIds.forEach(id => selectedIds.delete(id));
+      selectedId = null;
+    } else {
+      visibleIds.forEach(id => selectedIds.add(id));
+      selectedId = visibleIds[0] || null;
+    }
+    paintSelection();
   });
-  $('#stop-selected')?.addEventListener('click', () => performAction(selected(), 'pause'));
-  $('#remove-selected')?.addEventListener('click', () => performAction(selected(), 'remove'));
+
+  // Table action buttons (Multi-select enabled)
+  $('#resume-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    if (selectedList.length === 1 && selectedList[0].needsReview) {
+      openReview(selectedList[0].id);
+      return;
+    }
+    const resumable = selectedList.filter(d => canResume(d) || d.needsReview);
+    if (!resumable.length) return;
+    for (const d of resumable) {
+      if (d.needsReview) { openReview(d.id); break; }
+      await performAction(d, ['failed', 'cancelled'].includes(statusOf(d)) ? 'retry' : 'resume');
+    }
+  });
+
+  $('#stop-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    const pausable = selectedList.filter(canPause);
+    for (const d of pausable) {
+      await performAction(d, 'pause');
+    }
+  });
+
+  $('#remove-selected')?.addEventListener('click', async () => {
+    const selectedList = state.downloads.filter(d => selectedIds.has(d.id));
+    if (!selectedList.length) return;
+    const msg = selectedList.length === 1
+      ? `Delete “${selectedList[0].filename || 'this download'}” from the download list?\n\nThe downloaded file will remain on your PC.`
+      : `Delete ${selectedList.length} downloads from the download list?\n\nThe downloaded files will remain on your PC.`;
+    if (!window.confirm(msg)) return;
+
+    for (const d of selectedList) pending.add(d.id);
+    updateControls();
+    try {
+      for (const d of selectedList) {
+        await call('action', { id: d.id, action: 'remove' });
+      }
+      selectedIds.clear();
+      selectedId = null;
+      await refresh();
+      notify(`Removed ${selectedList.length} ${selectedList.length === 1 ? 'download' : 'downloads'}.`);
+    } catch (error) {
+      notify(messageOf(error), true);
+    } finally {
+      for (const d of selectedList) pending.delete(d.id);
+      updateControls();
+    }
+  });
+
   $('#open-selected')?.addEventListener('click', () => performAction(selected(), 'open'));
-  $('#reveal-selected')?.addEventListener('click', () => performAction(selected(), 'reveal'));
+  $('#reveal-selected')?.addEventListener('click', () => {
+    const d = selected();
+    if (d) performAction(d, 'reveal');
+  });
   $('#details-selected')?.addEventListener('click', () => { if (selectedId) showDetails(selectedId); });
   $('#remove-completed')?.addEventListener('click', removeCompleted);
 

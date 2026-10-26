@@ -187,22 +187,27 @@
                   <div class="gauge-card">
                     <div class="gauge-meter">
                       <svg viewBox="0 0 100 55" class="gauge-svg">
+                        <defs>
+                          <linearGradient id="gauge-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#bef264" />
+                            <stop offset="100%" stop-color="#84cc16" />
+                          </linearGradient>
+                        </defs>
                         <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--gauge-track)" stroke-width="8" stroke-linecap="round"></path>
-                        <path id="gauge-arc" d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="var(--accent-green)" stroke-width="8" stroke-linecap="round" stroke-dasharray="125.66" stroke-dashoffset="125.66"></path>
+                        <path id="gauge-arc" d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="url(#gauge-gradient)" stroke-width="8" stroke-linecap="round" stroke-dasharray="125.66" stroke-dashoffset="125.66"></path>
                       </svg>
                       <div class="gauge-value" id="gauge-stat-value">0 B</div>
                     </div>
-                    <div class="gauge-caption" id="gauge-caption">of 1 TB download limit</div>
+                    <div class="gauge-caption" id="gauge-caption">of 1 TB Limit download</div>
                   </div>
                   <div class="quota-card">
                     <div class="quota-meter">
                       <div class="quota-bar" id="quota-bar-fill" style="width: 0%;"></div>
                     </div>
                     <div class="quota-numbers">
-                      <strong id="quota-used"><span class="quota-highlight">0 B</span> / 100 GB</strong>
+                      <strong id="quota-used"><span class="quota-highlight">0 B</span>/100GB</strong>
                       <span id="quota-caption">of weekly limit</span>
                     </div>
-                    <button id="quick-speed-limit-btn" class="limiter-action-btn">Adjust limit</button>
                   </div>
                 </div>
               </div>
@@ -343,6 +348,7 @@
               <button class="pill-btn category-pill" data-category="Other">Other</button>
             </div>
             <div class="table-actions-row">
+              <span id="selected-count-badge" class="selection-badge" hidden>0 selected</span>
               <button id="resume-selected" class="action-btn" disabled>
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 <span>Resume</span>
@@ -374,7 +380,14 @@
               </colgroup>
               <thead>
                 <tr>
-                  <th scope="col"><button data-sort="filename">File Name</button></th>
+                  <th scope="col">
+                    <div class="th-file-name-wrap">
+                      <span class="row-checkbox" id="select-all-checkbox" role="checkbox" aria-checked="false" title="Select all files">
+                        <span class="checkbox-icon">✓</span>
+                      </span>
+                      <button data-sort="filename">FILE NAME</button>
+                    </div>
+                  </th>
                   <th scope="col" title="Queue">Q</th>
                   <th scope="col"><button data-sort="total">Size</button></th>
                   <th scope="col"><button data-sort="status">Status</button></th>
