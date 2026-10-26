@@ -17,10 +17,19 @@ export function safeFilename(value) {
   return name;
 }
 function suggestedName(url, disposition) {
-  const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition || '');
+  const utf = /filename\*\s*=\s*(?:"([^"]*)"|([^;]*))/i.exec(disposition || '');
   const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition || '');
-  try { return safeFilename(utf ? decodeURIComponent(utf[1]) : plain ? (plain[1] || plain[2]).trim() : decodeURIComponent(new URL(url).pathname.split('/').pop()) || 'download'); }
-  catch { return 'download'; }
+  const extended = (utf?.[1] || utf?.[2] || '').trim().match(/^UTF-8'[^']*'(.*)$/i)?.[1];
+  const candidates = [
+    extended === undefined ? null : () => decodeURIComponent(extended),
+    plain ? () => (plain[1] || plain[2]).trim() : null,
+    () => decodeURIComponent(new URL(url).pathname.split('/').pop())
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try { const name = candidate(); if (name) return safeFilename(name); } catch { /* Try the standard fallback. */ }
+  }
+  return 'download';
 }
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 

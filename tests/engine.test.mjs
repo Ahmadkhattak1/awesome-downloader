@@ -18,6 +18,7 @@ async function fixture(t, options = {}) {
     if (req.url === '/missing') { res.writeHead(404); return res.end(); }
     const noRange = req.url === '/plain';
     res.setHeader('etag', options.etag || '"fixture-1"');
+    if (options.disposition) res.setHeader('content-disposition', options.disposition);
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
     if (req.headers.range && req.url === '/ignore-range') { res.setHeader('content-length', data.length); return res.end(data); }
@@ -93,6 +94,14 @@ test('parallel ranged transfers reconstruct exact bytes and preserve existing fi
   assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
   assert.equal(await fs.readFile(path.join(f.root, 'downloads', 'file.bin'), 'utf8'), 'existing');
   assert.equal(d.filename, 'file (1).bin');
+});
+test('malformed extended filename falls back to the plain content-disposition filename', async t => {
+  const f = await fixture(t, { disposition: `attachment; filename="report.pdf"; filename*=UTF-8''report%ZZ.pdf` });
+  await f.engine.add({ url: `${f.url}/opaque` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.filename, 'report.pdf');
 });
 test('pause then resume from saved partial bytes produces exact output', async t => {
   const f = await fixture(t, { slow: true });
