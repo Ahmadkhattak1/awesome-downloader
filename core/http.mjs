@@ -28,6 +28,31 @@ let agents = null;
 const h2Origins = new Map(), h2Pools = new Map();
 const abortError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError', code: 'ABORT_ERR' });
 
+// HTTP 429 / 503 mean "slow down", not "broken". Callers use this to scale connections down and honour Retry-After.
+export class ThrottleError extends Error {
+  constructor(statusCode, retryAfterMs = 0) {
+    super(`Server is rate limiting this download (HTTP ${statusCode}).`);
+    this.name = 'ThrottleError'; this.code = 'THROTTLED'; this.statusCode = statusCode; this.retryAfterMs = retryAfterMs;
+  }
+}
+export function parseRetryAfter(value, now = Date.now()) {
+  if (typeof value !== 'string' || !value.trim()) return 0;
+  const text = value.trim(), seconds = /^\d+$/.test(text) ? Number(text) : (Date.parse(text) - now) / 1000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(120000, Math.round(seconds * 1000)) : 0;
+}
+// Returns a ThrottleError for a 429/503 response (and discards its body), otherwise null.
+export function throttleFrom(response) {
+  if (response.statusCode !== 429 && response.statusCode !== 503) return null;
+  const error = new ThrottleError(response.statusCode, parseRetryAfter(response.headers?.['retry-after']));
+  response.destroy?.();
+  return error;
+}
+
+// Origins that rate-limited us: keep them on a single multiplexed HTTP/2 session instead of opening more sockets.
+const multiplexOrigins = new Set();
+export function preferMultiplex(origin, on = true) { if (on) multiplexOrigins.add(origin); else multiplexOrigins.delete(origin); }
+export function prefersMultiplex(origin) { return multiplexOrigins.has(origin); }
+
 export function transportConfig() { return { ca: config.ca, http2: config.http2, maxH2Sessions: config.maxH2Sessions }; }
 export function configureTransport(next = {}) {
   for (const key of ['ca', 'http2', 'maxH2Sessions']) if (next[key] !== undefined) config[key] = next[key];
@@ -74,7 +99,7 @@ async function acquireH2(origin) {
   if (!pool) h2Pools.set(origin, pool = { sessions: [], opening: [] });
   for (;;) {
     pool.sessions = pool.sessions.filter(e => !e.session.closed && !e.session.destroyed);
-    if (pool.sessions.length + pool.opening.length < config.maxH2Sessions) {
+    if (pool.sessions.length + pool.opening.length < (multiplexOrigins.has(origin) ? 1 : config.maxH2Sessions)) {
       const attempt = openH2(origin).then(result => {
         pool.opening = pool.opening.filter(x => x !== attempt);
         if (result && typeof result === 'object') {
@@ -167,6 +192,7 @@ export async function probe(url, headers, signal) {
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl, protocol: response.protocol || 'http/1.1' };
   // A HEAD reply has no body, so draining it lets the pooled connection be reused by the transfer.
   if (head) response.resume(); else response.destroy();
+  if (info.status === 429 || info.status === 503) throw new ThrottleError(info.status, parseRetryAfter(info.headers['retry-after']));
   if (info.status < 200 || info.status >= 300) throw new Error(`Server returned HTTP ${info.status}.`);
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);

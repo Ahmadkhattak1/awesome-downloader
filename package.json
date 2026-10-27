@@ -40,7 +40,10 @@
       "extension/**/*",
       "THIRD-PARTY.md",
       "LICENSE",
-      "package.json"
+      "package.json",
+      "!**/*.test.cjs",
+      "!**/*.test.mjs",
+      "!integration/*.ps1"
     ],
     "asar": true,
     "extraResources": [
@@ -115,7 +118,16 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Awesome Downloader",
-      "artifactName": "Awesome-Downloader-Setup.exe"
+      "artifactName": "Awesome-Downloader-Setup.exe",
+      "include": "build/installer.nsh",
+      "installerIcon": "build/installerIcon.ico",
+      "uninstallerIcon": "build/uninstallerIcon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "uninstallDisplayName": "${productName}",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
     }
   },
   "dependencies": {

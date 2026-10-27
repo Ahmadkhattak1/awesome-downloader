@@ -2,6 +2,7 @@
 if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '32';
 const path = require('node:path');
 const {showProgress,closeCancelledProgress}=require('./progress-window.cjs');
+const {buildAboutInfo,LINKS:ABOUT_LINKS}=require('./about-window.cjs');
 
 if (process.argv.includes('--native-host')) {
   require('../integration/native-host.cjs').runNativeHost();
@@ -46,6 +47,7 @@ if (process.argv.includes('--native-host')) {
       catch (error) { dialog.showErrorBox('Browser connection unavailable', error.message); }
       const root = path.join(__dirname, '..');
       const appIconPath = path.join(root, 'assets', 'app-icon.png');
+      const trayIconPath = path.join(root, 'assets', 'tray-icon.png');
       let integrationRoot = root;
       if (app.isPackaged) {
         const fs = require('node:fs/promises');
@@ -84,8 +86,26 @@ if (process.argv.includes('--native-host')) {
       const integration = async () => { await connectBrowsers(); return integrationInfo(); };
       const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
+      let aboutWindow = null;
+      const openAbout = async () => {
+        if (aboutWindow && !aboutWindow.isDestroyed()) { showProgress(aboutWindow); return; }
+        aboutWindow = new BrowserWindow({ width: 560, height: 520, minWidth: 480, minHeight: 420, title: 'About Awesome Downloader', icon: appIconPath, backgroundColor: '#f6f8fa', autoHideMenuBar: true, parent: window && !window.isDestroyed() ? window : undefined,
+          webPreferences: { preload: path.join(__dirname, 'about-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+        aboutWindow.setMenu(null);
+        aboutWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        aboutWindow.webContents.on('will-navigate', event => event.preventDefault());
+        await aboutWindow.loadFile(path.join(root, 'renderer', 'about.html'));
+        showProgress(aboutWindow);
+      };
+      const fromAbout = event => aboutWindow && !aboutWindow.isDestroyed() && event.senderFrame === aboutWindow.webContents.mainFrame;
+      ipcMain.handle('about:info', event => { if (!fromAbout(event)) throw new Error('Untrusted renderer.'); return buildAboutInfo({ version: app.getVersion(), versions: process.versions, root, dataDirectory: sharedDataDirectory, packaged: app.isPackaged }); });
+      ipcMain.handle('about:copy', (event, text) => { if (!fromAbout(event) || typeof text !== 'string' || text.length > 4096) throw new Error('Untrusted renderer.'); clipboard.writeText(text); });
+      ipcMain.handle('about:open', async (event, url) => { if (!fromAbout(event) || !ABOUT_LINKS.some(link => link.url === url)) throw new Error('Untrusted renderer.'); await shell.openExternal(url); });
+      const applyLoginItem = () => { if (app.isPackaged) { try { app.setLoginItemSettings({ openAtLogin: engine.settings.launchAtLogin === true }); } catch { /* unsupported platform */ } } };
+      applyLoginItem();
       const handlers = {
         snapshot,
+        about: openAbout,
         openProgress: async ({id}) => {
           const d=engine.downloads.find(d=>d.id===id); if(!d)throw new Error('Download not found.');
           if(progressWindows.has(id)){showProgress(progressWindows.get(id));return;}
@@ -113,7 +133,7 @@ if (process.argv.includes('--native-host')) {
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
         },
-        settings: data => engine.updateSettings(data),
+        settings: async data => { const result = await engine.updateSettings(data); applyLoginItem(); return result; },
         chooseDirectory: async () => {
           const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] });
           return result.canceled ? null : result.filePaths[0];
@@ -169,7 +189,7 @@ if (process.argv.includes('--native-host')) {
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
         { label: 'View', submenu: [ { label: 'All downloads', click: command('all') }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' } ] },
-        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Windows download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
+        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => openAbout().catch(error => dialog.showErrorBox('Could not open About', error.message)) } ] }
       ]));
       engine.on('change', () => {
         const data=snapshot();
@@ -181,6 +201,7 @@ if (process.argv.includes('--native-host')) {
           progress.webContents.send('downloader:change',data);
         }
       });
+      engine.on('integrity-warning', d => { if (Notification.isSupported()) new Notification({ title: 'Checksum differs from the server', body: `${d.filename} does not match the digest announced by the server.` }).show(); });
       engine.on('complete', d => {
         const progress=progressWindows.get(d.id);
         if(progress&&!progress.isDestroyed()){if(engine.settings.hideCompletionDialog)progress.close();else{progress.setMinimumSize(470,270);progress.setSize(480,280);progress.setTitle('Download complete');}}
@@ -203,12 +224,12 @@ if (process.argv.includes('--native-host')) {
         } catch { /* clipboard can be locked by another application */ }
       }, 1500);
       clipboardTimer.unref();
-      const icon = nativeImage.createFromPath(appIconPath).resize({width:16,height:16});
+      const icon = nativeImage.createFromPath(trayIconPath);
       tray = new Tray(icon);
       tray.setToolTip('Awesome Downloader');
-      tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show downloads', click: () => window.show() }, { label: 'Quit', click: () => app.quit() }]));
+      tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show downloads', click: () => window.show() }, { label: 'About Awesome Downloader', click: () => openAbout().catch(() => {}) }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
       tray.on('double-click', () => window.show());
-      window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
+      window.on('close', event => { if (quitting) return; if (engine.settings.closeToTray === false) { quitting = false; event.preventDefault(); app.quit(); return; } event.preventDefault(); window.hide(); });
       app.on('activate', () => window.show());
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {

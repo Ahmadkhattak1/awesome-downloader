@@ -68,7 +68,7 @@ test('compatibility shims behave like the modern APIs', async () => {
 // ---- high connection counts (42 / 56 / 64 parallel ranges)
 import { createHash, randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-async function rangeServer(size = 40 * 1024 * 1024) {
+async function rangeServer(size = 40 * 1024 * 1024) { // blocks are 2-4 MB, so N parallel connections need at least N * 2 MiB
   const data = randomBytes(size);
   const stats = { active: 0, peak: 0, ranged: 0 };
   const server = http.createServer(async (req, res) => {
@@ -89,7 +89,7 @@ async function rangeServer(size = 40 * 1024 * 1024) {
 for (const connections of [42, 56, 64]) {
   test(`${connections} parallel connections download a file correctly and really run in parallel`, async t => {
     const { root, engine } = await setup(t);
-    const s = await rangeServer();
+    const s = await rangeServer(connections * 2 * 1024 * 1024);
     t.after(() => new Promise(resolve => { s.server.close(resolve); s.server.closeAllConnections?.(); }));
     await engine.updateSettings({ connections, maxConcurrent: 1 });
     const [id] = await engine.add({ url: s.url });

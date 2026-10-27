@@ -11,9 +11,14 @@ import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 import { constants as fsConstants } from 'node:fs';
 import { prefetch, resolveHost } from './dns.mjs';
-import { downloadChunk } from './chunk.mjs';
+import { downloadBlock } from './chunk.mjs';
 import { ChunkPool } from './pool.mjs';
-import { configureTransport, transportConfig } from './http.mjs';
+import { configureTransport, transportConfig, throttleFrom, preferMultiplex } from './http.mjs';
+import { RangeSet } from './ranges.mjs';
+import { BlockScheduler, MIN_BLOCK } from './scheduler.mjs';
+import { HashService } from './hasher.mjs';
+import { HashSession } from './hash-session.mjs';
+import { normalizeChecksum, digestsFromHeaders } from './digest.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
 const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
@@ -55,6 +60,10 @@ async function concatFiles(files, out, signal) {
   }
   if (writing) await writing;
 }
+const MiB = 1024 * 1024;
+// Delay before retrying a failed request: honour Retry-After for 429/503, otherwise exponential back-off.
+const retryDelay = (error, attempt) => error?.code === 'THROTTLED' ? Math.max(error.retryAfterMs || 0, 1000 * 2 ** attempt) : 250 * 2 ** attempt;
+const hostOf = url => { try { return new URL(url).host; } catch { return url; } };
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 
 export class DownloadEngine extends EventEmitter {
@@ -63,8 +72,9 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, watchClipboard: false, directWrite: true, workerThreads: true, http2: true };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, watchClipboard: false, directWrite: true, workerThreads: true, http2: true, adaptive: true, verifyHashes: true, memoryBudgetMb: 128, closeToTray: true, launchAtLogin: false };
     this.pool = null;
+    this.hashService = null;
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
@@ -86,7 +96,7 @@ export class DownloadEngine extends EventEmitter {
     return this;
   }
   snapshot() {
-    return { downloads: this.downloads.map(({ segments, headers, validator, sabr, ...d }) => ({ ...d,
+    return { downloads: this.downloads.map(({ segments, headers, validator, sabr, ranges, ...d }) => ({ ...d,
       streamProgress: d.kind==='hls'?streamProgress(segments||[]):undefined,
       connectionsProgress: (segments || []).map(s => ({ start: s.start, end: s.end, downloaded: s.downloaded,
         total: s.end === null ? null : s.end - s.start + 1,
@@ -99,7 +109,7 @@ export class DownloadEngine extends EventEmitter {
       percent: d.total ? Math.min(100, Math.floor((d.downloaded || 0) / d.total * 100)) : null, error: d.error ? String(d.error).slice(0, 200) : null }));
   }
   async persist() {
-    const content = JSON.stringify({ version: 1, settings: this.settings, downloads: this.downloads.map(d => ({ ...d, headers: undefined, sabr: undefined })) }, null, 2);
+    const content = JSON.stringify({ version: 1, settings: this.settings, downloads: this.downloads.map(d => ({ ...d, headers: undefined, sabr: undefined, transfer: undefined })) }, null, 2);
     this.persistChain = this.persistChain.catch(() => {}).then(async () => {
       const temp = `${this.statePath}.tmp`;
       await fs.writeFile(temp, content, { mode: 0o600 });
@@ -111,10 +121,10 @@ export class DownloadEngine extends EventEmitter {
   updateSettings(patch, save = true) {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
     const next = { ...this.settings };
-    for (const [key, max] of [['maxConcurrent', 16], ['connections', 64], ['speedLimitKbps', 1048576]]) {
+    for (const [key, max] of [['maxConcurrent', 16], ['connections', 64], ['speedLimitKbps', 1048576], ['memoryBudgetMb', 1024]]) {
       if (patch[key] !== undefined) {
         const n = Number(patch[key]);
-        if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : 1) || n > max) throw new Error(`Invalid ${key}.`);
+        if (!Number.isInteger(n) || n < (key === 'speedLimitKbps' ? 0 : key === 'memoryBudgetMb' ? 32 : 1) || n > max) throw new Error(`Invalid ${key}.`);
         next[key] = n;
       }
     }
@@ -130,13 +140,13 @@ export class DownloadEngine extends EventEmitter {
         next.categoryDirectories[category] = path.resolve(folder);
       }
     }
-    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog', 'watchClipboard', 'directWrite', 'workerThreads', 'http2']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
+    for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog', 'watchClipboard', 'directWrite', 'workerThreads', 'http2', 'adaptive', 'verifyHashes', 'closeToTray', 'launchAtLogin']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
     if (next.speedLimitKbps !== this.settings.speedLimitKbps) this.rateNext = 0;
     this.settings = next;
     if (transportConfig().http2 !== next.http2) { configureTransport({ http2: next.http2 }); this.pool?.reconfigure(transportConfig()); }
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });
   }
-  async add({ urls, url, audioUrl, outputFormat, youtubeFormat, sabr, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
+  async add({ urls, url, audioUrl, outputFormat, youtubeFormat, sabr, mirrors, checksum, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
     const source = urls || (url ? [url] : []);
     if (!Array.isArray(source) || !source.length || source.length > 500) throw new Error('Add between 1 and 500 download URLs.');
     const normalized = source.map(validUrl);
@@ -147,6 +157,14 @@ export class DownloadEngine extends EventEmitter {
     const audio = audioUrl ? validUrl(audioUrl) : undefined;
     prefetch(audio ? [...normalized, audio] : normalized);
     if (audio && normalized.length !== 1) throw new Error('A separate audio track requires exactly one video.');
+    let mirrorList = [];
+    if (mirrors !== undefined) {
+      if (!Array.isArray(mirrors) || mirrors.length > 8) throw new Error('Add at most 8 mirror URLs.');
+      mirrorList = [...new Set(mirrors.map(validUrl))].filter(m => !normalized.includes(m));
+      if (mirrorList.length && normalized.length !== 1) throw new Error('Mirrors can only be used with a single download URL.');
+    }
+    const expectedChecksum = normalizeChecksum(checksum);
+    if (expectedChecksum && normalized.length !== 1) throw new Error('A checksum can only be used with a single download URL.');
     const when = scheduledAt ? new Date(scheduledAt).getTime() : null;
     if (when !== null && !Number.isFinite(when)) throw new Error('Invalid scheduled time.');
     if (normalized.some(u => /\.mpd(?:[?#]|$)/i.test(u))) throw new Error('DASH streams need a muxing engine; direct files and non-encrypted HLS VOD are supported.');
@@ -161,7 +179,7 @@ export class DownloadEngine extends EventEmitter {
     const added = normalized.map(u => {
       const name = safeFilename(filename || suggestedName(u));
       const selectedCategory = category || categoryFor(name);
-      return { id: randomUUID(), url: u, audioUrl: audio, outputFormat, youtubeFormat, sabr:sabrSession, filename: name, explicitFilename: Boolean(filename), category: selectedCategory, explicitCategory: Boolean(category), description: description || '',
+      return { id: randomUUID(), url: u, audioUrl: audio, mirrors: mirrorList.length ? mirrorList : undefined, checksum: expectedChecksum || undefined, outputFormat, youtubeFormat, sabr:sabrSession, filename: name, explicitFilename: Boolean(filename), category: selectedCategory, explicitCategory: Boolean(category), description: description || '',
         status: queueOnly || reviewOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued', needsReview: reviewOnly, scheduledAt: when ? new Date(when).toISOString() : null,
         downloaded: 0, total: null, speed: 0, connections: 0, error: null, path: null,
         directory: directory || this.settings.categoryDirectories[selectedCategory] || this.settings.defaultDirectory, createdAt: new Date().toISOString(), segments: [], validator: null,
@@ -172,7 +190,7 @@ export class DownloadEngine extends EventEmitter {
     this.changed(); this.tick();
     return added.map(d => d.id);
   }
-  async reviewDownload({ id, filename, directory, category, description = '', queueOnly = false, scheduledAt } = {}) {
+  async reviewDownload({ id, filename, directory, category, description = '', queueOnly = false, scheduledAt, mirrors, checksum } = {}) {
     const d = this.downloads.find(d => d.id === id);
     if (!d?.needsReview || this.jobs.has(id)) throw new Error('This download is not waiting for confirmation.');
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) throw new Error('Choose an absolute save folder.');
@@ -183,6 +201,8 @@ export class DownloadEngine extends EventEmitter {
     if (filename) { d.explicitFilename ||= filename !== d.filename; d.filename = safeFilename(filename); }
     if (category) { d.category = category; d.explicitCategory = true; }
     if (directory) d.directory = path.resolve(directory);
+    if (mirrors !== undefined) { if (!Array.isArray(mirrors) || mirrors.length > 8) throw new Error('Add at most 8 mirror URLs.'); const list = [...new Set(mirrors.map(validUrl))].filter(m => m !== d.url); d.mirrors = list.length ? list : undefined; }
+    if (checksum !== undefined) d.checksum = normalizeChecksum(checksum) || undefined;
     d.description = description; d.needsReview = false; d.scheduledAt = when ? new Date(when).toISOString() : null;
     d.status = queueOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued';
     await this.persist(); this.changed(); this.tick();
@@ -198,7 +218,7 @@ export class DownloadEngine extends EventEmitter {
       if (action === 'pause' && d.status !== 'complete') d.status = 'paused';
       if (action === 'cancel' && d.status !== 'complete') { d.status = 'cancelled'; d.needsReview = false; }
       if (action === 'remove') this.downloads = this.downloads.filter(x => x.id !== id);
-      if (action !== 'pause') { await fs.rm(path.join(this.partsDirectory, id), { recursive: true, force: true }); d.segments = []; if (d.status !== 'complete') d.downloaded = 0; }
+      if (action !== 'pause') { await fs.rm(path.join(this.partsDirectory, id), { recursive: true, force: true }); d.segments = []; d.ranges = undefined; d.integrity = undefined; if (d.status !== 'complete') d.downloaded = 0; }
     } else {
       if (d.needsReview) throw new Error('Confirm this browser download in Download File Info first.');
       if (this.jobs.has(id) || d.status === 'complete') return;
@@ -249,7 +269,7 @@ export class DownloadEngine extends EventEmitter {
     const headers = cleanHeaders(d.headers);
     if (/\.m3u8(?:[?#]|$)/i.test(d.url)) { await this.runHls(d, headers, signal); return; }
     if(d.audioUrl){await this.runPairedTracks(d,headers,signal);return;}
-    const info = await probe(d.url, headers, signal);
+    const info = await this.probeWithRetry(d.url, headers, signal);
     const mime = String(info.headers['content-type'] || '');
     if (/mpegurl/i.test(mime)) { await this.runHls(d, headers, signal); return; }
     if (/dash\+xml/i.test(mime)) throw new Error('DASH streams need a muxing engine, which is not included yet.');
@@ -264,9 +284,9 @@ export class DownloadEngine extends EventEmitter {
     }
     if (!d.segments.length) d.layout = undefined;
     d.total = info.total; d.validator = info.validator;
-    d.resumable = Boolean(info.ranges && info.validator);
+    d.resumable = Boolean(info.ranges && info.validator); d.protocol = info.protocol;
     const count = info.ranges && info.total > 1024 * 1024 ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024))) : 1;
-    const direct = d.layout === 'direct' || (!d.segments.length && this.settings.directWrite !== false && !this.settings.speedLimitKbps && info.ranges && info.validator && info.total >= 1024 * 1024);
+    const direct = d.layout === 'direct' || (!d.segments.length && this.settings.directWrite !== false && !this.settings.speedLimitKbps && info.ranges && info.validator && info.total >= 2 * MIN_BLOCK);
     if (direct) { await this.runDirect(d, info, dir, headers, signal, count); return; }
     if (!d.segments.length) {
       d.segments = Array.from({ length: count }, (_, i) => ({ start: info.total === null ? 0 : Math.floor(info.total * i / count),
@@ -320,6 +340,17 @@ export class DownloadEngine extends EventEmitter {
       else { await concatFiles(files, out, signal); await out.sync(); }
       complete = true;
     } finally { if (out) await out.close(); if (!complete) await fs.unlink(destination).catch(() => {}); }
+    if (d.checksum && !d.kind && !d.outputFormat && !d.integrity) {
+      const digests = await this.hashFile(destination, (await fs.stat(destination)).size);
+      d.integrity = this.integrityFor(d, undefined, digests);
+      if (d.integrity.status === 'mismatch') {
+        const { expected } = d.integrity;
+        await fs.unlink(destination).catch(() => {});
+        await fs.rm(dir, { recursive: true, force: true });
+        d.segments = []; d.downloaded = 0; d.validator = null;
+        throw new Error(`Checksum mismatch: expected ${expected.algorithm} ${expected.value}, got ${d.integrity[expected.algorithm]}. The corrupted download was discarded.`);
+      }
+    }
     d.path = destination; d.filename = path.basename(destination); d.status = 'complete';
     d.completedAt = new Date().toISOString();
     await this.persist();
@@ -333,60 +364,147 @@ export class DownloadEngine extends EventEmitter {
     if (!this.pool || this.pool.closed) this.pool = new ChunkPool({ transport: transportConfig() });
     return this.pool;
   }
-  // Direct seek-and-write download: one pre-sized file, every segment writes at its own offset in parallel
-  // (worker threads + coalesced allocUnsafe slabs); no temp parts and no merge/copy step at the end.
+  async probeWithRetry(url, headers, signal) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await probe(url, headers, signal); }
+      catch (error) {
+        if (error.code !== 'THROTTLED' || attempt >= 3) throw error;
+        await delay(retryDelay(error, attempt), undefined, { signal });
+      }
+    }
+  }
+  hashes() {
+    return this.hashService ||= new HashService({ useWorker: this.settings.workerThreads !== false && !process.env.AWESOME_NO_WORKERS });
+  }
+  // Hashes a finished file in the hashing thread (used when a checksum must be verified but the file was not
+  // hashed on the fly, e.g. the part-file layout).
+  async hashFile(file, size) {
+    const session = this.hashes().open(file);
+    try { return await session.digest(size); } finally { session.close(); }
+  }
+  // Compares the computed digests with what the user (fatal) or the server (advisory) expects.
+  integrityFor(d, headers, digests) {
+    const announced = digestsFromHeaders(headers || {}), preferred = announced.find(a => a.algorithm === 'sha256') || announced[0];
+    const expected = d.checksum ? { ...d.checksum, source: 'user' } : preferred ? { ...preferred, source: 'server' } : null;
+    const integrity = { sha256: digests.sha256, md5: digests.md5, expected, status: 'computed', checkedAt: new Date().toISOString() };
+    if (expected) {
+      const actual = digests[expected.algorithm];
+      if (!actual) integrity.status = 'computed';
+      else if (actual === expected.value) integrity.status = 'verified';
+      else integrity.status = expected.source === 'user' ? 'mismatch' : 'warning';
+    }
+    return integrity;
+  }
+  // Direct block download: one pre-sized file; the scheduler hands 2-4 MB blocks to connections (worker threads),
+  // each block is aggregated in memory and written at its own offset. No temp parts, no merge/copy step at the end.
   async runDirect(d, info, dir, headers, signal, count) {
     const file = path.join(dir, 'data.bin'), total = info.total;
-    if (!d.segments.length) d.segments = Array.from({ length: count }, (_, i) => ({ start: Math.floor(total * i / count), end: Math.floor(total * (i + 1) / count) - 1, downloaded: 0, committed: 0 }));
-    d.layout = 'direct';
+    if (!d.segments.length) d.segments = Array.from({ length: count }, (_, i) => ({ start: Math.floor(total * i / count), end: Math.floor(total * (i + 1) / count) - 1, downloaded: 0 }));
+    // Histories written by the fixed-segment layout recorded per-segment committed bytes; fold them into byte ranges once.
+    let done = new RangeSet(Array.isArray(d.ranges) ? d.ranges : d.segments.filter(s => s.committed > 0).map(s => [s.start, s.start + Math.min(s.committed, s.end - s.start + 1)]));
+    for (const s of d.segments) delete s.committed;
+    d.layout = 'direct'; d.ranges = done.toJSON();
     let fh;
     try { fh = await fs.open(file, 'r+'); } catch (e) { if (e.code !== 'ENOENT') throw e; fh = await fs.open(file, 'w+'); }
     try {
-      if ((await fh.stat()).size !== total) { for (const s of d.segments) s.downloaded = s.committed = 0; await fh.truncate(0); await fh.truncate(total); }
-      else for (const s of d.segments) s.downloaded = Math.min(s.committed || 0, s.end - s.start + 1);
+      if ((await fh.stat()).size !== total) { done = new RangeSet(); d.ranges = []; await fh.truncate(0); await fh.truncate(total); }
     } catch (error) { await fh.close(); throw error; }
-    d.downloaded = d.segments.reduce((n, s) => n + s.downloaded, 0);
-    d.connections = d.segments.length; d.status = 'downloading';
+    d.downloaded = done.size; d.protocol = info.protocol;
+    d.connections = Math.min(this.settings.connections, Math.max(1, Math.ceil(total / MIN_BLOCK)));
+    d.status = 'downloading'; d.integrity = undefined;
     try { await this.persist(); this.changed(); } catch (error) { await fh.close(); throw error; }
+
     const target = info.url, scoped = scopedHeaders(headers, d.url, target);
-    const limit = this.settings.speedLimitKbps, limitBps = limit ? limit * 1024 / (d.segments.length * Math.max(1, this.jobs.size)) : 0;
+    const sources = [{ url: target, headers: scoped, validator: info.validator, protocol: info.protocol, label: hostOf(target) }];
+    const mirrorNotes = [];
+    await Promise.all((d.mirrors || []).map(async mirror => {
+      try {
+        const mi = await probe(mirror, scopedHeaders(headers, d.url, mirror), signal);
+        if (!mi.ranges || mi.total !== total) { mirrorNotes.push({ url: mirror, ok: false, reason: 'Different size or no range support.' }); return; }
+        sources.push({ url: mi.url, headers: scopedHeaders(headers, d.url, mi.url), validator: mi.validator, protocol: mi.protocol, label: hostOf(mi.url) });
+        mirrorNotes.push({ url: mirror, ok: true });
+      } catch (error) { if (signal.aborted) return; mirrorNotes.push({ url: mirror, ok: false, reason: error.message }); }
+    }));
+    d.mirrorNotes = mirrorNotes.length ? mirrorNotes : undefined;
+
+    const limit = this.settings.speedLimitKbps;
+    let scheduler, lastThrottle = null;
+    const fetchBlock = async ({ source, start, end, signal: blockSignal, onBytes }) => {
+      const task = { url: source.url, headers: source.headers, file, start, end, total, validator: source.validator, protocol: source.protocol === 'http/1.1' ? 'http/1.1' : undefined,
+        limitBps: limit ? limit * 1024 / (scheduler.allowedTotal() * Math.max(1, this.jobs.size)) : 0, attempts: 2 };
+      const pool = this.getPool();
+      if (pool) {
+        try { await pool.run(task, { signal: blockSignal, onBytes, sticky: source.multiplex ? new URL(source.url).origin : undefined }); return; }
+        catch (error) { if (error.code !== 'POOL_UNAVAILABLE' || blockSignal.aborted) throw error; }
+      }
+      await downloadBlock({ ...task, signal: blockSignal, onBytes });
+    };
+    scheduler = new BlockScheduler({ total, done: done.toJSON(), sources, connections: d.connections, fetchBlock, adaptive: this.settings.adaptive !== false,
+      memoryBudget: (this.settings.memoryBudgetMb || 128) * MiB, maxAttempts: 4, tickMs: Math.min(400, Math.max(50, this.tickMs)) });
+    done = scheduler.done; // single source of truth from here on
+
+    // Rate limited (429/503): the scheduler already halved this origin's connections; also move it to one multiplexed
+    // HTTP/2 session (shared by every block) instead of opening more sockets.
+    scheduler.on('throttle', event => {
+      const origin = new URL(event.source.url).origin;
+      preferMultiplex(origin); this.pool?.multiplex(origin);
+      lastThrottle = { at: new Date().toISOString(), statusCode: event.statusCode, waitMs: event.waitMs, allowed: event.allowed };
+      this.changed();
+    });
+
+    const wantsHash = this.settings.verifyHashes !== false || Boolean(d.checksum);
+    const hasher = wantsHash ? this.hashes().open(file) : null;
+    let hashedUpTo = 0;
+    const advanceHash = () => { // only the contiguous, fully written prefix is ever hashed
+      if (!hasher) return;
+      const frontier = done.contiguousFrom(0);
+      if (frontier > hashedUpTo) { hashedUpTo = frontier; hasher.advance(frontier); }
+    };
+    scheduler.on('block', advanceHash); advanceHash();
+
     let lastBytes = d.downloaded, lastAt = Date.now(), syncing = false;
     const commit = async () => {
       if (syncing) return; syncing = true;
-      try {
-        const snapshot = d.segments.map(s => s.downloaded);
-        await fh.sync();
-        d.segments.forEach((s, i) => { s.committed = Math.max(s.committed || 0, snapshot[i]); });
-        await this.persist();
-      } finally { syncing = false; }
+      try { const snapshot = done.toJSON(); await fh.sync(); d.ranges = snapshot; await this.persist(); } finally { syncing = false; }
     };
-    const progress = setInterval(() => { const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastAt); lastBytes = d.downloaded; lastAt = now; this.changed(); }, this.tickMs);
+    const refresh = () => {
+      const snap = scheduler.snapshot(), partial = scheduler.partialRanges();
+      d.downloaded = Math.max(d.downloaded, scheduler.downloaded());
+      for (const s of d.segments) {
+        let n = done.covered(s.start, s.end + 1);
+        for (const [a, b] of partial) n += Math.max(0, Math.min(b, s.end + 1) - Math.max(a, s.start));
+        s.downloaded = Math.min(n, s.end - s.start + 1);
+      }
+      d.transfer = { protocol: info.protocol, multiplex: snap.sources.some(x => x.multiplex), active: snap.active, allowed: snap.allowed, configured: snap.configured, throttles: snap.throttles, drops: snap.drops, duplicates: snap.duplicates,
+        retries: snap.retries, lastThrottle, sources: snap.sources.map(x => ({ host: x.label, protocol: x.protocol, active: x.active, allowed: x.allowed, speed: x.speed, bytes: x.bytes, throttles: x.throttles, dead: x.dead, coolingMs: x.coolingMs })),
+        hashing: { enabled: Boolean(hasher), threaded: Boolean(hasher?.threaded), hashedBytes: hashedUpTo }, adaptive: this.settings.adaptive !== false };
+    };
+    const progress = setInterval(() => {
+      refresh(); const now = Date.now();
+      d.speed = (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastAt); lastBytes = d.downloaded; lastAt = now; this.changed();
+    }, this.tickMs);
     const checkpoint = setInterval(() => commit().catch(() => {}), 2000);
-    const siblings = new AbortController(), group = AbortSignal.any([signal, siblings.signal]);
-    try { setMaxListeners(0, group); } catch {}
-    try {
-      try { const host = new URL(target).hostname; await resolveHost(host); } catch {}
-      const runSegment = async segment => {
-        const length = segment.end - segment.start + 1;
-        const base = { url: target, headers: scoped, file, start: segment.start, end: segment.end, total, validator: info.validator, protocol: info.protocol === 'http/1.1' ? 'http/1.1' : undefined, limitBps,
-          slabBytes: Math.max(65536, Math.min(1024 * 1024, Math.floor(8 * 1024 * 1024 / d.segments.length))) };
-        const onBytes = n => { segment.downloaded += n; d.downloaded += n; };
-        if (segment.downloaded >= length) return;
-        const pool = this.getPool();
-        if (pool) {
-          try { await pool.run({ ...base, offset: segment.downloaded }, { signal: group, onBytes }); return; }
-          catch (error) { if (error.code !== 'POOL_UNAVAILABLE' || group.aborted) throw error; }
-        }
-        await downloadChunk({ ...base, offset: segment.downloaded, signal: group, onBytes });
-      };
-      const outcomes = await Promise.allSettled(d.segments.map(segment => runSegment(segment).catch(error => { siblings.abort(); throw error; })));
-      const failure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
-      if (failure) throw failure.reason;
-    } finally {
+    refresh();
+    try { await scheduler.run(signal); }
+    finally {
       clearInterval(progress); clearInterval(checkpoint);
       while (syncing) await delay(5);
-      try { await fh.sync(); for (const s of d.segments) s.committed = s.downloaded; } catch {}
+      try { await fh.sync(); d.ranges = done.toJSON(); } catch {}
       await fh.close();
+    }
+    d.downloaded = total; refresh(); d.speed = 0;
+    if (hasher) {
+      d.status = 'assembling'; this.changed();
+      let digests;
+      try { digests = await hasher.digest(total); } finally { hasher.close(); }
+      d.integrity = this.integrityFor(d, info.headers, digests);
+      if (d.integrity.status === 'mismatch') {
+        const { expected } = d.integrity;
+        await fs.rm(dir, { recursive: true, force: true });
+        d.segments = []; d.ranges = []; d.downloaded = 0; d.layout = undefined; d.validator = null;
+        throw new Error(`Checksum mismatch: expected ${expected.algorithm} ${expected.value}, got ${d.integrity[expected.algorithm]}. The corrupted download was discarded.`);
+      }
+      if (d.integrity.status === 'warning') this.emit('integrity-warning', { ...d });
     }
     await this.assemble(d, dir, signal, [file]);
   }
@@ -427,6 +545,7 @@ export class DownloadEngine extends EventEmitter {
           const out = await fs.open(temp, 'w'); let response;
           try {
             response = await request(segment.url, { headers: scopedHeaders(headers, plan.source, segment.url), signal: groupSignal });
+            const throttle = throttleFrom(response); if (throttle) throw throttle;
             if (response.statusCode !== 200) throw new Error(`HLS segment returned HTTP ${response.statusCode}.`);
             const expected = Number(response.headers['content-length']);
             for await (const chunk of response) { groupSignal.throwIfAborted(); await this.throttle(chunk.length, groupSignal); await out.writeFile(chunk); segment.downloaded += chunk.length; d.downloaded += chunk.length; }
@@ -437,7 +556,7 @@ export class DownloadEngine extends EventEmitter {
           } catch (error) {
             await out.close();
             if (groupSignal.aborted || attempt === 3) throw error;
-            await delay(250 * 2 ** attempt, undefined, { signal: groupSignal });
+            await delay(retryDelay(error, attempt), undefined, { signal: groupSignal });
           } finally { response?.destroy(); }
         }
       }
@@ -459,7 +578,7 @@ export class DownloadEngine extends EventEmitter {
   async runPairedTracks(d,headers,signal) {
     const urls=[d.url,d.audioUrl];
     const trackHeaders=urls.map(url=>scopedHeaders(headers,d.url,url));
-    const infos=await Promise.all(urls.map((url,i)=>probe(url,trackHeaders[i],signal)));
+    const infos=await Promise.all(urls.map((url,i)=>this.probeWithRetry(url,trackHeaders[i],signal)));
     const dir=path.join(this.partsDirectory,d.id);await fs.mkdir(dir,{recursive:true});
     // Direct adaptive tracks are separate files; concatenating them corrupts MP4.
     d.kind='paired';d.resumable=false;d.downloaded=0;d.total=infos.every(i=>i.total!==null)?infos.reduce((n,i)=>n+i.total,0):null;
@@ -513,6 +632,7 @@ export class DownloadEngine extends EventEmitter {
         const h = { ...headers };
         if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
+        const throttle = throttleFrom(response); if (throttle) throw throttle;
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           response.destroy(); throw new Error(`Server returned HTTP ${response.statusCode}${ranged ? ' instead of a byte range' : ''}.`);
         }
@@ -535,7 +655,7 @@ export class DownloadEngine extends EventEmitter {
         return;
       } catch (error) {
         if (signal.aborted || attempt === 3) throw error;
-        await delay(250 * 2 ** attempt, undefined, { signal });
+        await delay(retryDelay(error, attempt), undefined, { signal });
       }
     }
   }
@@ -549,6 +669,7 @@ export class DownloadEngine extends EventEmitter {
     for (const job of this.jobs.values()) job.controller.abort();
     await Promise.allSettled([...this.jobs.values()].map(j => j.promise));
     await this.pool?.close();
+    await this.hashService?.close();
     await this.persist();
   }
 }

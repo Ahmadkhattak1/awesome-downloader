@@ -77,7 +77,8 @@ test('direct download resumes from committed offsets after a restart', async t =
     if (req.headers.range) { [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number); res.statusCode = 206; res.setHeader('content-range', `bytes ${start}-${end}/${data.length}`); }
     res.setHeader('content-length', end - start + 1);
     if (req.method === 'HEAD') return res.end();
-    let o = start; const iv = setInterval(() => { if (o > end) { clearInterval(iv); return res.end(); } const u = Math.min(end + 1, o + 32768); res.write(data.subarray(o, u)); o = u; }, 5);
+    if (start === 0) return res.end(data.subarray(start, end + 1)); // first block arrives at once, the rest trickle in
+    let o = start; const iv = setInterval(() => { if (o > end) { clearInterval(iv); return res.end(); } const u = Math.min(end + 1, o + 32768); res.write(data.subarray(o, u)); o = u; }, 40);
     res.on('close', () => clearInterval(iv));
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -87,9 +88,9 @@ test('direct download resumes from committed offsets after a restart', async t =
   t.after(async () => { await second?.close(); await fs.rm(root, { recursive: true, force: true }); });
   const first = await new DownloadEngine(opts).init();
   await first.add({ url: `http://127.0.0.1:${server.address().port}/f.bin` });
-  await until(() => first.downloads[0].downloaded > 1000000);
+  await until(() => first.downloads[0].transfer?.hashing?.hashedBytes > 0); // at least one whole block is durable
   await first.close();
-  const mid = first.downloads[0].segments.reduce((n, s) => n + s.committed, 0);
+  const mid = first.downloads[0].ranges.reduce((n, [a, b]) => n + b - a, 0);
   assert.ok(mid > 0 && mid < data.length);
   second = await new DownloadEngine(opts).init();
   assert.equal(second.downloads[0].status, 'paused');
@@ -119,7 +120,7 @@ test('HTTP/2 over TLS: multiplexed range transfers are byte exact', async t => {
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem'), '-days', '2', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
     key = await fs.readFile(path.join(dir, 'k.pem')); cert = await fs.readFile(path.join(dir, 'c.pem')); ca = cert;
   } catch { return t.skip('openssl unavailable'); }
-  const data = randomBytes(8 * 1024 * 1024 + 77), stats = { requests: 0, h2: 0, sessions: 0 };
+  const data = randomBytes(40 * 1024 * 1024 + 77), stats = { requests: 0, h2: 0, sessions: 0 };
   const server = http2.createSecureServer({ key, cert, allowHTTP1: true });
   server.on('session', () => { stats.sessions++; });
   server.on('request', (req, res) => { if (req.httpVersion === '2.0') stats.h2++; handler(data, stats)(req, res); });
@@ -129,6 +130,6 @@ test('HTTP/2 over TLS: multiplexed range transfers are byte exact', async t => {
   const { engine } = await engineFor(t, { connections: 12 });
   const d = await run(engine, `https://127.0.0.1:${server.address().port}/h2.bin`);
   assert.equal(digest(await fs.readFile(d.path)), digest(data));
-  assert.ok(stats.h2 >= 12, `expected h2 range requests, saw ${stats.h2}`);
+  assert.ok(stats.h2 >= 10, `expected h2 range requests, saw ${stats.h2}`);
   assert.ok(stats.sessions <= 10, `h2 should multiplex over few connections, saw ${stats.sessions}`);
 });

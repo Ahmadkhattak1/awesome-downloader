@@ -2,6 +2,7 @@ import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
+import { ThrottleError } from './http.mjs';
 
 const abortError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError', code: 'ABORT_ERR' });
 const unavailable = message => Object.assign(new Error(message), { code: 'POOL_UNAVAILABLE' });
@@ -18,7 +19,7 @@ function workerPath() {
 export class ChunkPool {
   constructor({ size = Math.min(4, os.cpus().length || 1), perWorker = 16, transport = {} } = {}) {
     this.size = Math.max(1, size); this.perWorker = perWorker; this.transport = transport;
-    this.workers = []; this.nextId = 1; this.failures = 0; this.closed = false;
+    this.workers = []; this.nextId = 1; this.failures = 0; this.closed = false; this.sticky = new Map(); this.multiplexOrigins = new Set();
   }
   get broken() { return this.failures >= 3; }
   spawn() {
@@ -26,6 +27,7 @@ export class ChunkPool {
     const entry = { worker, jobs: new Map(), dead: false };
     worker.unref();
     worker.postMessage({ type: 'config', transport: this.transport });
+    for (const origin of this.multiplexOrigins) worker.postMessage({ type: 'multiplex', origin, on: true });
     worker.on('message', message => {
       const job = entry.jobs.get(message.id);
       if (!job) return;
@@ -33,7 +35,8 @@ export class ChunkPool {
       else if (message.type === 'done') { entry.jobs.delete(message.id); job.resolve(message.done); }
       else if (message.type === 'error') {
         entry.jobs.delete(message.id);
-        job.reject(Object.assign(new Error(message.message), { name: message.name || 'Error', code: message.code }));
+        if (message.code === 'THROTTLED') job.reject(new ThrottleError(message.statusCode, message.retryAfterMs));
+        else job.reject(Object.assign(new Error(message.message), { name: message.name || 'Error', code: message.code }));
       }
     });
     const die = error => {
@@ -54,12 +57,18 @@ export class ChunkPool {
     return best;
   }
   reconfigure(transport) { this.transport = transport; for (const w of this.workers) w.worker.postMessage({ type: 'config', transport }); }
+  // After a rate-limit reply: every worker keeps this origin on one HTTP/2 session, and blocks for it are routed to
+  // a single worker so they really share that session instead of each worker opening its own connection.
+  multiplex(origin) { this.multiplexOrigins.add(origin); for (const w of this.workers) w.worker.postMessage({ type: 'multiplex', origin, on: true }); }
   seedDns(map) { for (const w of this.workers) w.worker.postMessage({ type: 'seed', dns: map }); this.dns = { ...this.dns, ...map }; }
-  run(task, { signal, onBytes = () => {} } = {}) {
+  run(task, { signal, onBytes = () => {}, sticky } = {}) {
     if (this.closed || this.broken) return Promise.reject(unavailable('Worker pool unavailable.'));
     if (signal?.aborted) return Promise.reject(abortError());
     let entry;
-    try { entry = this.pick(); } catch (error) { this.failures = 3; return Promise.reject(unavailable(error.message)); }
+    try {
+      entry = sticky ? this.sticky.get(sticky) : null;
+      if (!entry || entry.dead) { entry = this.pick(); if (sticky) this.sticky.set(sticky, entry); }
+    } catch (error) { this.failures = 3; return Promise.reject(unavailable(error.message)); }
     if (this.dns && !entry.seeded) { entry.seeded = true; entry.worker.postMessage({ type: 'seed', dns: this.dns }); }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
