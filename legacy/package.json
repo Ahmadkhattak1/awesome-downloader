@@ -83,7 +83,15 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Awesome Downloader",
-      "artifactName": "Awesome-Downloader-${arch}.exe"
+      "artifactName": "Awesome-Downloader-${arch}.exe",
+      "include": "stage/build/installer.nsh",
+      "installerIcon": "stage/build/installerIcon.ico",
+      "uninstallerIcon": "stage/build/uninstallerIcon.ico",
+      "installerHeader": "stage/build/installerHeader.bmp",
+      "installerSidebar": "stage/build/installerSidebar.bmp",
+      "uninstallerSidebar": "stage/build/uninstallerSidebar.bmp",
+      "uninstallDisplayName": "${productName}",
+      "deleteAppDataOnUninstall": false
     },
     "npmRebuild": false
   }
