@@ -10,11 +10,40 @@ import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
-const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
+const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v|ts|m3u8|mpd|flv|wmv|3gp|m4s|ogv)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav|opus|wma|m4r)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
 export function safeFilename(value) {
   let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180);
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
   return name;
+}
+
+export function cleanMediaTitle(raw) {
+  if (!raw) return '';
+  let title = String(raw).trim();
+  title = title.replace(/^(?:watch|streaming|free download|download|stream|free|online)\s+/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*(?:watch\s+online|watch\s+free|watch|free\s+online|online\s+free|full\s+movie|free\s+hd|hd\s+free|stream).*$/i, '');
+  title = title.replace(/\s+(?:full\s+movie|movie\s+online|free\s+online|online\s+free|free\s+hd|hd\s+free|in\s+hd|full\s+hd|hd|1080p|720p|4k)\b.*$/i, '');
+  title = title.replace(/\s+(?:on\s+[\w.-]+|at\s+[\w.-]+)$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*[\w.-]+(?:\.(?:com|org|net|to|is|cx|ms|bz|se|pe|io|co|cc|me|vip|club|tv))\s*$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*(?:fmovies|123movies|gomovies|putlocker|solarmovie|bflix|soap2day|flixhq|hdo|lookmovie|vidsrc|youtube|dailymotion|vimeo|netflix|prime|hulu|disney|hbo|apple|tv|to|is|cx|ms|bz|to|se|pe|org|com|net|io|co|cc|me|vip|club).*$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*$/i, '');
+  return title.trim();
+}
+
+export function slugFromUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const parts = u.pathname.split('/').filter(Boolean);
+    for (let i = parts.length - 1; i >= 0; i--) {
+      let part = decodeURIComponent(parts[i]);
+      if (/^(film|movie|watch|series|tv|show|video|episode|play|embed|v)$/i.test(part)) continue;
+      part = part.replace(/[-_]\d+$/, '');
+      if (part.length > 1) {
+        return part.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      }
+    }
+  } catch {}
+  return '';
 }
 
 const MIME_EXT_MAP = {
@@ -55,9 +84,9 @@ export function extFromMime(mime) {
   return MIME_EXT_MAP[m] || '';
 }
 
-export const GENERIC_NAME_RE = /^(videoplayback|watch|video|audio|media|download|file|stream|play|get_video|player|output|redirect)$/i;
+export const GENERIC_NAME_RE = /^(videoplayback|watch|video|audio|media|download|file|stream|play|get_video|player|output|redirect|master|manifest|index|playlist)$/i;
 
-export function suggestedName(url, disposition, contentType) {
+export function suggestedName(url, disposition, contentType, referer) {
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition || '');
   const plain = /filename="([^"]+)"|filename=([^;\s]+)/i.exec(disposition || '');
   if (utf) {
@@ -123,6 +152,15 @@ export function suggestedName(url, disposition, contentType) {
     const hasLastExt = /\.[a-z0-9]{2,5}$/i.test(last);
 
     let candidate = last;
+
+    if (referer) {
+      const baseName = candidate.replace(/\.[a-z0-9]+$/i, '');
+      if (/^(master|manifest|index|playlist|videoplayback|video|stream|download)$/i.test(baseName)) {
+        const refSlug = slugFromUrl(referer);
+        if (refSlug) candidate = refSlug;
+      }
+    }
+
     if (!candidate || (!hasLastExt && GENERIC_NAME_RE.test(candidate)) || candidate === 'download') {
       const prev = segments.reverse().find(s => !GENERIC_NAME_RE.test(s) && !/^(api|v\d+|rest|v1|v2|v3|player|static|assets|media|content|hls)$/i.test(s));
       if (prev) {
@@ -130,8 +168,9 @@ export function suggestedName(url, disposition, contentType) {
       }
     }
 
-    if (!candidate || GENERIC_NAME_RE.test(candidate) || candidate === 'download') {
-      candidate = parsed.hostname.replace(/^www\./, '').split('.')[0] || 'download';
+    if (!candidate || (!hasLastExt && GENERIC_NAME_RE.test(candidate)) || candidate === 'download') {
+      const hostPart = parsed.hostname.replace(/^www\./, '').split('.')[0];
+      candidate = (/^\d+$/.test(hostPart) ? '' : hostPart) || 'download';
     }
 
     const hasExt = /\.[a-z0-9]{2,5}$/i.test(candidate);
@@ -240,8 +279,9 @@ export class DownloadEngine extends EventEmitter {
       if(existing)return [existing.id];
     }
     const added = normalized.map(u => {
-      const name = safeFilename(filename || suggestedName(u));
-      const selectedCategory = category || categoryFor(name);
+      const name = safeFilename(filename || suggestedName(u, undefined, undefined, referer || headers?.referer));
+      const isMedia = /\.m3u8(?:[?#]|$)/i.test(u) || /\.(mp4|ts|mkv|webm|mov|flv|wmv)(?:[?#]|$)/i.test(name);
+      const selectedCategory = category || (isMedia ? 'Video' : categoryFor(name));
       return { id: randomUUID(), url: u, audioUrl: audio, outputFormat, youtubeFormat, sabr:sabrSession, filename: name, explicitFilename: Boolean(filename), category: selectedCategory, explicitCategory: Boolean(category), description: description || '',
         status: queueOnly || reviewOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued', needsReview: reviewOnly, scheduledAt: when ? new Date(when).toISOString() : null,
         downloaded: 0, total: null, speed: 0, connections: 0, error: null, path: null,
@@ -337,14 +377,14 @@ export class DownloadEngine extends EventEmitter {
     if (!d.explicitFilename) {
       const redirected = info.url !== d.url;
       const hasDisposition = Boolean(info.headers['content-disposition']);
-      const isCurrentGeneric = !d.filename || GENERIC_NAME_RE.test(d.filename) || d.filename === 'download' || /^download[._]/i.test(d.filename);
+      const isCurrentGeneric = !d.filename || GENERIC_NAME_RE.test(d.filename.replace(/\.[a-z0-9]+$/i, '')) || d.filename === 'download' || /^download[._]/i.test(d.filename);
       if (hasDisposition || redirected || isCurrentGeneric) {
-        d.filename = suggestedName(info.url, info.headers['content-disposition'], mime);
+        d.filename = suggestedName(info.url, info.headers['content-disposition'], mime, d.headers?.referer);
       } else if (!/\.[a-z0-9]{2,5}$/i.test(d.filename)) {
         const ext = extFromMime(mime);
         if (ext) d.filename = safeFilename(d.filename + ext);
       }
-      if (!d.explicitCategory) d.category = categoryFor(d.filename);
+      if (!d.explicitCategory || d.category === 'Other') d.category = categoryFor(d.filename);
     }
     const dir = path.join(this.partsDirectory, d.id);
     await fs.mkdir(dir, { recursive: true });
@@ -462,7 +502,7 @@ export class DownloadEngine extends EventEmitter {
       const {convertMedia}=await import('./mux.mjs');
       const output=await convertMedia(dir,files,d.outputFormat,signal);
       d.filename=safeFilename(d.filename.replace(/\.[^.]+$/,'')+'.'+d.outputFormat);
-      if(!d.explicitCategory)d.category=d.outputFormat==='mp3'?'Audio':'Video';
+      if(!d.explicitCategory || d.category === 'Other')d.category=d.outputFormat==='mp3'?'Audio':'Video';
       return this.assemble(d,dir,signal,[output],true);
     }
     await fs.mkdir(d.directory, { recursive: true });
@@ -488,6 +528,9 @@ export class DownloadEngine extends EventEmitter {
       await out.sync(); complete = true;
     } finally { await out.close(); if (!complete) await fs.unlink(destination); }
     d.path = destination; d.filename = path.basename(destination); d.status = 'complete';
+    if (d.kind === 'hls' || /\.(mp4|webm|mkv|mov|avi|m4v|ts|flv|wmv)$/i.test(d.filename)) {
+      if (!d.explicitCategory || d.category === 'Other') d.category = 'Video';
+    }
     d.completedAt = new Date().toISOString();
     await this.persist();
     try { await fs.rm(dir, { recursive: true, force: true }); }
@@ -505,8 +548,20 @@ export class DownloadEngine extends EventEmitter {
     }
     await fs.mkdir(dir, { recursive: true });
     d.playlistIdentity = plan.identity; d.duration = plan.duration; d.resumable = true; d.kind = 'hls';
-    if (!d.explicitFilename && !d.hlsFilenameResolved) { d.filename = safeFilename(d.filename.replace(/\.(m3u8|mpd)$/i, '') + plan.extension); d.hlsFilenameResolved = true; }
-    if (!d.explicitCategory) d.category = 'Video';
+    if (!d.explicitFilename && !d.hlsFilenameResolved) {
+      if (d.headers?.referer) {
+        const refSlug = slugFromUrl(d.headers.referer);
+        if (refSlug) {
+          d.filename = safeFilename(`${refSlug}${plan.extension}`);
+          d.hlsFilenameResolved = true;
+        }
+      }
+      if (!d.hlsFilenameResolved) {
+        d.filename = safeFilename(d.filename.replace(/\.(m3u8|mpd)$/i, '') + plan.extension);
+        d.hlsFilenameResolved = true;
+      }
+    }
+    d.category = 'Video';
     d.total = null; d.downloaded = 0;
     d.segments = await Promise.all(plan.urls.map(async (url, i) => {
       let size = 0, done = false;

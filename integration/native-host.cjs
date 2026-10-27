@@ -94,6 +94,11 @@ function sanitizeRequest(message) {
     if (typeof message.filename !== 'string' || message.filename.length > 255 || /[\x00-\x1f<>:"/\\|?*]/.test(message.filename) || ['.', '..'].includes(message.filename)) throw new Error('Invalid filename.');
     result.filename = message.filename;
   }
+  if (message.category && typeof message.category === 'string') {
+    if (['Video', 'Audio', 'Documents', 'Programs', 'Archives', 'Other'].includes(message.category)) {
+      result.category = message.category;
+    }
+  }
   if (message.referer) result.referer = validateUrl(message.referer);
   if(message.requestHeaders && typeof message.requestHeaders==='object' && !Array.isArray(message.requestHeaders)) {
     result.headers={};

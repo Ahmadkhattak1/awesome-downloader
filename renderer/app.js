@@ -63,9 +63,11 @@ function categoryOf(d) {
   const value = String(d.category || '').toLowerCase();
   if (/video/.test(value)) return 'Video';
   if (/audio|music/.test(value)) return 'Audio';
-  if (/doc|text|pdf/.test(value)) return 'Documents';
-  if (/arch|compress|zip|rar|7z/.test(value)) return 'Archives';
-  if (/program|game|exe|msi/.test(value)) return 'Programs';
+  if (d.kind === 'hls' || d.kind === 'youtube' || /\.(mp4|webm|mkv|mov|avi|m4v|ts|flv|wmv|m3u8|m4s|mpd)$/i.test(d.filename || '') || /\.(mp4|webm|mkv|mov|avi|m4v|ts|flv|wmv|m3u8|m4s|mpd)$/i.test(d.url || '')) return 'Video';
+  if (/\.(mp3|m4a|aac|flac|ogg|wav|opus|wma)$/i.test(d.filename || '') || /\.(mp3|m4a|aac|flac|ogg|wav|opus|wma)$/i.test(d.url || '')) return 'Audio';
+  if (/doc|text|pdf/.test(value) || /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i.test(d.filename || '')) return 'Documents';
+  if (/arch|compress|zip|rar|7z/.test(value) || /\.(zip|7z|rar|tar|gz|iso)$/i.test(d.filename || '')) return 'Archives';
+  if (/program|game|exe|msi/.test(value) || /\.(exe|msi|msix|apk)$/i.test(d.filename || '')) return 'Programs';
   return 'Other';
 }
 

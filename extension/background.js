@@ -6,7 +6,50 @@ const CACHE_KEY = 'mediaByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
+const tabMediaContext = new Map();
 const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
+
+function cleanMediaTitle(raw) {
+  if (!raw) return '';
+  let title = String(raw).trim();
+  title = title.replace(/^(?:watch|streaming|free download|download|stream|free|online)\s+/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*(?:watch\s+online|watch\s+free|watch|free\s+online|online\s+free|full\s+movie|free\s+hd|hd\s+free|stream).*$/i, '');
+  title = title.replace(/\s+(?:full\s+movie|movie\s+online|free\s+online|online\s+free|free\s+hd|hd\s+free|in\s+hd|full\s+hd|hd|1080p|720p|4k)\b.*$/i, '');
+  title = title.replace(/\s+(?:on\s+[\w.-]+|at\s+[\w.-]+)$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*[\w.-]+(?:\.(?:com|org|net|to|is|cx|ms|bz|se|pe|io|co|cc|me|vip|club|tv))\s*$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*(?:fmovies|123movies|gomovies|putlocker|solarmovie|bflix|soap2day|flixhq|hdo|lookmovie|vidsrc|youtube|dailymotion|vimeo|netflix|prime|hulu|disney|hbo|apple|tv|to|is|cx|ms|bz|to|se|pe|org|com|net|io|co|cc|me|vip|club).*$/i, '');
+  title = title.replace(/\s*[\-\|—–:»•]\s*$/i, '');
+  return title.trim();
+}
+
+function slugFromUrl(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const parts = u.pathname.split('/').filter(Boolean);
+    for (let i = parts.length - 1; i >= 0; i--) {
+      let part = decodeURIComponent(parts[i]);
+      if (/^(film|movie|watch|series|tv|show|video|episode|play|embed|v)$/i.test(part)) continue;
+      part = part.replace(/[-_]\d+$/, '');
+      if (part.length > 1) {
+        return part.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      }
+    }
+  } catch {}
+  return '';
+}
+
+function isGenericTitle(str) {
+  if (!str) return true;
+  return /^(video|audio|media|master|manifest|index|playlist|stream|player|embed|fmovies|download|file|watch|movie|film|home|untitled)$/i.test(str.trim());
+}
+
+function safeFilename(value) {
+  return String(value || 'download')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/[\s_]+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
 function clearSabrCapture(tabId){
   youtubeSabrObserved.delete(tabId);
   for(const [id,seed] of youtubeSabrSeed)if(seed.tabId===tabId)youtubeSabrSeed.delete(id);
@@ -50,8 +93,15 @@ async function discoverHls(tabId,url) {
     while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>1048576){await reader.cancel();throw new Error('Manifest too large.');}chunks.push(value);}
     const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
     const variants=globalThis.parseHlsMaster(new TextDecoder().decode(bytes),response.url||url);
-    let title='';try{title=(await api.tabs.get(tabId)).title||'';}catch{}
-    if(hlsSeen.get(tabId)===seen)await remember(tabId,variants.map(item=>({...item,title})));
+    let title = tabMediaContext.get(tabId)?.title || '';
+    if (!title && tabId >= 0 && api.tabs?.get) {
+      try {
+        const tabInfo = await api.tabs.get(tabId);
+        title = cleanMediaTitle(tabInfo?.title) || slugFromUrl(tabInfo?.url);
+      } catch {}
+    }
+    if (!title && url) title = slugFromUrl(url);
+    if(hlsSeen.get(tabId)===seen)await remember(tabId,variants.map(item=>({...item,title: item.title || title})));
   } catch {} finally {clearTimeout(timer);hlsActive--;}
 }
 function nativeSend(payload) {
@@ -84,27 +134,40 @@ async function enqueue(item, tabId) {
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
   const requestHeaders=requestContext.get(tabId)?.get(url);
   let filename = item.filename;
-  if (!filename) {
-    let title = item.title;
-    if (!title && tabId >= 0 && api.tabs?.get) {
-      try {
-        const tabInfo = await api.tabs.get(tabId);
-        title = tabInfo?.title;
-      } catch {}
+  let title = item.title;
+  if (isGenericTitle(title)) {
+    const ctx = tabMediaContext.get(tabId);
+    if (ctx?.title && !isGenericTitle(ctx.title)) title = ctx.title;
+  }
+  if (isGenericTitle(title) && tabId >= 0 && api.tabs?.get) {
+    try {
+      const tabInfo = await api.tabs.get(tabId);
+      const cleaned = cleanMediaTitle(tabInfo?.title);
+      if (cleaned && !isGenericTitle(cleaned)) title = cleaned;
+      else {
+        const slug = slugFromUrl(tabInfo?.url);
+        if (slug && !isGenericTitle(slug)) title = slug;
+      }
+    } catch {}
+  }
+  if (isGenericTitle(title)) {
+    const ref = requestHeaders?.referer || item.referer;
+    if (ref) {
+      const slug = slugFromUrl(ref);
+      if (slug && !isGenericTitle(slug)) title = slug;
     }
-    if (title) {
-      const cleanTitle = String(title)
-        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
-        .replace(/[\s_]+/g, ' ')
-        .trim()
-        .slice(0, 160);
+  }
+  if (!filename) {
+    if (title && !isGenericTitle(title)) {
+      const cleanTitle = safeFilename(cleanMediaTitle(title));
       if (cleanTitle) {
-        const ext = item.outputFormat || (item.format ? item.format.toLowerCase() : (/\.m3u8/i.test(url) ? 'mp4' : 'mp4'));
+        const ext = item.outputFormat || (item.format && item.format.toLowerCase() !== 'hls' ? item.format.toLowerCase() : (/\.m3u8/i.test(url) ? 'mp4' : 'mp4'));
         filename = /\.[a-z0-9]{2,5}$/i.test(cleanTitle) ? cleanTitle : `${cleanTitle}.${ext}`;
       }
     }
   }
-  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
+  const category = item.category || (item.outputFormat === 'mp3' ? 'Audio' : 'Video');
+  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename, category, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
 function updateCache(change) {
   const next = serial.then(async () => {
@@ -154,12 +217,13 @@ api.webRequest.onHeadersReceived.addListener(details => {
     if(youtubeObserved.size>50)youtubeObserved.delete(youtubeObserved.keys().next().value);
   }
   if (details.type === 'media' || /^(video|audio)\//i.test(mime) || unsupported(details.url, mime)) {
-    remember(details.tabId, [{url: details.url, mime}]).catch(() => {});
+    const title = tabMediaContext.get(details.tabId)?.title || '';
+    remember(details.tabId, [{url: details.url, mime, title}]).catch(() => {});
   }
   if(/\.m3u8(?:[?#]|$)/i.test(details.url)||/mpegurl/i.test(mime))discoverHls(details.tabId,details.url);
 }, {urls: ['http://*/*', 'https://*/*']}, ['responseHeaders']);
-api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
-api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
+api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);tabMediaContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
+api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);tabMediaContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
 api.runtime.onInstalled.addListener(async () => {
   try {
     await api.contextMenus.removeAll();
@@ -180,6 +244,13 @@ api.contextMenus.onClicked.addListener(async (info, tab) => {
 api.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== api.runtime.id) return false;
   const task = async () => {
+    if (message.action === 'setPageMediaContext' && sender.tab) {
+      if (message.title && !isGenericTitle(message.title)) {
+        tabMediaContext.set(sender.tab.id, { title: message.title, pageUrl: message.pageUrl || sender.tab.url });
+        if (tabMediaContext.size > 50) tabMediaContext.delete(tabMediaContext.keys().next().value);
+      }
+      return { ok: true };
+    }
     if(message.action==='playerResponse' && sender.tab) {
       const page=new URL(sender.url || sender.tab.url || 'https://invalid.local');
       if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))throw new Error('Invalid player source.');
@@ -216,7 +287,12 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       }
       await serial;
       const data = await api.storage.session.get(CACHE_KEY);
-      return {ok:true, items:(data[CACHE_KEY]?.[sender.tab.id] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url))};
+      const items = (data[CACHE_KEY]?.[sender.tab.id] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url));
+      const tabTitle = tabMediaContext.get(sender.tab.id)?.title;
+      if (tabTitle && !isGenericTitle(tabTitle)) {
+        items.forEach(it => { if (isGenericTitle(it.title)) it.title = tabTitle; });
+      }
+      return {ok:true, items};
     }
     throw new Error('Unsupported extension request.');
   };

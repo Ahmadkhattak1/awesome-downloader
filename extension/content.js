@@ -7,6 +7,80 @@
   const listeners = new AbortController();
   const resizeObserver = new ResizeObserver(() => position());
   const direct = value => { try { const u = new URL(value, location.href); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; } };
+
+  function cleanMediaTitle(raw) {
+    if (!raw) return '';
+    let title = String(raw).trim();
+    title = title.replace(/^(?:watch|streaming|free download|download|stream|free|online)\s+/i, '');
+    title = title.replace(/\s*[\-\|—–:»•]\s*(?:watch\s+online|watch\s+free|watch|free\s+online|online\s+free|full\s+movie|free\s+hd|hd\s+free|stream).*$/i, '');
+    title = title.replace(/\s+(?:full\s+movie|movie\s+online|free\s+online|online\s+free|free\s+hd|hd\s+free|in\s+hd|full\s+hd|hd|1080p|720p|4k)\b.*$/i, '');
+    title = title.replace(/\s+(?:on\s+[\w.-]+|at\s+[\w.-]+)$/i, '');
+    title = title.replace(/\s*[\-\|—–:»•]\s*[\w.-]+(?:\.(?:com|org|net|to|is|cx|ms|bz|se|pe|io|co|cc|me|vip|club|tv))\s*$/i, '');
+    title = title.replace(/\s*[\-\|—–:»•]\s*(?:fmovies|123movies|gomovies|putlocker|solarmovie|bflix|soap2day|flixhq|hdo|lookmovie|vidsrc|youtube|dailymotion|vimeo|netflix|prime|hulu|disney|hbo|apple|tv|to|is|cx|ms|bz|to|se|pe|org|com|net|io|co|cc|me|vip|club).*$/i, '');
+    title = title.replace(/\s*[\-\|—–:»•]\s*$/i, '');
+    return title.trim();
+  }
+
+  function slugFromUrl(urlStr) {
+    try {
+      const u = new URL(urlStr);
+      const parts = u.pathname.split('/').filter(Boolean);
+      for (let i = parts.length - 1; i >= 0; i--) {
+        let part = decodeURIComponent(parts[i]);
+        if (/^(film|movie|watch|series|tv|show|video|episode|play|embed|v)$/i.test(part)) continue;
+        part = part.replace(/[-_]\d+$/, '');
+        if (part.length > 1) {
+          return part.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        }
+      }
+    } catch {}
+    return '';
+  }
+
+  function isGenericTitle(str) {
+    if (!str) return true;
+    return /^(video|audio|media|master|manifest|index|playlist|stream|player|embed|fmovies|download|file|watch|movie|film|home|untitled)$/i.test(str.trim());
+  }
+
+  function extractPageTitle() {
+    try {
+      const heading = document.querySelector('h1.movie-title, h1.title, h1.film-name, .film-name h1, .movie-name, h1, .detail-title, .entry-title');
+      const headingText = heading?.textContent?.trim();
+      if (headingText && !isGenericTitle(headingText)) {
+        const cleaned = cleanMediaTitle(headingText);
+        if (cleaned && !isGenericTitle(cleaned)) return cleaned;
+      }
+    } catch {}
+
+    try {
+      const og = document.querySelector('meta[property="og:title"], meta[name="twitter:title"]')?.content;
+      if (og) {
+        const cleaned = cleanMediaTitle(og);
+        if (cleaned && !isGenericTitle(cleaned)) return cleaned;
+      }
+    } catch {}
+
+    try {
+      if (document.title) {
+        const cleaned = cleanMediaTitle(document.title);
+        if (cleaned && !isGenericTitle(cleaned)) return cleaned;
+      }
+    } catch {}
+
+    try {
+      const slug = slugFromUrl(location.href);
+      if (slug && !isGenericTitle(slug)) return slug;
+    } catch {}
+
+    return document.title || 'Video';
+  }
+
+  function syncMediaContext() {
+    if (window === window.top && connected()) {
+      const pageTitle = extractPageTitle();
+      send({ action: 'setPageMediaContext', title: pageTitle, pageUrl: location.href }).catch(() => {});
+    }
+  }
   function shutdown() {
     if(stopped)return;
     stopped=true;
@@ -33,6 +107,7 @@
   function scan() {
     pending = false;
     if(!connected())return;
+    syncMediaContext();
     for (const video of document.querySelectorAll('video')) {
       if (seen.has(video)) continue;
       seen.add(video);
@@ -46,8 +121,9 @@
       resizeObserver.observe(video);
       document.documentElement.appendChild(host);
       const report = () => {
+        const pageTitle = extractPageTitle();
         const urls = [video.currentSrc, video.src, ...Array.from(video.querySelectorAll('source'), source => source.src)].map(direct).filter(Boolean);
-        if (urls.length) send({action:'remember', items: urls.map(url => ({url, title:document.title}))}).catch(() => {});
+        if (urls.length) send({action:'remember', items: urls.map(url => ({url, title: pageTitle}))}).catch(() => {});
       };
       video.addEventListener('loadedmetadata', report, {signal:listeners.signal});
       record.sourceObserver=new MutationObserver(report);
@@ -73,8 +149,9 @@
             if(!result?.ok)throw new Error(result?.error||'Could not list video formats.');
             hint.textContent='Choose a format to download';
             const candidates=result?.items||[];
+            const pageTitle = extractPageTitle();
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
-            if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
+            if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:pageTitle});
             if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
             const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
             if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
@@ -82,12 +159,12 @@
               const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;
               row.title=item.reason||'';
               const format=item.format||(/\.m3u8(?:[?#]|$)/i.test(item.url)?'HLS':/\.(mp4|webm|mp3|m4a|mov)(?:[?#]|$)/i.exec(item.url)?.[1]?.toUpperCase()||'Media');
-              const title = item.asset ? `Video ${item.asset}` : item.title || document.title || 'Video';
+              const title = item.asset ? `Video ${item.asset}` : item.title || pageTitle;
               row.textContent = `${index+1}. ${item.quality || format} · ${format} · ${item.audioState}${item.bitrate ? ' · '+Math.round(item.bitrate/1000)+' kbps' : ''} — ${title}`;
               row.onclick=async event=>{
                 event.preventDefault();event.stopPropagation();row.disabled=true;
                 hint.textContent='Opening download options…';
-                try{const response=await send({action:'download',item:{...item,startNow:false}});hint.textContent=response.ok?'Download opened in Awesome Downloader. Choose Start Download or Download Later there. An active download is opened instead of duplicated.':friendlyError(response.error);}catch(error){hint.textContent=friendlyError(error.message);}
+                try{const response=await send({action:'download',item:{...item,title:item.title||pageTitle,category:'Video',startNow:false}});hint.textContent=response.ok?'Download opened in Awesome Downloader. Choose Start Download or Download Later there. An active download is opened instead of duplicated.':friendlyError(response.error);}catch(error){hint.textContent=friendlyError(error.message);}
                 row.disabled=!!item.unsupported;
               };chooser.append(row);
             }); position();
@@ -147,7 +224,12 @@
   }
   addEventListener('scroll', onScroll, {capture:true,signal:listeners.signal}); addEventListener('resize', position, {signal:listeners.signal}); document.addEventListener('fullscreenchange',position,{signal:listeners.signal});
   function onMessage(message, sender, respond) {
-    if (!connected() || sender.id !== api.runtime.id || message.action !== 'collectLinks') return;
+    if (!connected() || sender.id !== api.runtime.id) return;
+    if (message.action === 'getPageMediaContext') {
+      respond({ ok: true, title: extractPageTitle(), pageUrl: location.href });
+      return true;
+    }
+    if (message.action !== 'collectLinks') return;
     const items = Array.from(document.querySelectorAll('a[href]')).slice(0, 1000).map(a => ({url:direct(a.href), title:a.textContent.trim()})).filter(item => item.url);
     send({action:'remember', items:items.slice(0, 100)}).then(respond,error=>{try{respond({ok:false,error:error.message});}catch{}}).catch(()=>{});
     return true;

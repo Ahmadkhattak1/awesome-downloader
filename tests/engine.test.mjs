@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DownloadEngine, safeFilename, suggestedName } from '../core/engine.mjs';
+import { DownloadEngine, safeFilename, suggestedName, cleanMediaTitle, slugFromUrl } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
 
 async function fixture(t, options = {}) {
@@ -222,4 +222,30 @@ test('automatic video naming extracts title from query params, YouTube URLs, and
   assert.equal(suggestedName('https://example.com/videos/vacation-clip/videoplayback', '', 'video/mp4'), 'vacation-clip.mp4');
   assert.equal(suggestedName('https://example.com/download', 'attachment; filename="custom_document.pdf"'), 'custom_document.pdf');
   assert.equal(suggestedName('https://example.com/download', "attachment; filename*=UTF-8''my%20video%20title.mp4"), 'my video title.mp4');
+});
+
+test('IDM-style video name and category resolution for streaming sites', async t => {
+  // Test cleanMediaTitle
+  assert.equal(cleanMediaTitle('Watch Nightborn Full Movie on Fmovies.to'), 'Nightborn');
+  assert.equal(cleanMediaTitle('Nightborn (2024) - Watch Online Free | Fmovies'), 'Nightborn (2024)');
+  assert.equal(cleanMediaTitle('Watch Inception (2010) Free Online HD - 123movies.to'), 'Inception (2010)');
+
+  // Test slugFromUrl
+  assert.equal(slugFromUrl('https://fmoviess.org/film/nightborn-2461/'), 'Nightborn');
+  assert.equal(slugFromUrl('https://example.com/movies/interstellar-2014-9988/'), 'Interstellar 2014');
+
+  // Test suggestedName with generic manifest URL and Referer
+  assert.equal(suggestedName('https://megacloud.tv/embed-2/master.m3u8', '', 'application/vnd.apple.mpegurl', 'https://fmoviess.org/film/nightborn-2461/'), 'Nightborn.mp4');
+  assert.equal(suggestedName('https://stream.example.com/manifest.m3u8', '', 'application/x-mpegurl', 'https://fmoviess.org/film/nightborn-2461/'), 'Nightborn.mp4');
+
+  // Test category resolution
+  const f = await fixture(t);
+  const ids = await f.engine.add({
+    url: 'https://megacloud.tv/embed-2/master.m3u8',
+    referer: 'https://fmoviess.org/film/nightborn-2461/',
+    reviewOnly: true
+  });
+  const d = f.engine.downloads.find(x => x.id === ids[0]);
+  assert.equal(d.filename, 'Nightborn.mp4');
+  assert.equal(d.category, 'Video');
 });

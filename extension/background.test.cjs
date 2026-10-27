@@ -101,3 +101,14 @@ test('media cache is bounded, deduplicated, and cleared on navigation',async()=>
   h.events.updated(9,{status:'loading'});
   result=await h.request({action:'listForFrame'},sender); assert.equal(result.items.length,0);
 });
+
+test('page media context enriches frame items and native message with movie title and video category',async()=>{
+  const h=harness(),sender={id:'extension-id',tab:{id:12,url:'https://fmoviess.org/film/nightborn-2461/'}};
+  await h.request({action:'setPageMediaContext',title:'Nightborn',pageUrl:'https://fmoviess.org/film/nightborn-2461/'},sender);
+  await h.request({action:'remember',items:[{url:'https://megacloud.tv/embed-2/master.m3u8',format:'HLS',title:'video'}]},sender);
+  const result=await h.request({action:'listForFrame'},sender);
+  assert.equal(result.items[0].title,'Nightborn');
+  await h.request({action:'download',item:result.items[0]},sender);
+  assert.equal(h.nativeRequests[0].filename,'Nightborn.mp4');
+  assert.equal(h.nativeRequests[0].category,'Video');
+});
