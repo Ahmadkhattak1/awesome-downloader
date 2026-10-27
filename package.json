@@ -4,8 +4,13 @@
   "description": "A Windows download manager with segmented transfers and browser video capture",
   "main": "desktop/main.cjs",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git" },
-  "bugs": { "url": "https://github.com/Ahmadkhattak1/awesome-downloader/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ahmadkhattak1/awesome-downloader/issues"
+  },
   "author": "Awesome Downloader contributors",
   "license": "MIT",
   "scripts": {
@@ -39,10 +44,22 @@
     ],
     "asar": true,
     "extraResources": [
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" },
-      { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" },
-      { "from": "node_modules/googlevideo/LICENSE", "to": "licenses/googlevideo-LICENSE.txt" },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE",
+        "to": "licenses/FFmpeg-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe.README",
+        "to": "licenses/FFmpeg-BUILD.txt"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/LICENSE",
+        "to": "licenses/ffmpeg-static-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/googlevideo/LICENSE",
+        "to": "licenses/googlevideo-LICENSE.txt"
+      },
       {
         "from": "vendor",
         "to": "tools",
@@ -72,11 +89,19 @@
       }
     ],
     "asarUnpack": [
+      "core/**/*",
       "node_modules/ffmpeg-static/ffmpeg.exe"
     ],
     "electronDist": "node_modules/electron/dist",
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "signExecutable": false
     },

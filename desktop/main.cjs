@@ -1,3 +1,5 @@
+// libuv's default 4-thread pool throttles parallel disk writes and DNS lookups; must be set before first use.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '32';
 const path = require('node:path');
 const {showProgress,closeCancelledProgress}=require('./progress-window.cjs');
 
