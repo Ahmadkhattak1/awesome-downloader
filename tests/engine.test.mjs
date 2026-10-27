@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DownloadEngine, safeFilename } from '../core/engine.mjs';
+import { DownloadEngine, safeFilename, suggestedName } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
 
 async function fixture(t, options = {}) {
@@ -212,4 +212,14 @@ test('request credentials are excluded from history and UI snapshots', async t =
   await f.engine.add({ url: `${f.url}/file.bin`, reviewOnly: true, headers: { cookie: 'session=private-fixture', authorization: 'Bearer private-fixture' } });
   assert.doesNotMatch(JSON.stringify(f.engine.snapshot()), /private-fixture/);
   assert.doesNotMatch(await fs.readFile(path.join(f.root, 'state', 'downloads.json'), 'utf8'), /private-fixture/);
+});
+
+test('automatic video naming extracts title from query params, YouTube URLs, and MIME types', () => {
+  assert.equal(suggestedName('https://www.youtube.com/watch?v=dQw4w9WgXcQ'), 'YouTube_dQw4w9WgXcQ.mp4');
+  assert.equal(suggestedName('https://youtu.be/dQw4w9WgXcQ'), 'YouTube_dQw4w9WgXcQ.mp4');
+  assert.equal(suggestedName('https://cdn.example.com/videoplayback?id=123&title=Space+Exploration', '', 'video/mp4'), 'Space Exploration.mp4');
+  assert.equal(suggestedName('https://cdn.example.com/videoplayback?filename=cool_clip.mp4'), 'cool_clip.mp4');
+  assert.equal(suggestedName('https://example.com/videos/vacation-clip/videoplayback', '', 'video/mp4'), 'vacation-clip.mp4');
+  assert.equal(suggestedName('https://example.com/download', 'attachment; filename="custom_document.pdf"'), 'custom_document.pdf');
+  assert.equal(suggestedName('https://example.com/download', "attachment; filename*=UTF-8''my%20video%20title.mp4"), 'my video title.mp4');
 });

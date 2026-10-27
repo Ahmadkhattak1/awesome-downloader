@@ -937,18 +937,124 @@ function showDialog(id) {
   if (dialog && !dialog.open) dialog.showModal();
 }
 
+const EXT_CATEGORIES = {
+  Video: /\.(mp4|webm|mkv|mov|avi|m4v|flv|wmv|ts)$/i,
+  Audio: /\.(mp3|m4a|aac|flac|ogg|wav|wma|opus)$/i,
+  Archives: /\.(zip|7z|rar|tar|gz|iso|bz2|xz)$/i,
+  Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub|rtf)$/i,
+  Programs: /\.(exe|msi|msix|bat|cmd|apk)$/i
+};
+
+function categoryForName(name) {
+  return Object.entries(EXT_CATEGORIES).find(([, re]) => re.test(name))?.[0] || 'Other';
+}
+
+let autoSuggestTimer = null;
+let lastAutoSuggestedUrl = '';
+
+function inferFilenameFromUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    const host = parsed.hostname.toLowerCase();
+    const isYt = host === 'youtu.be' || ['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host);
+    if (isYt) {
+      const yId = host === 'youtu.be'
+        ? parsed.pathname.slice(1)
+        : (parsed.pathname === '/watch' ? parsed.searchParams.get('v') : /^\/(shorts|embed)\/([^/]+)$/.exec(parsed.pathname)?.[2]);
+      if (yId && /^[\w-]{11}$/.test(yId)) {
+        return { filename: `YouTube_${yId}.mp4`, category: 'Video', isYouTube: true, canonicalUrl: `https://www.youtube.com/watch?v=${yId}` };
+      }
+    }
+
+    for (const param of ['filename', 'file_name', 'file', 'title', 'name']) {
+      const val = parsed.searchParams.get(param);
+      if (val && val.length > 1 && !/^(true|false|null|undefined|\d+)$/i.test(val)) {
+        try {
+          let clean = decodeURIComponent(val).trim();
+          if (clean) {
+            if (!/\.[a-z0-9]{2,5}$/i.test(clean)) clean += (/\.m3u8(?:[?#]|$)/i.test(rawUrl) ? '.mp4' : '');
+            return { filename: clean, category: categoryForName(clean) };
+          }
+        } catch {}
+      }
+    }
+
+    const segments = parsed.pathname.split('/').filter(Boolean).map(s => {
+      try { return decodeURIComponent(s); } catch { return s; }
+    });
+    const last = segments.pop() || '';
+    const genericRe = /^(videoplayback|watch|video|audio|media|download|file|stream|play|manifest|master|index|playlist|segment|fragment|chunk|get_video|player|output)(?:\.[a-z0-9]{2,4})?$/i;
+
+    let candidate = last;
+    if (!candidate || genericRe.test(candidate)) {
+      const prev = segments.reverse().find(s => !genericRe.test(s) && !/^(api|v\d+|rest|v1|v2|v3|player|static|assets|media|content|hls)$/i.test(s));
+      if (prev) candidate = prev;
+    }
+
+    if (!candidate || genericRe.test(candidate)) {
+      candidate = parsed.hostname.replace(/^www\./, '').split('.')[0] || 'download';
+    }
+
+    if (!/\.[a-z0-9]{2,5}$/i.test(candidate)) {
+      if (/\.m3u8(?:[?#]|$)/i.test(rawUrl)) candidate += '.mp4';
+    }
+
+    return { filename: candidate, category: categoryForName(candidate) };
+  } catch {
+    return null;
+  }
+}
+
+async function handleUrlInputSuggest() {
+  const urlsVal = $('#download-urls')?.value || '';
+  const lines = urlsVal.split(/\r?\n/).map(u => u.trim()).filter(Boolean);
+  if (lines.length !== 1) return;
+  const firstUrl = lines[0];
+  if (firstUrl === lastAutoSuggestedUrl) return;
+  lastAutoSuggestedUrl = firstUrl;
+
+  const info = inferFilenameFromUrl(firstUrl);
+  if (!info) return;
+
+  const fnInput = $('#download-filename');
+  const catInput = $('#download-category');
+  if (fnInput && (!fnInput.value || fnInput.dataset.autoFilled === 'true')) {
+    fnInput.value = info.filename;
+    fnInput.dataset.autoFilled = 'true';
+  }
+  if (catInput && (!catInput.value || catInput.dataset.autoFilled === 'true')) {
+    catInput.value = info.category || '';
+    catInput.dataset.autoFilled = 'true';
+    const rem = $('#remember-category-path');
+    if (rem) rem.disabled = !catInput.value;
+  }
+
+  if (info.isYouTube && info.canonicalUrl) {
+    try {
+      const formats = await call('formats', { url: info.canonicalUrl });
+      if (formats && formats.length && formats[0].title) {
+        if (fnInput && fnInput.dataset.autoFilled === 'true') {
+          fnInput.value = `${formats[0].title}.${formats[0].outputFormat || 'mp4'}`.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+        }
+      }
+    } catch {}
+  }
+}
+
 function openAdd(text = '', scheduled = '') {
   pendingReviewId = null;
+  lastAutoSuggestedUrl = '';
   const addErr = $('#add-error');
   if (addErr) addErr.hidden = true;
   const urls = $('#download-urls');
   if (urls) { urls.value = text; urls.readOnly = false; }
-  const fn = $('#download-filename'); if (fn) fn.value = '';
+  const fn = $('#download-filename'); if (fn) { fn.value = ''; delete fn.dataset.autoFilled; }
   const desc = $('#download-description'); if (desc) desc.value = '';
-  const cat = $('#download-category'); if (cat) cat.value = '';
+  const cat = $('#download-category'); if (cat) { cat.value = ''; delete cat.dataset.autoFilled; }
   const rem = $('#remember-category-path'); if (rem) { rem.checked = false; rem.disabled = true; }
   const sch = $('#download-schedule'); if (sch) sch.value = scheduled;
   const dir = $('#add-directory'); if (dir) dir.value = state.settings.defaultDirectory || '';
+  if (text) setTimeout(handleUrlInputSuggest, 10);
   showDialog('#add-dialog');
   urls?.focus();
 }
@@ -1504,12 +1610,26 @@ function setupEventHandlers() {
   $('#add-dialog')?.addEventListener('cancel', () => dismissReview());
 
   // Add Dialog Form
+  $('#download-urls')?.addEventListener('input', () => {
+    clearTimeout(autoSuggestTimer);
+    autoSuggestTimer = setTimeout(handleUrlInputSuggest, 150);
+  });
+  $('#download-filename')?.addEventListener('input', () => {
+    const fn = $('#download-filename');
+    if (fn) delete fn.dataset.autoFilled;
+  });
+  $('#download-category')?.addEventListener('change', () => {
+    const cat = $('#download-category');
+    if (cat) delete cat.dataset.autoFilled;
+  });
+
   $('#paste-button')?.addEventListener('click', async () => {
     try {
       const urls = $('#download-urls');
       if (urls) {
         urls.value = await call('clipboard');
         urls.focus();
+        setTimeout(handleUrlInputSuggest, 20);
       }
     } catch (error) {
       const err = $('#add-error');

@@ -84,7 +84,7 @@ if (process.argv.includes('--native-host')) {
         openProgress: async ({id}) => {
           const d=engine.downloads.find(d=>d.id===id); if(!d)throw new Error('Download not found.');
           if(progressWindows.has(id)){showProgress(progressWindows.get(id));return;}
-          const progress=new BrowserWindow({width:580,height:460,minWidth:520,minHeight:400,title:d.filename,icon:appIconPath,backgroundColor:'#0f172a',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+          const progress=new BrowserWindow({width:580,height:460,minWidth:520,minHeight:400,title:d.filename,icon:appIconPath,backgroundColor:'#f2f5fa',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
           progress.setMenu(null);progressWindows.set(id,progress);progressWindowSizes.set(progress,{expanded:{width:580,height:460}});
           if(d.status==='complete'){progress.setTitle('Download complete');}
           progress.on('closed',()=>progressWindows.delete(id));
@@ -114,6 +114,15 @@ if (process.argv.includes('--native-host')) {
           return result.canceled ? null : result.filePaths[0];
         },
         clipboard: () => clipboard.readText(),
+        formats: async ({ url }) => {
+          try {
+            const { youtubeFormats, youtubeUrl } = await import('../core/youtube.mjs');
+            if (!youtubeUrl(url)) return null;
+            return await youtubeFormats(url);
+          } catch {
+            return null;
+          }
+        },
         integration
       };
       handlers.registerBrowser = data => require('./browser-registration.cjs').registerBrowser(data, { dataDirectory: app.getPath('userData'), integrationRoot });

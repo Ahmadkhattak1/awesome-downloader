@@ -83,7 +83,28 @@ async function enqueue(item, tabId) {
   if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
   const requestHeaders=requestContext.get(tabId)?.get(url);
-  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
+  let filename = item.filename;
+  if (!filename) {
+    let title = item.title;
+    if (!title && tabId >= 0 && api.tabs?.get) {
+      try {
+        const tabInfo = await api.tabs.get(tabId);
+        title = tabInfo?.title;
+      } catch {}
+    }
+    if (title) {
+      const cleanTitle = String(title)
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .replace(/[\s_]+/g, ' ')
+        .trim()
+        .slice(0, 160);
+      if (cleanTitle) {
+        const ext = item.outputFormat || (item.format ? item.format.toLowerCase() : (/\.m3u8/i.test(url) ? 'mp4' : 'mp4'));
+        filename = /\.[a-z0-9]{2,5}$/i.test(cleanTitle) ? cleanTitle : `${cleanTitle}.${ext}`;
+      }
+    }
+  }
+  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
 function updateCache(change) {
   const next = serial.then(async () => {
@@ -149,7 +170,7 @@ api.runtime.onInstalled.addListener(async () => {
 api.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
     if (info.menuItemId === 'awesome-page') { await api.tabs.sendMessage(tab.id, {action: 'collectLinks'}); await api.action.setBadgeText({tabId: tab.id, text: 'LINK'}); return; }
-    await enqueue({url: info.linkUrl || info.srcUrl, referer: tab?.url},tab?.id);
+    await enqueue({url: info.linkUrl || info.srcUrl, title: tab?.title, referer: tab?.url},tab?.id);
     await api.action.setBadgeText({tabId: tab.id, text: 'OK'});
   } catch (e) {
     await api.storage.local.set({lastError: e.message});

@@ -16,11 +16,134 @@ export function safeFilename(value) {
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
   return name;
 }
-function suggestedName(url, disposition) {
+
+const MIME_EXT_MAP = {
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/x-matroska': '.mkv',
+  'video/quicktime': '.mov',
+  'video/x-msvideo': '.avi',
+  'video/x-flv': '.flv',
+  'video/mpeg': '.mpg',
+  'audio/mpeg': '.mp3',
+  'audio/mp3': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/x-m4a': '.m4a',
+  'audio/aac': '.aac',
+  'audio/ogg': '.ogg',
+  'audio/wav': '.wav',
+  'audio/flac': '.flac',
+  'application/pdf': '.pdf',
+  'application/zip': '.zip',
+  'application/x-zip-compressed': '.zip',
+  'application/x-rar-compressed': '.rar',
+  'application/x-7z-compressed': '.7z',
+  'application/x-tar': '.tar',
+  'application/gzip': '.gz',
+  'application/vnd.android.package-archive': '.apk',
+  'application/vnd.microsoft.portable-executable': '.exe',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/svg+xml': '.svg'
+};
+
+export function extFromMime(mime) {
+  if (!mime) return '';
+  const m = String(mime).toLowerCase().split(';')[0].trim();
+  return MIME_EXT_MAP[m] || '';
+}
+
+export const GENERIC_NAME_RE = /^(videoplayback|watch|video|audio|media|download|file|stream|play|get_video|player|output|redirect)$/i;
+
+export function suggestedName(url, disposition, contentType) {
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition || '');
-  const plain = /filename="([^"]+)"|filename=([^;]+)/i.exec(disposition || '');
-  try { return safeFilename(utf ? decodeURIComponent(utf[1]) : plain ? (plain[1] || plain[2]).trim() : decodeURIComponent(new URL(url).pathname.split('/').pop()) || 'download'); }
-  catch { return 'download'; }
+  const plain = /filename="([^"]+)"|filename=([^;\s]+)/i.exec(disposition || '');
+  if (utf) {
+    try {
+      const decoded = decodeURIComponent(utf[1]).trim();
+      if (decoded) return safeFilename(decoded);
+    } catch {}
+  }
+  if (plain) {
+    const val = (plain[1] || plain[2] || '').trim();
+    if (val) return safeFilename(val);
+  }
+
+  try {
+    const parsed = new URL(url);
+
+    // YouTube canonical naming
+    const host = parsed.hostname.toLowerCase();
+    const isYt = host === 'youtu.be' || ['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(host);
+    if (isYt) {
+      const yId = host === 'youtu.be'
+        ? parsed.pathname.slice(1)
+        : (parsed.pathname === '/watch' ? parsed.searchParams.get('v') : /^\/(shorts|embed)\/([^/]+)$/.exec(parsed.pathname)?.[2]);
+      if (yId && /^[\w-]{11}$/.test(yId)) {
+        return safeFilename(`YouTube_${yId}.mp4`);
+      }
+    }
+
+    // Inspect URL query parameters for filename/title
+    const dispParam = parsed.searchParams.get('response-content-disposition');
+    if (dispParam) {
+      const pUtf = /filename\*=UTF-8''([^;]+)/i.exec(dispParam);
+      const pPlain = /filename="([^"]+)"|filename=([^;\s]+)/i.exec(dispParam);
+      if (pUtf) {
+        try { return safeFilename(decodeURIComponent(pUtf[1])); } catch {}
+      }
+      if (pPlain) {
+        const val = (pPlain[1] || pPlain[2] || '').trim();
+        if (val) return safeFilename(val);
+      }
+    }
+
+    for (const param of ['filename', 'file_name', 'file', 'title', 'name']) {
+      const val = parsed.searchParams.get(param);
+      if (val && val.length > 1 && !/^(true|false|null|undefined|\d+)$/i.test(val)) {
+        try {
+          let clean = decodeURIComponent(val).trim();
+          if (clean) {
+            const hasExt = /\.[a-z0-9]{2,5}$/i.test(clean);
+            const ext = extFromMime(contentType) || (parsed.pathname.includes('.m3u8') ? '.mp4' : '');
+            if (!hasExt && ext) clean += ext;
+            return safeFilename(clean);
+          }
+        } catch {}
+      }
+    }
+
+    // Inspect path segments
+    const segments = parsed.pathname.split('/').filter(Boolean).map(s => {
+      try { return decodeURIComponent(s); } catch { return s; }
+    });
+    const last = segments.pop() || '';
+    const hasLastExt = /\.[a-z0-9]{2,5}$/i.test(last);
+
+    let candidate = last;
+    if (!candidate || (!hasLastExt && GENERIC_NAME_RE.test(candidate)) || candidate === 'download') {
+      const prev = segments.reverse().find(s => !GENERIC_NAME_RE.test(s) && !/^(api|v\d+|rest|v1|v2|v3|player|static|assets|media|content|hls)$/i.test(s));
+      if (prev) {
+        candidate = prev;
+      }
+    }
+
+    if (!candidate || GENERIC_NAME_RE.test(candidate) || candidate === 'download') {
+      candidate = parsed.hostname.replace(/^www\./, '').split('.')[0] || 'download';
+    }
+
+    const hasExt = /\.[a-z0-9]{2,5}$/i.test(candidate);
+    if (!hasExt) {
+      const ext = extFromMime(contentType) || (/\.m3u8(?:[?#]|$)/i.test(url) ? '.mp4' : '');
+      if (ext) candidate += ext;
+    }
+
+    return safeFilename(candidate);
+  } catch {
+    return 'download';
+  }
 }
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 
@@ -211,7 +334,18 @@ export class DownloadEngine extends EventEmitter {
     const mime = String(info.headers['content-type'] || '');
     if (/mpegurl/i.test(mime)) { await this.runHls(d, headers, signal); return; }
     if (/dash\+xml/i.test(mime)) throw new Error('DASH streams need a muxing engine, which is not included yet.');
-    if (!d.explicitFilename) { d.filename = suggestedName(info.url, info.headers['content-disposition']); if (!d.explicitCategory) d.category = categoryFor(d.filename); }
+    if (!d.explicitFilename) {
+      const redirected = info.url !== d.url;
+      const hasDisposition = Boolean(info.headers['content-disposition']);
+      const isCurrentGeneric = !d.filename || GENERIC_NAME_RE.test(d.filename) || d.filename === 'download' || /^download[._]/i.test(d.filename);
+      if (hasDisposition || redirected || isCurrentGeneric) {
+        d.filename = suggestedName(info.url, info.headers['content-disposition'], mime);
+      } else if (!/\.[a-z0-9]{2,5}$/i.test(d.filename)) {
+        const ext = extFromMime(mime);
+        if (ext) d.filename = safeFilename(d.filename + ext);
+      }
+      if (!d.explicitCategory) d.category = categoryFor(d.filename);
+    }
     const dir = path.join(this.partsDirectory, d.id);
     await fs.mkdir(dir, { recursive: true });
     // Resume only when both resource identity and range support can be established.
