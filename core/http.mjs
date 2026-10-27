@@ -52,7 +52,8 @@ export async function probe(url, headers, signal) {
     response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
       response.destroy();
-      throw new Error(`Server returned HTTP ${headStatus}.`);
+      const status = headStatus >= 400 ? headStatus : response.statusCode;
+      throw new Error(`Server returned HTTP ${status}.`);
     }
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };

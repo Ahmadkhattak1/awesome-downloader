@@ -146,6 +146,19 @@ test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET pro
   assert.equal(info.ranges, true);
   assert.equal(info.validator, '"probe-1"');
 });
+test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  await assert.rejects(
+    probe(`http://127.0.0.1:${server.address().port}/notfound.mp4`, {}, new AbortController().signal),
+    /Server returned HTTP 404\./
+  );
+});
 test('invalid batches fail atomically; reserved Windows names are sanitized', async t => {
   const f = await fixture(t);
   await assert.rejects(f.engine.add({ urls: [`${f.url}/file.bin`, 'file:///C:/secret'] })); assert.equal(f.engine.downloads.length, 0);
