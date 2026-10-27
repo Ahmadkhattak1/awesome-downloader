@@ -1,6 +1,27 @@
 name: Build and release Windows installers (32-bit and 64-bit)
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New release tag, e.g. v0.2.0 (empty = v<package version>-r<run number>)'
+        required: false
+        default: ''
+      title:
+        description: 'Release title (empty = "Awesome Downloader <tag>")'
+        required: false
+        default: ''
+      notes:
+        description: 'Release notes (empty = auto-generated from commits since the previous release)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+      overwrite:
+        description: 'Replace the files of an EXISTING release with this tag (off = always create a new release)'
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'
@@ -68,34 +89,44 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          IN_TAG: ${{ inputs.tag }}
+          IN_TITLE: ${{ inputs.title }}
+          IN_NOTES: ${{ inputs.notes }}
+          IN_PRERELEASE: ${{ inputs.prerelease }}
+          IN_OVERWRITE: ${{ inputs.overwrite }}
         run: |
+          set -euo pipefail
           VERSION=$(node -p "require('./legacy/package.json').version")
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="v${VERSION}"; fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${IN_TAG}" ]; then TAG="${IN_TAG}"
+          else TAG="v${VERSION}-r${GITHUB_RUN_NUMBER}"; fi
+          case "$TAG" in v[0-9]*) ;; *) echo "Tag must look like v1.2.3 (got '$TAG')"; exit 1;; esac
+          TITLE="${IN_TITLE:-Awesome Downloader ${TAG}}"
           cd dist
           ls -l
           sha256sum Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe > SHA256SUMS.txt
-          cat > ../notes.md <<NOTES
-          ## Awesome Downloader ${TAG}
-
-          Windows installers (unsigned):
-
-          | File | For |
-          |---|---|
-          | \`Awesome-Downloader-32bit.exe\` | 32-bit Windows 7 / 8 / 8.1 / 10 / 11 |
-          | \`Awesome-Downloader-64bit.exe\` | 64-bit Windows 7 / 8 / 8.1 / 10 / 11 |
-
-          ### Notes
-          - Fixes "Awesome Downloader could not start" (\`ERR_MODULE_NOT_FOUND ... core/engine.mjs\`).
-          - YouTube capture (SABR) is unavailable in this build; direct files, HLS and other sites work.
-          - Windows may show an unsigned-app warning: choose **More info > Run anyway**.
-          - Windows 7 needs updates KB4474419 and KB4490628 installed.
-          - Verify downloads with \`SHA256SUMS.txt\`.
-
-          See docs/LEGACY.md for details.
-          NOTES
+          {
+            echo "## ${TITLE}"; echo
+            echo "Windows installers (unsigned):"; echo
+            echo "| File | For |"; echo "|---|---|"
+            echo '| `Awesome-Downloader-32bit.exe` | 32-bit Windows 7 / 8 / 8.1 / 10 / 11 |'
+            echo '| `Awesome-Downloader-64bit.exe` | 64-bit Windows 7 / 8 / 8.1 / 10 / 11 |'
+            echo; echo "### Notes"
+            if [ -n "${IN_NOTES}" ]; then printf '%s\n' "${IN_NOTES}"; fi
+            echo "- YouTube capture (SABR) is unavailable in this build; direct files, HLS and other sites work."
+            echo "- Windows may show an unsigned-app warning: choose **More info > Run anyway**."
+            echo "- Windows 7 needs updates KB4474419 and KB4490628 installed."
+            echo '- Verify downloads with `SHA256SUMS.txt`.'
+            echo; echo "See docs/LEGACY.md for details."
+          } > ../notes.md
+          FLAGS=""; if [ "${IN_PRERELEASE}" = "true" ]; then FLAGS="--prerelease"; fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "${IN_OVERWRITE}" != "true" ]; then
+              echo "::error::Release $TAG already exists. Choose a new tag, or enable 'overwrite' to replace its files."
+              exit 1
+            fi
             gh release upload "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$TAG" --title "Awesome Downloader ${TAG}" --notes-file ../notes.md --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --title "$TITLE" --notes-file ../notes.md $FLAGS --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --title "Awesome Downloader ${TAG}" --notes-file ../notes.md --target "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+            gh release create "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --title "$TITLE" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA" $FLAGS --repo "$GITHUB_REPOSITORY"
           fi
