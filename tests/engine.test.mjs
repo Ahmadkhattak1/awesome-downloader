@@ -8,6 +8,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
+import { probe } from '../core/http.mjs';
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-test-'));
@@ -114,6 +115,27 @@ test('non-range server downloads sequentially and queue/scheduled history surviv
   const restored = await new DownloadEngine({ dataDirectory: path.join(f.root, 'state'), downloadDirectory: path.join(f.root, 'downloads') }).init();
   t.after(() => restored.close()); assert.equal(restored.downloads[1].status, 'scheduled'); assert.equal(restored.downloads[0].status, 'complete');
   await restored.close();
+});
+test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET probe', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-probe-test-'));
+  const data = randomBytes(4097);
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(403); return res.end(); }
+    if (req.headers.range !== 'bytes=0-0') { res.writeHead(416); return res.end(); }
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes 0-0/${data.length}`,
+      'content-length': '1',
+      etag: '"probe-1"'
+    });
+    res.end(data.subarray(0, 1));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
+  const info = await probe(`http://127.0.0.1:${server.address().port}/coursera.mp4`, {}, new AbortController().signal);
+  assert.equal(info.total, data.length);
+  assert.equal(info.ranges, true);
+  assert.equal(info.validator, '"probe-1"');
 });
 test('invalid batches fail atomically; reserved Windows names are sanitized', async t => {
   const f = await fixture(t);
