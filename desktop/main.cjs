@@ -44,6 +44,10 @@ if (process.argv.includes('--native-host')) {
       catch (error) { dialog.showErrorBox('Browser connection unavailable', error.message); }
       const root = path.join(__dirname, '..');
       const appIconPath = path.join(root, 'assets', 'app-icon.png');
+      // An AppImage runs from a temporary mount that changes on every launch.
+      // Browsers and the native-messaging launcher must reopen the original
+      // AppImage file, not the mount path.
+      const launchExecutable = process.env.APPIMAGE || app.getPath('exe');
       let integrationRoot = root;
       if (app.isPackaged) {
         const fs = require('node:fs/promises');
@@ -57,18 +61,12 @@ if (process.argv.includes('--native-host')) {
           // executable files: do not overwrite an already identical connector.
           filter: require('./resource-copy.cjs').copyIfChanged
         });
-        const quoteBatch = value => String(value).replaceAll('%', '%%');
-        await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'),
-          `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${quoteBatch(app.getPath('exe'))}" "%~dp0native-host.cjs"\r\n`);
       }
       // Use the bundled runtime even in development; browsers need not inherit Node's PATH.
-      if (!app.isPackaged) {
-        const fs = require('node:fs/promises');
-        await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
-      }
+      await require('./native-host-launcher.cjs').writeNativeHostLauncher(path.join(integrationRoot, 'integration'), launchExecutable);
       let connectedBrowsers = [], connectionError = '';
-      await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe'));
-      await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? [] : [root]}));
+      await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, launchExecutable);
+      await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:launchExecutable,args:app.isPackaged ? [] : [root]}));
       const connectBrowsers = async () => {
         try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
         catch (error) { connectionError = error.message; }
@@ -77,7 +75,7 @@ if (process.argv.includes('--native-host')) {
       const browserScan = setInterval(connectBrowsers, 15000);
       browserScan.unref();
       const integration = async () => { await connectBrowsers(); return integrationInfo(); };
-      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
+      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: launchExecutable });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
       const handlers = {
         snapshot,
@@ -104,7 +102,13 @@ if (process.argv.includes('--native-host')) {
             const result = await shell.openPath(d.path); if (result) throw new Error(result);
           } else if (action === 'openWith') {
             if (d.status !== 'complete' || !d.path) throw new Error('This download has not finished.');
-            await new Promise((resolve,reject)=>require('node:child_process').execFile(path.join(process.env.SystemRoot||'C:\\Windows','System32','OpenWith.exe'),[d.path],{windowsHide:true},error=>error?reject(error):resolve()));
+            if (process.platform === 'win32') {
+              await new Promise((resolve,reject)=>require('node:child_process').execFile(path.join(process.env.SystemRoot||'C:\\Windows','System32','OpenWith.exe'),[d.path],{windowsHide:true},error=>error?reject(error):resolve()));
+            } else {
+              // Linux desktops have no universal "Open with" dialog; use the
+              // registered default application instead.
+              const result = await shell.openPath(d.path); if (result) throw new Error(result);
+            }
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
         },
@@ -163,7 +167,7 @@ if (process.argv.includes('--native-host')) {
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
         { label: 'View', submenu: [ { label: 'All downloads', click: command('all') }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' } ] },
-        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Windows download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
+        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Desktop download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
       ]));
       engine.on('change', () => {
         const data=snapshot();

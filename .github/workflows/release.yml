@@ -1,10 +1,10 @@
-name: Build Windows release candidate
+name: Build release candidates
 on:
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -25,5 +25,28 @@ jobs:
           path: |
             release/Awesome-Downloader-Setup.exe
             release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist:linux
+      - name: Create SHA-256 file
+        run: (cd release && sha256sum Awesome-Downloader-*-Linux-*.AppImage Awesome-Downloader-*-Linux-*.deb > SHA256SUMS-linux.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-linux-release-candidate
+          path: |
+            release/Awesome-Downloader-*-Linux-*.AppImage
+            release/Awesome-Downloader-*-Linux-*.deb
+            release/SHA256SUMS-linux.txt
           if-no-files-found: error
           retention-days: 7
