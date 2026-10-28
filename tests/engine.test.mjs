@@ -255,6 +255,20 @@ test('503 with Retry-After waits as instructed, then completes the range', async
   assert.ok(retriedAt - failedAt >= 900, `retried after ${retriedAt - failedAt}ms`);
 });
 
+test('long server cooldown stops without issuing an early retry', async t => {
+  const requests=new Map();
+  const f=await fixture(t,{intercept:(req,res)=>{
+    if(req.method!=='GET'||!req.headers.range)return false;
+    requests.set(req.headers.range,(requests.get(req.headers.range)||0)+1);
+    res.writeHead(429,{'retry-after':'3600'});res.end();return true;
+  }});
+  await f.engine.add({url:`${f.url}/file.bin`});const d=f.engine.downloads[0];
+  await until(()=>d.status==='error');
+  assert.match(d.error,/3600 seconds/);
+  assert.ok(requests.size>0);assert.ok([...requests.values()].every(count=>count===1));
+  assert.equal(d.path,null);
+});
+
 test('cancel interrupts a Retry-After wait immediately', async t => {
   let throttled = false;
   const f = await fixture(t, { intercept: (req, res) => {
@@ -267,12 +281,13 @@ test('cancel interrupts a Retry-After wait immediately', async t => {
   assert.equal(d.status, 'cancelled'); assert.ok(Date.now() - started < 2000);
 });
 
-test('Retry-After accepts seconds or an HTTP date and is bounded; only transient statuses retry', () => {
+test('Retry-After preserves server cooldowns and excludes unsupported protocol responses', () => {
   const now = Date.parse('2026-01-01T00:00:00Z');
   assert.equal(retryAfter('5', now), 5000);
   assert.equal(retryAfter('Thu, 01 Jan 2026 00:00:10 GMT', now), 10000);
   assert.equal(retryAfter('Wed, 31 Dec 2025 23:59:00 GMT', now), 0);
-  assert.equal(retryAfter('3600', now), 60000);
+  assert.equal(retryAfter('3600', now), 3600000);
+  assert.deepEqual([501,505,600].map(transientStatus),[false,false,false]);
   assert.equal(retryAfter('soon', now), null); assert.equal(retryAfter(undefined, now), null);
   assert.deepEqual([408, 429, 500, 503].map(transientStatus), [true, true, true, true]);
   assert.deepEqual([400, 403, 404, 410, 416].map(transientStatus), [false, false, false, false, false]);
