@@ -147,7 +147,8 @@ function runNativeHost({input=process.stdin,output=process.stdout,configPath}={}
           const launch = JSON.parse(fs.readFileSync(path.join(__dirname,'desktop-launch.json'),'utf8'));
           if (!path.isAbsolute(launch.executable) || !Array.isArray(launch.args)) throw new Error('Desktop launch configuration is invalid.');
           const env = {...process.env}; delete env.ELECTRON_RUN_AS_NODE;
-          const child = require('node:child_process').spawn(launch.executable,[...launch.args,'--browser-download'],{env,detached:true,windowsHide:true,stdio:'ignore'});
+          const args=launch.args.includes('--browser-download')?launch.args:[...launch.args,'--browser-download'];
+          const child = require('node:child_process').spawn(launch.executable,args,{env,detached:true,windowsHide:true,stdio:'ignore'});
           child.on('error',()=>{}); child.unref();
           for (let i=0;i<40;i++) {
             await new Promise(resolve=>setTimeout(resolve,250));

@@ -63,7 +63,10 @@ if (process.argv.includes('--native-host')) {
       }
       let connectedBrowsers = [], connectionError = '';
       await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe'));
-      await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? [] : [root]}));
+      // Keep the browser intent in the launch configuration as well as the
+      // connector. This lets an upgraded desktop repair an older connector
+      // before that connector has been replaced on disk.
+      await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? ['--browser-download'] : [root,'--browser-download']}));
       const connectBrowsers = async () => {
         try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
         catch (error) { connectionError = error.message; }
@@ -136,6 +139,9 @@ if (process.argv.includes('--native-host')) {
       await window.loadFile(path.join(root, 'renderer', 'index.html'));
       desktopReady();
       const command = name => () => window.webContents.send('downloader:command', name);
+      const dismissBrowserIntegration = () => {
+        if (!window.isDestroyed()) window.webContents.send('downloader:command', 'dismissBrowserIntegration');
+      };
       Menu.setApplicationMenu(Menu.buildFromTemplate([
         { label: 'Tasks', submenu: [ { label: 'Add new download…', accelerator: 'CmdOrCtrl+N', click: command('add') }, { label: 'Add batch download…', click: command('add') }, { label: 'Add batch download from clipboard', click: command('paste') }, { type: 'separator' },
           { label: 'Export', submenu: [{ label: 'To text file…', click: async () => {
@@ -181,7 +187,8 @@ if (process.argv.includes('--native-host')) {
       tray.setToolTip('Awesome Downloader');
       tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show downloads', click: () => window.show() }, { label: 'Quit', click: () => app.quit() }]));
       tray.on('double-click', () => window.show());
-      window.on('close', event => { if (!quitting) { event.preventDefault(); window.hide(); } });
+      window.on('minimize', dismissBrowserIntegration);
+      window.on('close', event => { if (!quitting) { event.preventDefault(); dismissBrowserIntegration(); window.hide(); } });
       app.on('activate', () => window.show());
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {
