@@ -93,8 +93,10 @@ function sanitizeRequest(message) {
   if(message.sabr!==undefined)result.sabr=sanitizeSabr(message.sabr,result.url);
   if (message.startNow === true) result.startNow = true;
   if (message.audioUrl) result.audioUrl = validateUrl(message.audioUrl);
-  if(message.outputFormat!==undefined){if(!['mp4','mp3'].includes(message.outputFormat))throw new Error('Invalid output format.');result.outputFormat=message.outputFormat;}
-  if (/\.mpd(?:[?#]|$)/i.test(result.url)) throw new Error('DASH manifests are not supported.');
+  const wide = message.extract === true || /\.mpd(?:[?#]|$)/i.test(result.url);
+  if (message.extract === true) result.extract = true;
+  if (message.extractFormat !== undefined) { if (typeof message.extractFormat !== 'string' || message.extractFormat.length > 200 || !/^[\w\s\-+*/[\]<>=!.,:()|&^$~]+$/.test(message.extractFormat) || message.extractFormat.startsWith('-')) throw new Error('Invalid video format selector.'); result.extractFormat = message.extractFormat; }
+  if(message.outputFormat!==undefined){if(!(wide?['mp4','mkv','webm','mp3','m4a','flac','wav','ogg','opus']:['mp4','mp3']).includes(message.outputFormat))throw new Error('Invalid output format.');result.outputFormat=message.outputFormat;}
   if (message.filename) {
     if (typeof message.filename !== 'string' || message.filename.length > 255 || /[\x00-\x1f<>:"/\\|?*]/.test(message.filename) || ['.', '..'].includes(message.filename)) throw new Error('Invalid filename.');
     result.filename = message.filename;

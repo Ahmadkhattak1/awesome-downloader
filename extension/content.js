@@ -75,9 +75,10 @@
             const candidates=result?.items||[];
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
             if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
-            if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
+            const pageRow=()=>{const row=document.createElement('button');row.className='row';row.type='button';row.textContent='Best quality \u2014 let Awesome Downloader find this video (any site)';row.onclick=async event=>{event.preventDefault();event.stopPropagation();row.disabled=true;hint.textContent='Opening download options\u2026';try{const response=await send({action:'download',item:{url:location.href,extract:true,title:document.title,startNow:false}});hint.textContent=response.ok?'Download opened in Awesome Downloader.':friendlyError(response.error);}catch(error){hint.textContent=friendlyError(error.message);}row.disabled=false;};chooser.append(row);position();};
+            if (!candidates.length) { pageRow(); hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
             const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
-            if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
+            if(!choices.length){pageRow();hint.textContent='No complete formats detected for this video yet. Play it briefly, or use the option below.';return;}
             choices.forEach((item,index)=>{
               const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;
               row.title=item.reason||'';
@@ -90,7 +91,7 @@
                 try{const response=await send({action:'download',item:{...item,startNow:false}});hint.textContent=response.ok?'Download opened in Awesome Downloader. Choose Start Download or Download Later there. An active download is opened instead of duplicated.':friendlyError(response.error);}catch(error){hint.textContent=friendlyError(error.message);}
                 row.disabled=!!item.unsupported;
               };chooser.append(row);
-            }); position();
+            }); if(!youtube)pageRow(); position();
           } catch(error) {hint.textContent=error.message;}
           return;
         }

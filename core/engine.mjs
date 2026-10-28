@@ -19,9 +19,10 @@ import { BlockScheduler, MIN_BLOCK } from './scheduler.mjs';
 import { HashService } from './hasher.mjs';
 import { HashSession } from './hash-session.mjs';
 import { normalizeChecksum, digestsFromHeaders } from './digest.mjs';
+import { CATEGORY, CATEGORY_NAMES, categoryFor, withExtension, looksLikeWebPage } from './filetypes.mjs';
+import { EXTRACT_FORMATS, validFormatSelector, downloadWithYtdlp, downloadWithFfmpeg, available as extractorAvailable, isAudioFormat } from './extract.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
-const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
 export function safeFilename(value) {
   let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180);
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
@@ -63,8 +64,9 @@ async function concatFiles(files, out, signal) {
 const MiB = 1024 * 1024;
 // Delay before retrying a failed request: honour Retry-After for 429/503, otherwise exponential back-off.
 const retryDelay = (error, attempt) => error?.code === 'THROTTLED' ? Math.max(error.retryAfterMs || 0, 1000 * 2 ** attempt) : 250 * 2 ** attempt;
+// Video titles often contain / : ? etc.; turn them into spaces so safeFilename() does not treat them as path parts.
+const titleName = title => String(title || '').replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
 const hostOf = url => { try { return new URL(url).host; } catch { return url; } };
-const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 
 export class DownloadEngine extends EventEmitter {
   constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
@@ -136,7 +138,7 @@ export class DownloadEngine extends EventEmitter {
       if (!patch.categoryDirectories || typeof patch.categoryDirectories !== 'object' || Array.isArray(patch.categoryDirectories)) throw new Error('Invalid category folders.');
       next.categoryDirectories = {};
       for (const [category, folder] of Object.entries(patch.categoryDirectories)) {
-        if (![...Object.keys(CATEGORY), 'Other'].includes(category) || typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid category folder.');
+        if (!CATEGORY_NAMES.includes(category) || typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid category folder.');
         next.categoryDirectories[category] = path.resolve(folder);
       }
     }
@@ -146,12 +148,15 @@ export class DownloadEngine extends EventEmitter {
     if (transportConfig().http2 !== next.http2) { configureTransport({ http2: next.http2 }); this.pool?.reconfigure(transportConfig()); }
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });
   }
-  async add({ urls, url, audioUrl, outputFormat, youtubeFormat, sabr, mirrors, checksum, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
+  async add({ urls, url, audioUrl, outputFormat, youtubeFormat, sabr, mirrors, checksum, extract, extractFormat, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
     const source = urls || (url ? [url] : []);
     if (!Array.isArray(source) || !source.length || source.length > 500) throw new Error('Add between 1 and 500 download URLs.');
     const normalized = source.map(validUrl);
     if(youtubeFormat!==undefined&&(!/^(?:audio:)?[\w-]+(?:\+[\w-]+)?$/.test(youtubeFormat)||youtubeFormat.length>80||normalized.some(u=>!youtubeUrl(u))))throw new Error('Invalid YouTube format.');
-    if(outputFormat!==undefined&&!['mp4','mp3'].includes(outputFormat))throw new Error('Invalid output format.');
+    if (extract !== undefined && typeof extract !== 'boolean') throw new Error('Invalid extract flag.');
+    if (extractFormat !== undefined && !validFormatSelector(extractFormat)) throw new Error('Invalid video format selector.');
+    const wideOutput = extract === true || normalized.some(u => /\.mpd(?:[?#]|$)/i.test(u));
+    if(outputFormat!==undefined&&!(wideOutput?EXTRACT_FORMATS:['mp4','mp3']).includes(outputFormat))throw new Error('Invalid output format.');
     const sabrSession=sabr===undefined?undefined:normalizeSabrSession(sabr);
     if(sabrSession&&normalized.length!==1)throw new Error('A SABR session requires exactly one YouTube stream.');
     const audio = audioUrl ? validUrl(audioUrl) : undefined;
@@ -167,9 +172,8 @@ export class DownloadEngine extends EventEmitter {
     if (expectedChecksum && normalized.length !== 1) throw new Error('A checksum can only be used with a single download URL.');
     const when = scheduledAt ? new Date(scheduledAt).getTime() : null;
     if (when !== null && !Number.isFinite(when)) throw new Error('Invalid scheduled time.');
-    if (normalized.some(u => /\.mpd(?:[?#]|$)/i.test(u))) throw new Error('DASH streams need a muxing engine; direct files and non-encrypted HLS VOD are supported.');
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) throw new Error('Choose an absolute save folder.');
-    if (category !== undefined && ![...Object.keys(CATEGORY), 'Other'].includes(category)) throw new Error('Invalid category.');
+    if (category !== undefined && !CATEGORY_NAMES.includes(category)) throw new Error('Invalid category.');
     if (description !== undefined && (typeof description !== 'string' || description.length > 4096)) throw new Error('Description is too long.');
     if(reuseActive && normalized.length===1){
       const existing=this.downloads.find(d=>!['complete','cancelled','error'].includes(d.status) && d.outputFormat===outputFormat &&
@@ -179,7 +183,7 @@ export class DownloadEngine extends EventEmitter {
     const added = normalized.map(u => {
       const name = safeFilename(filename || suggestedName(u));
       const selectedCategory = category || categoryFor(name);
-      return { id: randomUUID(), url: u, audioUrl: audio, mirrors: mirrorList.length ? mirrorList : undefined, checksum: expectedChecksum || undefined, outputFormat, youtubeFormat, sabr:sabrSession, filename: name, explicitFilename: Boolean(filename), category: selectedCategory, explicitCategory: Boolean(category), description: description || '',
+      return { id: randomUUID(), url: u, audioUrl: audio, mirrors: mirrorList.length ? mirrorList : undefined, checksum: expectedChecksum || undefined, extract: extract === true ? true : undefined, extractFormat, outputFormat, youtubeFormat, sabr:sabrSession, filename: name, explicitFilename: Boolean(filename), category: selectedCategory, explicitCategory: Boolean(category), description: description || '',
         status: queueOnly || reviewOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued', needsReview: reviewOnly, scheduledAt: when ? new Date(when).toISOString() : null,
         downloaded: 0, total: null, speed: 0, connections: 0, error: null, path: null,
         directory: directory || this.settings.categoryDirectories[selectedCategory] || this.settings.defaultDirectory, createdAt: new Date().toISOString(), segments: [], validator: null,
@@ -194,7 +198,7 @@ export class DownloadEngine extends EventEmitter {
     const d = this.downloads.find(d => d.id === id);
     if (!d?.needsReview || this.jobs.has(id)) throw new Error('This download is not waiting for confirmation.');
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) throw new Error('Choose an absolute save folder.');
-    if (category !== undefined && ![...Object.keys(CATEGORY), 'Other'].includes(category)) throw new Error('Invalid category.');
+    if (category !== undefined && !CATEGORY_NAMES.includes(category)) throw new Error('Invalid category.');
     if (typeof description !== 'string' || description.length > 4096) throw new Error('Description is too long.');
     const when = scheduledAt ? new Date(scheduledAt).getTime() : null;
     if (when !== null && !Number.isFinite(when)) throw new Error('Invalid scheduled time.');
@@ -256,6 +260,7 @@ export class DownloadEngine extends EventEmitter {
   async run(d, signal) {
     d.status = 'probing'; d.error = null; this.changed();
     if(d.sabr){await this.runSabr(d,cleanHeaders(d.headers),signal);return;}
+    if (d.extract) { await this.runExtract(d, cleanHeaders(d.headers), signal); return; }
     if(youtubeUrl(d.url)) {
       const dir=path.join(this.partsDirectory,d.id);await fs.mkdir(dir,{recursive:true});
       d.kind='youtube';d.resumable=true;d.connections=1;
@@ -268,12 +273,19 @@ export class DownloadEngine extends EventEmitter {
     }
     const headers = cleanHeaders(d.headers);
     if (/\.m3u8(?:[?#]|$)/i.test(d.url)) { await this.runHls(d, headers, signal); return; }
+    if (/\.mpd(?:[?#]|$)/i.test(d.url)) { await this.runFfmpegStream(d, headers, signal); return; }
     if(d.audioUrl){await this.runPairedTracks(d,headers,signal);return;}
     const info = await this.probeWithRetry(d.url, headers, signal);
     const mime = String(info.headers['content-type'] || '');
     if (/mpegurl/i.test(mime)) { await this.runHls(d, headers, signal); return; }
-    if (/dash\+xml/i.test(mime)) throw new Error('DASH streams need a muxing engine, which is not included yet.');
-    if (!d.explicitFilename) { d.filename = suggestedName(info.url, info.headers['content-disposition']); if (!d.explicitCategory) d.category = categoryFor(d.filename); }
+    if (/dash\+xml/i.test(mime)) { await this.runFfmpegStream(d, headers, signal); return; }
+    // A web page instead of a file: let yt-dlp find the video on it (any supported site). If there is none, the page
+    // itself is saved like any other file.
+    if (looksLikeWebPage(mime) && !info.headers['content-disposition'] && await extractorAvailable()) {
+      try { d.extract = true; await this.runExtract(d, headers, signal); return; }
+      catch (error) { if (error.code !== 'UNSUPPORTED') throw error; d.extract = undefined; d.kind = undefined; d.status = 'connecting'; } // nothing playable: save the page as a file
+    }
+    if (!d.explicitFilename) { d.filename = withExtension(suggestedName(info.url, info.headers['content-disposition']), mime); if (!d.explicitCategory) d.category = categoryFor(d.filename); }
     const dir = path.join(this.partsDirectory, d.id);
     await fs.mkdir(dir, { recursive: true });
     // Resume only when both resource identity and range support can be established.
@@ -507,6 +519,34 @@ export class DownloadEngine extends EventEmitter {
       if (d.integrity.status === 'warning') this.emit('integrity-warning', { ...d });
     }
     await this.assemble(d, dir, signal, [file]);
+  }
+  // Page URL of any supported site -> best video/audio via yt-dlp (ffmpeg merges and converts).
+  async runExtract(d, headers, signal) {
+    const dir = path.join(this.partsDirectory, d.id);
+    await fs.rm(dir, { recursive: true, force: true }); await fs.mkdir(dir, { recursive: true });
+    d.kind = 'extract'; d.resumable = false; d.connections = 1; d.downloaded = 0; d.total = null; d.segments = []; d.protocol = undefined;
+    d.status = 'downloading'; this.changed();
+    const result = await downloadWithYtdlp({ url: d.url, headers, directory: dir, signal, format: d.extractFormat, outputFormat: d.outputFormat, speedLimitKbps: this.settings.speedLimitKbps,
+      onMetadata: ({ title }) => { if (title && !d.explicitFilename) { d.filename = safeFilename(`${titleName(title) || 'video'}.${isAudioFormat(d.outputFormat) ? d.outputFormat : 'mp4'}`); this.changed(); } },
+      onProgress: p => { d.downloaded = p.downloaded; d.total = p.total; d.speed = p.speed; d.estimated = true; d.segments = [{ start: 0, end: p.total ? p.total - 1 : null, downloaded: p.downloaded }]; this.changed(); } });
+    if (!d.explicitFilename) d.filename = safeFilename(`${titleName(result.title) || titleName(path.basename(new URL(d.url).pathname)) || 'video'}.${result.extension}`);
+    d.duration = result.duration || d.duration;
+    if (!d.explicitCategory) d.category = isAudioFormat(result.extension) ? 'Audio' : 'Video';
+    d.total = d.downloaded = result.size; d.estimated = false; d.segments = [{ start: 0, end: result.size - 1, downloaded: result.size, done: true }];
+    await this.assemble(d, dir, signal, [result.output], true);
+  }
+  // DASH manifests and other streams that only ffmpeg can read: copied (not re-encoded) into one file.
+  async runFfmpegStream(d, headers, signal) {
+    const dir = path.join(this.partsDirectory, d.id);
+    await fs.rm(dir, { recursive: true, force: true }); await fs.mkdir(dir, { recursive: true });
+    d.kind = 'stream'; d.resumable = false; d.connections = 1; d.downloaded = 0; d.total = null; d.segments = [];
+    d.status = 'downloading'; this.changed();
+    const result = await downloadWithFfmpeg({ url: d.url, headers, directory: dir, signal, outputFormat: d.outputFormat,
+      onProgress: p => { d.downloaded = p.downloaded; d.speed = p.speed; d.estimated = true; d.segments = [{ start: 0, end: null, downloaded: p.downloaded }]; this.changed(); } });
+    if (!d.explicitFilename) d.filename = safeFilename(`${path.basename(new URL(d.url).pathname).replace(/\.[^.]+$/, '') || 'video'}.${result.extension}`);
+    if (!d.explicitCategory) d.category = isAudioFormat(result.extension) ? 'Audio' : 'Video';
+    d.total = d.downloaded = result.size; d.estimated = false; d.segments = [{ start: 0, end: result.size - 1, downloaded: result.size, done: true }];
+    await this.assemble(d, dir, signal, [result.output], true);
   }
   async runHls(d, headers, signal) {
     const plan = await resolveHls(d.url, headers, signal);

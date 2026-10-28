@@ -67,7 +67,7 @@ test('frame list is restricted to its sender tab and excludes non-media links',a
   await h.request({action:'remember',items:[{url:'https://example.com/a.mp4'},{url:'https://example.com/page'},{url:'https://example.com/a.mpd'}]},{id:'extension-id',tab:{id:3}});
   await h.request({action:'remember',items:[{url:'https://private.example/other.mp4'}]},{id:'extension-id',tab:{id:4}});
   const result=await h.request({action:'listForFrame',tabId:4},{id:'extension-id',tab:{id:3}});
-  assert.equal(result.items.length,2); assert.equal(result.items[0].url,'https://example.com/a.mp4'); assert.equal(result.items[1].unsupported,true);
+  assert.equal(result.items.length,2); assert.equal(result.items[0].url,'https://example.com/a.mp4'); assert.equal(result.items[1].unsupported,false);
   assert.equal(await h.request({action:'listForFrame'},{id:'foreign',tab:{id:3}}),undefined);
   assert.equal((await h.request({action:'listForFrame'},{id:'extension-id'})).ok,false);
 });

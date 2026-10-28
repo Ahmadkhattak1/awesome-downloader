@@ -54,10 +54,13 @@ async function refreshLive(){
 }
 setInterval(refreshLive,2000);
 document.querySelector('#intercept').onchange=event=>api.storage.local.set({interceptDownloads:event.target.checked});
+document.querySelector('#exclude').onchange=event=>api.storage.local.set({interceptExclude:event.target.value.trim().slice(0,2000)});
+document.querySelector('#page-video').onclick=async()=>{try{await download({url:tab.url,extract:true,title:tab.title});status.textContent='Looking for the video on this page\u2026 the desktop app will open it.';}catch(e){status.textContent=e.message;}};
 (async()=> {
   [tab]=await api.tabs.query({active:true,currentWindow:true});
-  const settings=await api.storage.local.get(['interceptDownloads','lastError']);
-  document.querySelector('#intercept').checked=!!settings.interceptDownloads;
+  const settings=await api.storage.local.get(['interceptDownloads','interceptExclude','lastError']);
+  document.querySelector('#intercept').checked=settings.interceptDownloads!==false;
+  document.querySelector('#exclude').value=settings.interceptExclude||'';
   status.textContent=settings.lastError || '';
   await api.storage.local.remove('lastError');
   await refresh();

@@ -216,7 +216,7 @@ if (process.argv.includes('--native-host')) {
           const text = clipboard.readText().trim();
           if (!text || text === lastClipboard) return;
           lastClipboard = text;
-          if (text.length > 2048 || /\s/.test(text) || !/^https?:\/\/[^/]+\/.+\.(zip|7z|rar|iso|exe|msi|pdf|mp4|mkv|webm|mp3|m4a|flac|wav|docx?|xlsx?|pptx?|apk|dmg|gz|tar|torrent)(?:[?#].*)?$/i.test(text)) return;
+          if (text.length > 2048 || /\s/.test(text) || !/^https?:\/\/[^/]+\/.+\.(zip|7z|rar|iso|img|exe|msi|msix|pdf|mp4|mkv|webm|mov|avi|flv|ts|m3u8|mpd|mp3|m4a|aac|ogg|opus|flac|wav|jpe?g|png|gif|webp|svg|docx?|xlsx?|pptx?|epub|apk|dmg|pkg|deb|rpm|gz|xz|bz2|zst|tar|torrent)(?:[?#].*)?$/i.test(text)) return;
           if (!Notification.isSupported()) return;
           const note = new Notification({ title: 'Download link copied', body: 'Click to add it to Awesome Downloader.' });
           note.on('click', () => { if (window.isDestroyed()) return; window.show(); window.focus(); window.webContents.send('downloader:command', 'paste'); });

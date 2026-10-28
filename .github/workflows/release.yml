@@ -15,6 +15,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Fetch and verify yt-dlp (page video extraction)
+        run: node scripts/fetch-ytdlp.mjs vendor x64
       - run: npm run dist
       - name: Create SHA-256 file
         shell: powershell

@@ -119,7 +119,8 @@ test('invalid batches fail atomically; reserved Windows names are sanitized', as
   const f = await fixture(t);
   await assert.rejects(f.engine.add({ urls: [`${f.url}/file.bin`, 'file:///C:/secret'] })); assert.equal(f.engine.downloads.length, 0);
   assert.equal(safeFilename('../../CON.exe'), 'download_CON.exe');
-  await assert.rejects(f.engine.add({ url: `${f.url}/stream.mpd` }), /muxing engine/);
+  await assert.rejects(f.engine.add({ url: `${f.url}/file.bin`, outputFormat: 'mkv' }), /output format/);
+  await f.engine.updateSettings({ maxConcurrent: 1 }); // DASH manifests are accepted now (ffmpeg copies them)
 });
 test('bridge requires token and rejects web origins before enqueuing', async t => {
   const f = await fixture(t); const bridge = await startBridge(f.engine, { dataDirectory: path.join(f.root, 'state'), port: 0 });

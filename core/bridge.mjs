@@ -33,7 +33,7 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
       }
       if(req.url==='/formats')return answer(200,{ok:true,items:await youtubeFormats(body.url)});
       // Browser callers cannot select filesystem destinations or arbitrary app actions.
-      const payload = { url: body.url, youtubeFormat:body.youtubeFormat, sabr:body.sabr, startNow: body.startNow === true, audioUrl: body.audioUrl, outputFormat:body.outputFormat, urls: body.urls, filename: body.filename, referer: body.referer, headers: body.headers };
+      const payload = { url: body.url, youtubeFormat:body.youtubeFormat, sabr:body.sabr, startNow: body.startNow === true, audioUrl: body.audioUrl, outputFormat:body.outputFormat, extract: body.extract === true ? true : undefined, extractFormat: body.extractFormat, urls: body.urls, filename: body.filename, referer: body.referer, headers: body.headers };
       const ids = await (onDownload ? onDownload(payload) : engine.add(payload));
       answer(201, { ok: true, ids });
     } catch (error) { if (!res.headersSent) answer([429,422].includes(error.statusCode)?error.statusCode:400, { error: error.message }); }

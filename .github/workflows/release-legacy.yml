@@ -54,6 +54,8 @@ jobs:
         env:
           FFMPEG_IA32_URL: ${{ vars.FFMPEG_IA32_URL }}
         run: node fetch-ffmpeg.mjs
+      - name: Fetch and verify yt-dlp (page video extraction)
+        run: node scripts/fetch-ytdlp.mjs vendor ${{ matrix.arch }}
       - name: Stage and verify legacy sources
         working-directory: legacy
         run: |

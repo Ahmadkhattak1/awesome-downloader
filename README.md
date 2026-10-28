@@ -84,3 +84,16 @@ their own licenses, including GPL-covered FFmpeg components; see
 [THIRD-PARTY.md](THIRD-PARTY.md). Proprietary binaries, extracted evidence, local
 research and test screenshots are not part of the public source.
 Only download content you are permitted to save.
+
+## Any file, any site, browser takeover
+
+- **Browser downloads go through Awesome Downloader by default** (like IDM). Every `http(s)` file type is handed to the
+  desktop app; the browser copy is canceled only after the app accepts it. Exclude sites or types (`example.com, .pdf`)
+  in the extension popup, or switch the takeover off there.
+- **Any video page:** use the extension's *Download this page's video* button, the button over a player, the right-click
+  menu, or tick *This address is a web page* in Download File Info. yt-dlp (bundled, SHA-256 verified at build time)
+  finds the best streams, ffmpeg merges them; pick quality (up to 4K / 1080p / 720p / audio only) and container
+  (MP4, MKV, WebM, MP3, M4A, FLAC, WAV). A page without a video is saved as a normal file.
+- **Streams:** progressive files (mp4, mkv, flv, avi, ts, ...), HLS, and DASH `.mpd` manifests are supported.
+- **Not possible:** DRM-protected streams (Widevine / PlayReady / FairPlay, e.g. Netflix, Disney+) are refused with a
+  clear message; this app does not and will not circumvent DRM. Some sites also need you to be signed in.

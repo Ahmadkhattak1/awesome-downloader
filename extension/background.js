@@ -35,7 +35,9 @@ api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*
 function httpUrl(value) {
   try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
 }
-function unsupported(url, mime = '') { return /\.mpd(?:[?#]|$)/i.test(url) || /dash\+xml/i.test(mime); }
+function unsupported() { return false; } // DASH, HLS, progressive files and page extraction are all handled by the desktop app
+const MEDIA_EXT=/\.(?:mp4|webm|mkv|mov|m4v|flv|f4v|avi|wmv|3gp|ogv|mpe?g|mp3|m4a|aac|flac|ogg|opus|wav|wma|m3u8|mpd)(?:[?#]|$)/i;
+const MEDIA_MIME=/^(?:video|audio)\/|dash\+xml|mpegurl/i;
 function isFragment(url) { return /\.(m4s|ts|aac)(?:[?#]|$)/i.test(url) || /\/init[^/]*\.mp4(?:[?#]|$)/i.test(url); }
 const hlsSeen=new Map(); let hlsActive=0;
 async function discoverHls(tabId,url) {
@@ -83,7 +85,7 @@ async function enqueue(item, tabId) {
   if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
   const requestHeaders=requestContext.get(tabId)?.get(url);
-  return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
+  return nativeSend({action: 'download', url, extract:item.extract===true?true:undefined, extractFormat:item.extractFormat, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
 function updateCache(change) {
   const next = serial.then(async () => {
@@ -132,7 +134,7 @@ api.webRequest.onHeadersReceived.addListener(details => {
     youtubeObserved.set(details.tabId,urls.slice(0,100));
     if(youtubeObserved.size>50)youtubeObserved.delete(youtubeObserved.keys().next().value);
   }
-  if (details.type === 'media' || /^(video|audio)\//i.test(mime) || unsupported(details.url, mime)) {
+  if (details.type === 'media' || MEDIA_MIME.test(mime) || (MEDIA_EXT.test(details.url) && ![301,302,303,307,308,404].includes(details.statusCode))) {
     remember(details.tabId, [{url: details.url, mime}]).catch(() => {});
   }
   if(/\.m3u8(?:[?#]|$)/i.test(details.url)||/mpegurl/i.test(mime))discoverHls(details.tabId,details.url);
@@ -152,14 +154,18 @@ async function registerLegacyMainWorldScripts() {
 registerLegacyMainWorldScripts();
 api.runtime.onInstalled.addListener(async () => {
   try {
+    const stored = await api.storage.local.get('interceptDownloads');
+    if (stored.interceptDownloads === undefined) await api.storage.local.set({interceptDownloads: true}); // IDM-style: browser downloads go to the desktop app
     await api.contextMenus.removeAll();
     api.contextMenus.create({id: 'awesome-link', title: 'Download with Awesome Downloader', contexts: ['link', 'video', 'audio']});
     api.contextMenus.create({id: 'awesome-page', title: 'Find downloadable links on this page', contexts: ['page']});
+    api.contextMenus.create({id: 'awesome-page-video', title: 'Download this page\u2019s video (any site)', contexts: ['page', 'video']});
   } catch (error) { await api.storage.local.set({lastError: error.message}); }
 });
 api.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
     if (info.menuItemId === 'awesome-page') { await api.tabs.sendMessage(tab.id, {action: 'collectLinks'}); await api.action.setBadgeText({tabId: tab.id, text: 'LINK'}); return; }
+    if (info.menuItemId === 'awesome-page-video') { await enqueue({url: info.pageUrl || tab?.url, extract: true, referer: tab?.url},tab?.id); await api.action.setBadgeText({tabId: tab.id, text: 'OK'}); return; }
     await enqueue({url: info.linkUrl || info.srcUrl, referer: tab?.url},tab?.id);
     await api.action.setBadgeText({tabId: tab.id, text: 'OK'});
   } catch (e) {
@@ -206,7 +212,7 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       }
       await serial;
       const data = await api.storage.session.get(CACHE_KEY);
-      return {ok:true, items:(data[CACHE_KEY]?.[sender.tab.id] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url))};
+      return {ok:true, items:(data[CACHE_KEY]?.[sender.tab.id] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || MEDIA_EXT.test(item.url))};
     }
     // Live sync with the desktop app: popup-only, never from page content scripts.
     if (message.action === 'status' && !sender.tab) return nativeSend({action: 'status'});
@@ -216,11 +222,24 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   task().then(respond, error => respond({ok: false, error: error.message}));
   return true;
 });
+// Which browser downloads are handed to the desktop app. Everything with an http(s) address is (any file type);
+// blob:/data:/file: downloads and downloads started by other extensions stay in the browser. Users can exclude
+// sites ("example.com") and file types (".pdf") in the popup.
+function shouldIntercept(item, enabled, excludeText) {
+  if (!enabled || item.byExtensionId) return false;
+  const url = httpUrl(item.finalUrl || item.url);
+  if (!url) return false;
+  const host = new URL(url).hostname.toLowerCase(), name = String(item.filename || new URL(url).pathname).toLowerCase();
+  for (const rule of String(excludeText || '').toLowerCase().split(/[\s,;]+/).filter(Boolean)) {
+    if (rule.startsWith('.') ? name.endsWith(rule) : host === rule.replace(/^\*\./, '') || host.endsWith('.' + rule.replace(/^\*\./, ''))) return false;
+  }
+  return true;
+}
 api.downloads.onCreated.addListener(async item => {
   let paused=false;
   try {
-    const {interceptDownloads = false} = await api.storage.local.get('interceptDownloads');
-    if (!interceptDownloads || !httpUrl(item.finalUrl || item.url)) return;
+    const {interceptDownloads = true, interceptExclude = ''} = await api.storage.local.get(['interceptDownloads','interceptExclude']);
+    if (!shouldIntercept(item, interceptDownloads, interceptExclude)) return;
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id); paused=true;
     await enqueue({url: item.finalUrl || item.url, filename: item.filename?.split(/[\\/]/).pop(), referer: item.referrer},item.tabId);
