@@ -49,7 +49,8 @@ function rememberRequest(details) {
   }
   tab.set(details.url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
 }
-api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*/*','https://*/*']},['requestHeaders',...(globalThis.browser?[]:['extraHeaders'])]);
+// Chromium (which now also defines `browser`) withholds Cookie and Referer unless extraHeaders is requested; Firefox has no such option.
+api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*/*','https://*/*']},['requestHeaders',...(api.webRequest.OnBeforeSendHeadersOptions?.EXTRA_HEADERS?['extraHeaders']:[])]);
 function httpUrl(value) {
   try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
 }

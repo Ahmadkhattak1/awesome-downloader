@@ -3,12 +3,12 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
-function harness(initialData={}) {
-  const events={}, nativeRequests=[],downloadCalls=[];
-  const event=name=>({addListener(fn){events[name]=fn;}});
+function harness({initialData={},webRequest={}}={}) {
+  const events={},specs={},nativeRequests=[],downloadCalls=[];
+  const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data=structuredClone(initialData),downloads=new Map();
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
   Object.assign(browser.downloads,{
     async pause(id){downloadCalls.push(['pause',id]);downloads.get(id).state='paused';},
     async resume(id){downloadCalls.push(['resume',id]);downloads.get(id).state='in_progress';},
@@ -16,7 +16,7 @@ function harness(initialData={}) {
   });
   browser.tabs.sendMessage=async()=>({ok:true});
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -80,7 +80,7 @@ test('captured YouTube session survives a service worker restart',async()=>{
  first.events.beforeRequest({requestId:'persist',tabId:28,url:stream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
  first.events.response({requestId:'persist',tabId:28,url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
  await new Promise(resolve=>setImmediate(resolve));
- const restarted=harness(first.data);await restarted.request({action:'playerResponse',data:player},sender);
+ const restarted=harness({initialData:first.data});await restarted.request({action:'playerResponse',data:player},sender);
  const item=(await restarted.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
  await restarted.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(restarted.nativeRequests[0].sabr.requestBody,'AQID');
@@ -132,6 +132,15 @@ test('request credentials stay out of storage and cannot cross tab or URL bounda
   h.events.updated(3,{status:'loading'});
   await h.request({action:'download',item:{url}},{id:'extension-id',tab:{id:3}});
   assert.equal(h.nativeRequests[2].requestHeaders,undefined);
+});
+test('Chromium is asked for extraHeaders so the captured cookie reaches the desktop',async()=>{
+  // Like Chromium: `browser` is defined, and Cookie is only visible when extraHeaders was requested.
+  const h=harness({webRequest:{OnBeforeSendHeadersOptions:{EXTRA_HEADERS:'extraHeaders'}}}),url='https://example.com/private.mp4';
+  const visible=h.specs.requestHeaders.includes('extraHeaders')?[{name:'Cookie',value:'session=test-only'}]:[];
+  h.events.requestHeaders({tabId:3,url,requestHeaders:[{name:'User-Agent',value:'Test'},...visible]});
+  await h.request({action:'download',item:{url}},{id:'extension-id',tab:{id:3}});
+  assert.equal(h.nativeRequests[0].requestHeaders.cookie,'session=test-only');
+  assert.deepEqual([...harness().specs.requestHeaders],['requestHeaders']);
 });
 
 test('individual HLS media fragments are not listed as complete videos',async()=>{
