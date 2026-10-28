@@ -102,6 +102,15 @@ test('duplicate browser downloads share one native handoff',async()=>{
  assert.equal(h.nativeRequests.length,1);assert.equal(h.download(1),undefined);assert.equal(h.download(2),undefined);
  assert.deepEqual(h.downloadCalls.filter(([name])=>name==='pause').length,2);assert.deepEqual(h.downloadCalls.filter(([name])=>name==='cancel').length,2);
 });
+test('identical URLs from different tabs do not share a credential-bearing handoff',async()=>{
+ const h=harness();h.data.interceptDownloads=true;
+ const url='https://example.com/file.bin';
+ for(const tabId of [3,4])h.events.requestHeaders({tabId,url,requestHeaders:[{name:'Cookie',value:'session='+tabId}]});
+ await Promise.all([3,4].map(tabId=>h.events.download(h.createDownload({id:tabId,tabId,url}))));
+ assert.equal(h.nativeRequests.length,2);
+ assert.deepEqual(h.nativeRequests.map(r=>r.requestHeaders.cookie).sort(),['session=3','session=4']);
+});
+
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
   const url='https://example.com/video.m3u8';

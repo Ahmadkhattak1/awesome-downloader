@@ -452,6 +452,9 @@ export class DownloadEngine extends EventEmitter {
         return;
       } catch (error) {
         if (signal.aborted || attempt === 3 || error.retryable === false) throw error;
+        // Never shorten the server's requested cooldown. Long waits release
+        // the active job instead of consuming a download slot indefinitely.
+        if (error.retryDelay > 60000) throw failure('The server requested a longer cooldown. Retry after ' + Math.ceil(error.retryDelay / 1000) + ' seconds. Partial data has been kept.');
         await delay(error.retryDelay ?? 250 * 2 ** attempt, undefined, { signal });
       }
     }

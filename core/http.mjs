@@ -69,12 +69,12 @@ export async function probe(url, headers, signal) {
     validator: info.headers.etag && !info.headers.etag.startsWith('W/') ? info.headers.etag : info.headers['last-modified'] || null };
 }
 
-// Only these statuses can succeed on a later attempt; other client errors are final.
-export const transientStatus = status => status === 408 || status === 429 || status >= 500;
+// Candidates for retrying the same GET; session/URL recovery is a separate concern.
+export const transientStatus = status => status === 408 || status === 429 || (status >= 500 && status <= 599 && ![501, 505].includes(status));
 
-// Retry-After is delta-seconds or an HTTP date; capped so a server cannot stall a transfer indefinitely.
-export function retryAfter(value, now = Date.now(), cap = 60000) {
+// Preserve the requested cooldown; the caller decides whether to wait or stop.
+export function retryAfter(value, now = Date.now()) {
   if (typeof value !== 'string' || !value.trim()) return null;
   const ms = /^\d+$/.test(value.trim()) ? Number(value.trim()) * 1000 : Date.parse(value) - now;
-  return Number.isFinite(ms) ? Math.min(cap, Math.max(0, ms)) : null;
+  return Number.isFinite(ms) ? Math.max(0, ms) : null;
 }

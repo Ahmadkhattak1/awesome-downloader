@@ -233,9 +233,10 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
 });
 const pendingHandoffs=new Map();
 function sharedHandoff(url,item){
-  let pending=pendingHandoffs.get(url);if(pending)return pending;
-  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(url));
-  pendingHandoffs.set(url,pending);pending.catch(()=>{});return pending;
+  const key=JSON.stringify([item.tabId,item.referrer||'',url]);
+  let pending=pendingHandoffs.get(key);if(pending)return pending;
+  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(key));
+  pendingHandoffs.set(key,pending);pending.catch(()=>{});return pending;
 }
 api.downloads.onCreated.addListener(async item => {
   const url=item.finalUrl||item.url;
