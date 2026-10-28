@@ -4,28 +4,38 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness() {
-  const events={}, nativeRequests=[], downloadCalls=[];
-  const event=name=>({addListener(fn){events[name]=fn;}});
   const data={};
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  let nativeFailure=null;
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){if(nativeFailure)throw new Error(nativeFailure);nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
-  browser.tabs.sendMessage=async()=>({ok:true});
+  let nativeFailure=null,cancelFailure=null;
   const downloadItems=new Map();
-  let cancelFailure=null;
-  Object.assign(browser.downloads,{
-    async pause(id){downloadCalls.push(['pause',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state==='complete')throw new Error('Download is already complete.');item.state='paused';},
-    async resume(id){downloadCalls.push(['resume',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state!=='paused')throw new Error('Download is not paused.');item.state='in_progress';},
-    async cancel(id){downloadCalls.push(['cancel',id]);if(cancelFailure)throw new Error(cancelFailure);if(!downloadItems.delete(id))throw new Error('Download not found.');},
-    async search(query){const item=downloadItems.get(query.id);return item?[structuredClone(item)]:[];}
-  });
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,data,nativeRequests,downloadCalls,
+  let state={};
+  function boot(){
+    // A fresh context models Chrome restarting the service worker: only the
+    // storage it wrote survives.
+    const events={},nativeRequests=[],downloadCalls=[];
+    const event=name=>({addListener(fn){events[name]=fn;}});
+    const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){if(nativeFailure)throw new Error(nativeFailure);nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+    browser.tabs.sendMessage=async()=>({ok:true});
+    Object.assign(browser.downloads,{
+      async pause(id){downloadCalls.push(['pause',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state==='complete')throw new Error('Download is already complete.');item.state='paused';},
+      async resume(id){downloadCalls.push(['resume',id]);const item=downloadItems.get(id);if(!item)throw new Error('Download not found.');if(item.state!=='paused')throw new Error('Download is not paused.');item.state='in_progress';},
+      async cancel(id){downloadCalls.push(['cancel',id]);if(cancelFailure)throw new Error(cancelFailure);if(!downloadItems.delete(id))throw new Error('Download not found.');},
+      async search(query){const item=downloadItems.get(query.id);return item?[structuredClone(item)]:[];}
+    });
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
+    state={events,nativeRequests,downloadCalls};
+  }
+  boot();
+  return {data,
+    get events(){return state.events;},
+    get nativeRequests(){return state.nativeRequests;},
+    get downloadCalls(){return state.downloadCalls;},
+    restart:boot,
     createDownload(item){const record={state:'in_progress',tabId:-1,referrer:'',filename:'',...item};downloadItems.set(record.id,record);return structuredClone(record);},
     download(id){return downloadItems.get(id);},
     failNative(message){nativeFailure=message;},
     failCancel(message){cancelFailure=message;},
-    request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+    request(message,sender){return new Promise(resolve=>{const accepted=state.events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -62,10 +72,41 @@ test('captured SABR request context is handed to the desktop with the selected t
  assert.equal(h.nativeRequests[0].sabr.serverAbrStreamingUrl,stream);
  h.events.response({requestId:'pending',tabId:8,url:stream+'&seq=2',statusCode:403});
  await h.request({action:'download',item:{...item,startNow:true}},sender);
- assert.equal(h.nativeRequests[1].sabr.requestBody,'AQID');
- h.events.updated(8,{status:'loading'});
+ assert.equal(h.nativeRequests[1].sabr.requestBody,'AQID'); h.events.updated(8,{status:'loading'});
  const rejected=await h.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,2);
+});
+test('a captured SABR session survives the service worker being stopped',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:8,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ const stream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+ const player={videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:stream,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[
+  {itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},
+  {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}
+ ]};
+ await h.request({action:'playerResponse',data:player},sender);
+ h.events.beforeRequest({requestId:'seed',tabId:8,url:stream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+ h.events.response({requestId:'seed',tabId:8,url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[{name:'Content-Type',value:'application/vnd.yt-ump'}]});
+ // Chrome terminates the worker and its in-memory maps; the page republishes
+ // player data on refresh, but the network capture only exists in storage.
+ h.restart();
+ await h.request({action:'playerResponse',data:player},sender);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ assert.ok(item,'the restored capture should keep SABR formats selectable');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+});
+test('SABR formats stay hidden until a session has been captured',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:8,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ const stream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+ await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:stream,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[
+  {itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},
+  {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}
+ ]}},sender);
+ const result=await h.request({action:'listForFrame'},sender);
+ assert.deepEqual(result.items,[]);
+ assert.match(result.notice,/captured/i);
+ const rejected=await h.request({action:'download',item:{url:stream,sabrSelection:{videoItag:137,audioItag:140}}},sender);
+ assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,0);
 });
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
