@@ -1,6 +1,6 @@
 # Browser integration
 
-Start Awesome Downloader once, install its unpacked extension in Chrome or Edge, and reload existing video tabs. The app detects this extension and registers its own Windows native host automatically. There is no extension-ID or Connect step. For development use `extension/`; the packaged app shows its extension folder in Browser Integration.
+Start Awesome Downloader once, install its unpacked extension in Chrome or Edge, and reload existing video tabs. The app detects this extension and registers its own Windows native host automatically. If automatic detection does not find the extension, the Browser Integration dialog also offers a manual Connect step: choose the browser, enter the extension ID shown on the browser's extensions page, and click Connect. For development use `extension/`; the packaged app shows its extension folder in Browser Integration.
 
 Click **Download this video**, choose a quality/format, then **Start Download** in Download File Info. A separate progress window shows speed, transferred bytes, time remaining, and connection progress. Supported HLS can produce MP4; MP3 is offered when a separate audio track is identified. Qualities come from real manifest metadata.
 
