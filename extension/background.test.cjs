@@ -3,15 +3,15 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
-function harness() {
-  const events={}, nativeRequests=[];
-  const event=name=>({addListener(fn){events[name]=fn;}});
+function harness({webRequest={}}={}) {
+  const events={}, specs={}, nativeRequests=[];
+  const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data={};
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
   browser.tabs.sendMessage=async()=>({ok:true});
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,specs,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -83,6 +83,15 @@ test('request credentials stay out of storage and cannot cross tab or URL bounda
   h.events.updated(3,{status:'loading'});
   await h.request({action:'download',item:{url}},{id:'extension-id',tab:{id:3}});
   assert.equal(h.nativeRequests[2].requestHeaders,undefined);
+});
+test('Chromium is asked for extraHeaders so the captured cookie reaches the desktop',async()=>{
+  // Like Chromium: `browser` is defined, and Cookie is only visible when extraHeaders was requested.
+  const h=harness({webRequest:{OnBeforeSendHeadersOptions:{EXTRA_HEADERS:'extraHeaders'}}}),url='https://example.com/private.mp4';
+  const visible=h.specs.requestHeaders.includes('extraHeaders')?[{name:'Cookie',value:'session=test-only'}]:[];
+  h.events.requestHeaders({tabId:3,url,requestHeaders:[{name:'User-Agent',value:'Test'},...visible]});
+  await h.request({action:'download',item:{url}},{id:'extension-id',tab:{id:3}});
+  assert.equal(h.nativeRequests[0].requestHeaders.cookie,'session=test-only');
+  assert.deepEqual([...harness().specs.requestHeaders],['requestHeaders']);
 });
 
 test('individual HLS media fragments are not listed as complete videos',async()=>{
