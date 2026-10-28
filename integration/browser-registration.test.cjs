@@ -32,3 +32,17 @@ test('automatic discovery connects every installed Chromium browser and profile'
   assert.deepEqual(result.map(value=>value.browser),['Chrome','Edge','Brave','Opera']);
   assert.deepEqual(Object.fromEntries(calls.map(value=>[value.browser,value.extensionId])),ids);
 });
+
+test('Firefox add-on discovery registers its fixed native messaging identity',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'awesome-firefox-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const integrationRoot=path.join(root,'app'), extension=path.join(integrationRoot,'extension');
+  await fs.mkdir(extension,{recursive:true});
+  const profile=path.join(root,'roaming',BROWSERS.Firefox.data,'profile.default');
+  await fs.mkdir(profile,{recursive:true});
+  await fs.writeFile(path.join(profile,'extensions.json'),JSON.stringify({addons:[{id:'awesome-downloader@morluto.local',active:true,appDisabled:false}]}));
+  const calls=[];
+  const result=await connectInstalledBrowsers({dataDirectory:path.join(root,'data'),integrationRoot,localAppData:path.join(root,'local'),roamingAppData:path.join(root,'roaming')},{register:async input=>{calls.push(input);return {manifestPath:'unused'};}});
+  assert.deepEqual(result,[{browser:'Firefox',connected:true,profiles:1}]);
+  assert.deepEqual(calls,[{browser:'Firefox',extensionId:'awesome-downloader@morluto.local'}]);
+});

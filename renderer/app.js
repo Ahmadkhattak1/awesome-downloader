@@ -25,75 +25,85 @@ const iconPaths = {
 };
 for (const button of $$('[data-icon]')) { const svg = document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.setAttribute('viewBox','0 0 34 34'); svg.setAttribute('aria-hidden','true'); for (const data of iconPaths[button.dataset.icon] || []) { const path = document.createElementNS('http://www.w3.org/2000/svg','path'); path.setAttribute('d',data); svg.append(path); } button.prepend(svg); }
 function element(tag,className,text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node; }
-// Browser registration stays local and is performed by the trusted desktop bridge.
-const registrationForm = element('form','registration-form');
-const registrationFieldset = element('fieldset');
-registrationFieldset.append(element('legend','','Connect browser'));
-const browserLine = element('div','form-line');
-const browserLabel = element('label','','Browser:'); browserLabel.htmlFor = 'register-browser';
-const browserSelect = element('select'); browserSelect.id = 'register-browser';
-for (const browser of ['Chrome','Edge','Brave','Opera','Firefox']) browserSelect.append(element('option','',browser));
-browserLine.append(browserLabel,browserSelect);
-const idLine = element('div','form-line'); const idLabel = element('label','','Extension ID:'); idLabel.htmlFor = 'register-extension-id';
-const idInput = element('input'); idInput.id = 'register-extension-id'; idInput.required = true; idInput.spellcheck = false;
-idLine.append(idLabel,idInput);
-const registerButton = element('button','button','Connect'); registerButton.type = 'submit';
-const registrationResult = element('p','registration-result'); registrationResult.id = 'registration-result'; registrationResult.setAttribute('role','status');
-registrationFieldset.append(browserLine,idLine,registerButton,registrationResult); registrationForm.append(registrationFieldset);
-$('.setup-steps').after(registrationForm);
-registrationForm.addEventListener('submit',async event => { event.preventDefault(); registerButton.disabled = true; registrationResult.textContent = ''; try { const result = await call('registerBrowser',{browser:browserSelect.value,extensionId:idInput.value.trim()}); if (result?.extensionPath) $('#extension-path').value = result.extensionPath; registrationResult.dataset.error = 'false'; registrationResult.textContent = 'Browser connected. Reload the extension, then try a download.'; } catch (error) { registrationResult.dataset.error = 'true'; registrationResult.textContent = messageOf(error); } finally { registerButton.disabled = false; } });
 const rememberLabel = element('label','checkbox-label'); const rememberInput = element('input'); rememberInput.type = 'checkbox'; rememberInput.id = 'remember-category-path'; rememberInput.disabled = true; rememberLabel.append(rememberInput,document.createTextNode('Remember this folder for the selected category'));
 $('#add-directory').closest('.form-line').after(rememberLabel);
-const integrationHelp = $$('.field-help',$('#integration-dialog'));
-if (integrationHelp.length) integrationHelp[integrationHelp.length - 1].textContent = 'Video choices open Download File Info, then a separate progress window. Supported HLS videos can be saved as MP4, including separate audio tracks. MP3 is offered when an audio track is detected.';
-const manualConnection = element('details'); manualConnection.append(element('summary','','Manual connection command'),$('#registration-command'));
-const connectionStep = $$('.setup-steps li')[2]; connectionStep.replaceChildren(document.createTextNode('Copy the extension ID shown by your browser and enter it below. Click Connect, then reload the extension.'));
-registrationForm.after(manualConnection);
-registrationForm.hidden = true;
-manualConnection.hidden = true;
-$('.setup-steps').hidden = true;
-const automaticConnection = element('p','connection-status','Checking installed browsers…');
-automaticConnection.id = 'automatic-connection';
-registrationForm.before(automaticConnection);
-const retryConnection = element('button','button','Refresh browsers');
-retryConnection.type = 'button'; retryConnection.addEventListener('click',()=>openIntegration());
-automaticConnection.after(retryConnection);
-const installHelp = element('section');
-installHelp.append(element('p','','The browser extension adds “Download this video” buttons to web videos. It is included with Awesome Downloader. Follow these steps once for each browser you use.'));
-const setupActions = element('div','transfer-buttons');
-for (const browser of ['Chrome','Edge','Brave','Opera']) {
-  const button = element('button','button',`Open ${browser} extensions`); button.type = 'button';
-  button.addEventListener('click',async()=>{try{await call('browserSetup',{action:'open',browser});}catch(error){notify(messageOf(error),true);}});
-  setupActions.append(button);
+let integrationBrowsers = [], selectedBrowserName = null, setupPolling = false;
+const browserStatus = browser => browser.connected ? ['Connected','connected'] : browser.support === 'preview' ? ['Preview','preview'] : browser.installed ? ['Setup needed','setup'] : ['Not installed','missing'];
+function browserIcon(browser, className = '') {
+  const frame = element('span',`browser-icon-frame ${className}`.trim());
+  if (browser.icon) { const image = element('img'); image.src = browser.icon; image.alt = ''; frame.append(image); }
+  else frame.append(element('span','browser-monogram',browser.name.slice(0,1)));
+  return frame;
 }
-installHelp.append(setupActions);
-const steps = element('ol');
-for(const text of [
-  'Here in Awesome Downloader, click Copy extension folder path above. This copies the location of the included browser extension, not your download folder.',
-  'Click the button for your browser above. The browser opens its Extensions page.',
-  'On that browser page, turn on Developer mode. In Edge, you may need to expand the left menu to find it.',
-  'Click Load unpacked on the Extensions page. A Windows folder selection window opens.',
-  'In that folder selection window, press Ctrl+L to select its address bar at the top. Press Ctrl+V to paste the copied extension folder path, then press Enter. Do not paste into the browser’s web address bar or the Search box.',
-  'Click Select Folder (or Select) in the Windows window. Select the extension folder itself; do not select an individual file or its icons subfolder.',
-  'Check that Awesome Downloader Integration appears on the browser’s Extensions page and is switched on. Return here and wait for the connection message, then refresh your video page and play the video.'
-]) steps.append(element('li','',text));
-const extensionFolderLabel=element('label','','Included browser extension folder:');extensionFolderLabel.htmlFor='extension-path';
-const extensionFolderInput = $('#extension-path');
-const folderActions = element('div','transfer-buttons');
-for(const [label,action] of [['Copy extension folder path','copy'],['Show extension folder','folder']]) {
-  const button = element('button','button',label); button.type='button';
-  button.addEventListener('click',async()=>{try{await call('browserSetup',{action});if(action==='copy')notify('Extension folder path copied. In the Windows window opened by Load unpacked, press Ctrl+L, Ctrl+V, then Enter.');}catch(error){notify(messageOf(error),true);}});
-  folderActions.append(button);
+function renderBrowserGrid(info) {
+  integrationBrowsers = Array.isArray(info.browsers) ? info.browsers : [];
+  const grid = $('#browser-grid'); grid.replaceChildren();
+  for (const browser of integrationBrowsers) {
+    const [label,tone] = browserStatus(browser), card = element('button','browser-card');
+    card.type = 'button'; card.setAttribute('role','listitem'); card.dataset.browser = browser.name;
+    const copy = element('span','browser-card-copy');
+    copy.append(element('strong','',browser.name),element('span','browser-card-subtitle',browser.connected ? `Connected in ${browser.profiles || 1} profile${browser.profiles === 1 ? '' : 's'}` : browser.support === 'preview' ? 'Temporary add-on available' : browser.installed ? 'Extension not detected' : 'Browser not found'));
+    const status = element('span',`browser-status ${tone}`,label);
+    card.append(browserIcon(browser),copy,status);
+    card.addEventListener('click',()=>showBrowserDetail(browser.name));
+    grid.append(card);
+  }
+  const connected = integrationBrowsers.filter(browser=>browser.connected).length;
+  $('#browser-connection-summary').textContent = info.connectionError ? `Setup check failed: ${info.connectionError}` : `${connected} browser${connected === 1 ? '' : 's'} connected`;
+  if (selectedBrowserName && integrationBrowsers.some(browser=>browser.name === selectedBrowserName)) showBrowserDetail(selectedBrowserName);
 }
-installHelp.classList.add('browser-setup-guide');
-installHelp.append(extensionFolderLabel,extensionFolderInput,folderActions,setupActions,steps); retryConnection.after(installHelp);
-let setupPolling = false;
-const setupPoll = setInterval(async()=>{
-  if(progressMode || !$('#integration-dialog').open || setupPolling)return;
-  setupPolling=true;
-  try { const info=await call('integration'); $('#extension-path').value=info.extensionPath || ''; automaticConnection.textContent=info.connectionError ? `Setup needs attention: ${info.connectionError}` : info.connectedBrowsers?.length ? `${info.connectedBrowsers.map(b=>b.browser).join(', ')} connected. Refresh your video page to see Download this video.` : 'Waiting for you to add the extension. We will connect it automatically.'; }
-  catch(error){automaticConnection.textContent=messageOf(error);}finally{setupPolling=false;}
-},3000);
+function showBrowserDetail(name) {
+  const browser = integrationBrowsers.find(item=>item.name === name); if (!browser) return;
+  selectedBrowserName = name; $('#browser-grid').hidden = true; $('#browser-detail').hidden = false;
+  const icon = $('#browser-detail-icon'); icon.replaceChildren(...browserIcon(browser).childNodes);
+  $('#browser-detail-name').textContent = browser.name;
+  const [label,tone] = browserStatus(browser); $('#browser-detail-status').textContent = label; $('#browser-detail-status').className = `browser-detail-status ${tone}`;
+  $('#extension-path').value = browser.extensionPath || '';
+  const primary = $('#browser-primary-action'); primary.disabled = !browser.installed; primary.dataset.browser = browser.name;
+  primary.textContent = browser.support === 'preview' ? 'Prepare and open Firefox' : `Open ${browser.name} extensions`;
+  $('#browser-detail-summary').textContent = browser.connected ? 'The extension and desktop connector are ready. Refresh an existing video tab if its download button is missing.' : browser.support === 'preview' ? 'Firefox support is available as a temporary developer preview. It must be loaded again after Firefox restarts.' : browser.installed ? 'Complete this one-time setup for this browser.' : `${browser.name} is not installed in a standard Windows location.`;
+  const steps = $('#browser-steps'); steps.replaceChildren();
+  const texts = browser.support === 'preview' ? [
+    'Click Prepare and open Firefox. Awesome Downloader creates the Firefox version and registers its local connector.',
+    'On the Firefox page, select This Firefox, then Load Temporary Add-on.',
+    'Choose manifest.json inside the extension folder shown below.',
+    'Return here, click Refresh, then reload your video page.'
+  ] : [
+    `Click Open ${browser.name} extensions. If only a normal tab opens, copy ${browser.extensionPage} and paste it into ${browser.name}'s address bar.`,
+    'Turn on Developer mode on the Extensions page.',
+    'Choose Load unpacked. In the Windows folder picker, paste the extension folder path shown below into the address bar.',
+    'Select the extension folder itself, then return here and click Refresh.',
+    'Reload your video page. The Download this video button should appear when playable media is detected.'
+  ];
+  for (const text of texts) steps.append(element('li','',text));
+  $('#automatic-setup-copy').textContent = browser.support === 'preview' ? 'Firefox requires a signed add-on or an addons.mozilla.org listing for permanent consumer installation. This preview uses Firefox’s temporary add-on flow.' : 'Windows browsers do not allow this app to silently install an unpacked consumer extension. After our store listing is approved, setup can be reduced to the browser’s own enable confirmation.';
+}
+async function runBrowserSetup(action, browserName = selectedBrowserName) {
+  const error = $('#browser-setup-error'); error.hidden = true;
+  try {
+    if (!browserName) throw new Error('Choose a browser first.');
+    if (action === 'prepare') {
+      const prepared = await call('browserSetup',{action:'prepare',browser:browserName});
+      if (prepared?.extensionPath) $('#extension-path').value = prepared.extensionPath;
+      await call('browserSetup',{action:'open',browser:browserName});
+    } else await call('browserSetup',{action,browser:browserName});
+    if (action === 'copy') notify('Extension folder path copied.');
+    if (action === 'copyAddress') notify(`${browserName} extensions address copied.`);
+  } catch (problem) { error.textContent = messageOf(problem); error.hidden = false; }
+}
+$('#browser-back').addEventListener('click',()=>{selectedBrowserName=null;$('#browser-detail').hidden=true;$('#browser-grid').hidden=false;});
+$('#browser-refresh').addEventListener('click',()=>refreshIntegrationInfo(true));
+$('#browser-primary-action').addEventListener('click',event=>runBrowserSetup(integrationBrowsers.find(item=>item.name===event.currentTarget.dataset.browser)?.support === 'preview' ? 'prepare' : 'open',event.currentTarget.dataset.browser));
+$('#copy-extension-address').addEventListener('click',()=>runBrowserSetup('copyAddress'));
+$('#copy-extension-path').addEventListener('click',()=>runBrowserSetup('copy'));
+$('#show-extension-folder').addEventListener('click',()=>runBrowserSetup('folder'));
+async function refreshIntegrationInfo(showErrors = false) {
+  if (setupPolling) return; setupPolling = true;
+  try { const info = await call('integration') || state.integration; state.integration = info; renderBrowserGrid(info); }
+  catch (problem) { if (showErrors) { $('#browser-setup-error').textContent=messageOf(problem);$('#browser-setup-error').hidden=false; } }
+  finally { setupPolling = false; }
+}
+const setupPoll = setInterval(()=>{if(!progressMode && $('#integration-dialog').open)refreshIntegrationInfo();},3000);
 window.addEventListener('beforeunload',()=>clearInterval(setupPoll));
 const completionActions=element('div','transfer-buttons');completionActions.id='download-complete-actions';completionActions.hidden=true;
 for(const [label,action] of [['Open','open'],['Open with…','openWith'],['Open folder','reveal'],['Close','close']]){const button=element('button','button',label);button.type='button';button.addEventListener('click',()=>action==='close'?$('#details-dialog').close():performAction(detailDownload(),action));completionActions.append(button);}
@@ -154,7 +164,7 @@ function setView(nextFilter,nextCategory = '') { filter = nextFilter; category =
 function openSettings() { const settings = state.settings; $('#default-directory').value = settings.defaultDirectory || ''; $('#max-concurrent').value = settings.maxConcurrent || 3; $('#connections').value = settings.connections || 8; $('#speed-limit').value = settings.speedLimitKbps || 0; $('#settings-error').hidden = true; showDialog('#settings-dialog'); }
 function renderScheduler() { const downloads = state.downloads.filter(d => statusOf(d) === 'scheduled').sort((a,b) => new Date(a.scheduledAt) - new Date(b.scheduledAt)); const list = $('#scheduled-list'); list.replaceChildren(); if (!downloads.length) list.append(element('p','field-help','No scheduled downloads.')); for (const d of downloads) { const row = element('div','scheduled-item'); const name = element('span','',d.filename); name.title = d.filename; row.append(name,element('time','',date(d.scheduledAt))); list.append(row); } }
 function openScheduler() { renderScheduler(); showDialog('#scheduler-dialog'); }
-async function openIntegration() { try { const info = await call('integration') || state.integration; $('#extension-path').value = info.extensionPath || ''; automaticConnection.textContent = info.connectionError ? `Browser setup needs attention: ${info.connectionError}` : info.connectedBrowsers?.length ? `${info.connectedBrowsers.map(b=>b.browser).join(', ')} connected automatically. Click Download this video in your browser to choose a file.` : 'Ready to connect automatically when the browser extension is installed.'; $('#integration-port').value = info.port ? 'Ready' : 'Unavailable'; showDialog('#integration-dialog'); } catch (error) { notify(messageOf(error),true); } }
+async function openIntegration() { try { selectedBrowserName = null; $('#browser-detail').hidden = true; $('#browser-grid').hidden = false; showDialog('#integration-dialog'); await refreshIntegrationInfo(true); } catch (error) { notify(messageOf(error),true); } }
 const commands = {add:() => openAdd(),paste:async () => { try { openAdd(await call('clipboard')); } catch (error) { notify(messageOf(error),true); } },find:() => $('#search').focus(),settings:openSettings,integration:openIntegration,scheduler:openScheduler,pauseAll:() => bulkAction('pause'),resumeAll:() => bulkAction('resume'),removeCompleted};
 commands.find = () => { $('.list-search').classList.add('visible'); $('#search').focus(); };
 commands.details = () => { if (selectedId) showDetails(selectedId); };

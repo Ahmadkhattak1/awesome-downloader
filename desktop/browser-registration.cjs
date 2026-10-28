@@ -10,7 +10,7 @@ const BROWSERS = {
   Brave: { registry: 'BraveSoftware\\Brave-Browser', data: 'BraveSoftware/Brave-Browser/User Data', dataRoot: 'local' },
   // Opera documents that its Windows native host is registered under Chrome.
   Opera: { registry: 'Google\\Chrome', data: 'Opera Software/Opera Stable', dataRoot: 'roaming', rootProfile: true },
-  Firefox: { registry: 'Mozilla', firefox: true }
+  Firefox: { registry: 'Mozilla', data: 'Mozilla/Firefox/Profiles', dataRoot: 'roaming', firefox: true }
 };
 
 function browserSpec(browser) {
@@ -71,7 +71,7 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
     let profiles;
     try { profiles = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
     if(spec.rootProfile)profiles=[{name:'.',isDirectory:()=>true},...profiles];
-    const ids = new Set();
+    const ids = new Set(), matchedProfiles = new Set();
     for (const profile of profiles.filter(p => p.isDirectory() && (p.name==='.'||/^(Default|Profile \d+)$/.test(p.name)))) {
       for (const file of ['Preferences', 'Secure Preferences']) {
         try {
@@ -85,7 +85,7 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
               const background=await fs.readFile(path.join(installed,'background.js'),'utf8');
               ownExtension=manifest.name==='Awesome Downloader Integration'&&manifest.background?.service_worker==='background.js'&&background.includes("const HOST = 'com.awesome.downloader'");
             }
-            if (ownExtension) ids.add(id);
+            if (ownExtension) { ids.add(id); matchedProfiles.add(profile.name); }
           }
         } catch { /* A running browser can temporarily replace a preference file. */ }
       }
@@ -93,7 +93,23 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
     if (ids.size) {
       let result;
       for(const extensionId of ids)result=await register({ browser, extensionId }, { dataDirectory, integrationRoot });
-      results.push({ browser, connected: true });
+      results.push({ browser, connected: true, profiles: matchedProfiles.size });
+    }
+  }
+  const firefoxRoot = roamingAppData && path.join(roamingAppData, BROWSERS.Firefox.data);
+  if (firefoxRoot) {
+    const matchedProfiles = [];
+    let profiles = [];
+    try { profiles = await fs.readdir(firefoxRoot, { withFileTypes: true }); } catch { /* Firefox is not installed or has no profile yet. */ }
+    for (const profile of profiles.filter(entry => entry.isDirectory())) {
+      try {
+        const extensions = JSON.parse(await fs.readFile(path.join(firefoxRoot, profile.name, 'extensions.json'), 'utf8')).addons || [];
+        if (extensions.some(addon => addon.id === 'awesome-downloader@morluto.local' && addon.active !== false && addon.appDisabled !== true)) matchedProfiles.push(profile.name);
+      } catch { /* A running browser can temporarily replace its add-on database. */ }
+    }
+    if (matchedProfiles.length) {
+      await register({ browser: 'Firefox', extensionId: 'awesome-downloader@morluto.local' }, { dataDirectory, integrationRoot });
+      results.push({ browser: 'Firefox', connected: true, profiles: matchedProfiles.length });
     }
   }
   return results;

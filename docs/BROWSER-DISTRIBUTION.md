@@ -3,11 +3,20 @@
 The current preview automatically connects an extension after it is installed.
 It does not yet install the extension in a new browser.
 
+Browser Integration reports each browser separately. **Connected** means the app
+found this extension in that browser's profile and successfully registered the
+matching native messaging host. An installed browser without the extension is
+shown as **Setup needed**; a missing executable is shown as **Not installed**.
+
 For consumer Windows Chrome, external installation requires a published Chrome
 Web Store extension. The desktop installer can register its store update URL;
 Chrome then downloads the extension and asks the user to enable it. It cannot
 silently enable a bundled unpacked extension. Edge supports external installation
 from its own store or the Chrome Web Store.
+
+Firefox 74 and newer does not allow an ordinary desktop application to silently
+install its companion add-on. The app provides a temporary developer-preview
+flow; permanent distribution requires a signed XPI or an AMO listing.
 
 ## Prepare the submission
 

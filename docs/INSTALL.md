@@ -27,10 +27,11 @@ add it once to each browser you use:
 
 1. The app shows **Browser integration** on first launch. You can also open it
    from the toolbar later.
-2. In **Awesome Downloader**, click **Copy extension folder path**. This copies
-   the location of the extension that came with the app. It is **not** the folder
-   where your downloaded videos will be saved.
-3. Click the extensions button for **Chrome**, **Edge**, **Brave**, or **Opera** in the app.
+2. Choose the card for **Chrome**, **Edge**, **Brave**, or **Opera**. The card
+   shows whether that browser is installed, needs setup, or is connected.
+3. In that browser's guide, click **Copy path**. This copies the location of the
+   extension that came with the app. It is **not** the folder where your
+   downloaded videos will be saved. Then click **Open Browser extensions**.
    Your browser opens its **Extensions** page. If the button cannot find your
    browser, type `chrome://extensions`, `edge://extensions`,
    `brave://extensions`, or `opera://extensions` in that browser's address bar,
@@ -49,21 +50,21 @@ add it once to each browser you use:
 8. The browser's Extensions page should now show **Awesome Downloader
    Integration**. Make sure its switch is on. Leave Developer mode on while using
    this unpacked preview extension.
-9. Return to Awesome Downloader. The Browser integration panel checks
-   automatically and shows the browser connection message. No extension ID or
-   commands need to be entered.
+9. Return to Awesome Downloader and click **Refresh**. The selected browser's
+   card changes to **Connected** after the extension is found and its local
+   connector is registered. No extension ID or commands need to be entered.
 10. Return to the video website, refresh the page, and play the video briefly.
     Look for **Download this video**, then follow the download steps below.
 
 ### Which folder should I choose?
 
-The exact location for your computer is displayed under **Included browser
-extension folder** in the app. A normal installed copy uses:
+The exact location for your computer is displayed as **Extension folder** in the
+selected browser's guide. A normal installed copy uses:
 
 `C:\Users\YOUR-WINDOWS-USERNAME\.awesome-downloader\BrowserIntegration\extension`
 
 That path is an example; **Copy extension folder path** copies your actual path
-with your own Windows username. **Show extension folder** opens that folder in
+with your own Windows username. **Show folder** opens that folder in
 File Explorer if you want to inspect it. It contains `manifest.json` and an
 `icons` folder. You select the enclosing `extension` folder, not `manifest.json`.
 Do not move or delete this folder after loading it into your browser.
@@ -71,12 +72,12 @@ Do not move or delete this folder after loading it into your browser.
 ### If setup does not work
 
 - **“Manifest file is missing or unreadable”:** Cancel the folder selection and
-  click **Show extension folder** in Awesome Downloader. Confirm that the opened
+  click **Show folder** in Awesome Downloader. Confirm that the opened
   folder contains `manifest.json`. Return to the Extensions page, choose **Load
   unpacked**, and select that exact opened `extension` folder—not the app's
   installation folder, Downloads, `manifest.json` itself, or the `icons` folder.
 - **No connection message:** Keep the app running, confirm the extension is
-  switched on in the same browser you set up, then click **Refresh browsers** in
+  switched on in the same browser you set up, then click **Refresh** in
   the app. Reload the extension on the browser's Extensions page and retry.
 - **No video button:** Refresh the video page after setup and start playback.
   Some sites and protected media are not supported.
@@ -85,8 +86,11 @@ Do not move or delete this folder after loading it into your browser.
 
 Only install the extension if you trust this project. Its page/network permissions
 allow it to detect media and hand the selected media session to the desktop app.
-Firefox integration remains a preview and is not yet included in this guided
-Windows setup.
+Firefox has a separate preview card. **Prepare and open Firefox** creates its
+browser-specific folder and opens Firefox's temporary add-on page. Choose
+**This Firefox**, then **Load Temporary Add-on**, and select `manifest.json` from
+the folder shown by the app. Firefox removes a temporary add-on when it restarts;
+a signed AMO release is still required for permanent consumer installation.
 
 ## Download a file or video
 
