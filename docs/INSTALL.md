@@ -18,7 +18,7 @@ Run the installer and follow the wizard. Launch **Awesome Downloader** from the
 Start menu. Keep the app installed at its chosen location so browser integration
 can find it.
 
-## Enable video buttons (Chrome / Edge)
+## Enable video buttons (Chrome / Edge / Brave)
 
 The browser extension adds **Download this video** buttons to supported web
 videos. It is included with the installed application; you do not need to download
@@ -30,13 +30,14 @@ add it once to each browser you use:
 2. In **Awesome Downloader**, click **Copy extension folder path**. This copies
    the location of the extension that came with the app. It is **not** the folder
    where your downloaded videos will be saved.
-3. Click **Open Chrome extensions** or **Open Edge extensions** in the app.
+3. Click **Open Chrome extensions**, **Open Edge extensions**, or **Open Brave extensions** in the app.
    Your browser opens its **Extensions** page. If the button cannot find your
-   browser, type `chrome://extensions` in Chrome's web address bar, or
-   `edge://extensions` in Edge's web address bar, then press **Enter**.
-4. On the browser's Extensions page, switch on **Developer mode**. In Chrome it
-   is usually at the upper right. In Edge, check the left sidebar; expand the menu
-   if the sidebar is hidden.
+   browser, type `chrome://extensions` in Chrome's web address bar,
+   `edge://extensions` in Edge's web address bar, or `brave://extensions` in
+   Brave's web address bar, then press **Enter**.
+4. On the browser's Extensions page, switch on **Developer mode**. In Chrome and
+   Brave it is usually at the upper right. In Edge, check the left sidebar; expand
+   the menu if the sidebar is hidden.
 5. Click **Load unpacked** on the Extensions page. This opens a **Windows folder
    selection window**. The following step happens in that new window.
 6. Press **Ctrl+L** to select the folder window's address bar at the top. Press
