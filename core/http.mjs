@@ -35,6 +35,9 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
       delete forwarded.authorization;
       delete forwarded.cookie;
       delete forwarded.origin;
+      // A Referer can contain private page paths or query parameters. Never
+      // disclose the originating page to a different origin during redirects.
+      delete forwarded.referer;
     }
     return request(target, { method, headers: forwarded, signal, redirects: redirects + 1 });
   }
