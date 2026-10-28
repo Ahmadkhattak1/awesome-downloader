@@ -400,3 +400,19 @@ test('a 64 MiB block is aggregated and written exactly', async t => {
   assert.equal(b.view().length, 64 * MiB); b.release();
   const again = new BlockBuffer(10 * MiB); assert.ok(again.data.length >= 10 * MiB); again.release();
 });
+
+test('probe: a HEAD without size metadata falls back to a ranged GET; 429/503 is reported as throttling without extra requests', async t => {
+  const { probe } = await import('../core/http.mjs'), seen = [];
+  const url = await listen(t, (req, res) => {
+    seen.push(req.method + ' ' + req.url);
+    if (req.url === '/nometa') { if (req.method === 'HEAD') { res.statusCode = 200; return res.end(); } res.statusCode = 206; res.setHeader('content-range', 'bytes 0-0/12345'); res.setHeader('accept-ranges', 'bytes'); return res.end('x'); }
+    if (req.url === '/limited') { res.statusCode = 429; res.setHeader('retry-after', '7'); return res.end(); }
+    res.statusCode = 404; res.end();
+  });
+  const info = await probe(`${url}/nometa`, {}, new AbortController().signal);
+  assert.equal(info.total, 12345); assert.equal(info.ranges, true);
+  seen.length = 0;
+  await assert.rejects(probe(`${url}/limited`, {}, new AbortController().signal), e => e.code === 'THROTTLED' && e.retryAfterMs === 7000);
+  assert.deepEqual(seen, ['HEAD /limited']);
+  await assert.rejects(probe(`${url}/missing`, {}, new AbortController().signal), /HTTP 404/);
+});

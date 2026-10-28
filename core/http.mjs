@@ -185,9 +185,22 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 
 export async function probe(url, headers, signal) {
   let response = await request(url, { method: 'HEAD', headers, signal }), head = true;
-  if ([405, 501].includes(response.statusCode)) {
+  const headStatus = response.statusCode;
+  // 429/503 means "slow down": report it right away (with Retry-After) instead of firing another request at the server.
+  const throttled = throttleFrom(response);
+  if (throttled) throw throttled;
+  const headHasMetadata = response.headers['content-length'] || response.headers['content-range'] ||
+    response.headers['accept-ranges'] === 'bytes';
+  if (![200, 206].includes(response.statusCode) || !headHasMetadata) {
     head = false; response.resume();
     response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      const throttle = throttleFrom(response);
+      if (throttle) throw throttle;
+      response.destroy();
+      const status = headStatus >= 400 ? headStatus : response.statusCode;
+      throw new Error(`Server returned HTTP ${status}.`);
+    }
   }
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl, protocol: response.protocol || 'http/1.1' };
   // A HEAD reply has no body, so draining it lets the pooled connection be reused by the transfer.

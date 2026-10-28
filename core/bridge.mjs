@@ -14,7 +14,7 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
     const auth = Buffer.from(req.headers.authorization || '');
     const expected = Buffer.from(`Bearer ${token}`);
     if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) return answer(401, { error: 'Unauthorized.' });
-    if (req.method === 'GET' && req.url === '/health') return answer(200, { ok: true, version: '0.1.0' });
+    if (req.method === 'GET' && req.url === '/health') return answer(200, { ok: true });
     if (req.method !== 'POST' || !['/downloads','/formats','/status','/control'].includes(req.url)) return answer(404, { error: 'Not found.' });
     if (!String(req.headers['content-type']).startsWith('application/json')) return answer(415, { error: 'JSON required.' });
     let size = 0;

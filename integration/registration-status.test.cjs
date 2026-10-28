@@ -45,3 +45,27 @@ test('status pinpoints why Chrome reports "native messaging host not found"', as
   const none = (await registrationStatus({ ...o, dataDirectory: path.join(o.root, 'empty') }, { query: async () => null })).find(s => s.browser === 'Edge');
   assert.equal(none.problem, 'not connected');
 });
+
+const crypto = require('node:crypto');
+const { FIXED_EXTENSION_ID, FIREFOX_EXTENSION_ID, ensureDefaultRegistrations } = require('../desktop/browser-registration.cjs');
+const idFromKey = key => [...crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest().subarray(0, 16)].map(b => String.fromCharCode(97 + (b >> 4)) + String.fromCharCode(97 + (b & 15))).join('');
+
+test('the manifest key gives the extension the fixed ID the app pairs with, in every manifest', async () => {
+  for (const name of ['manifest.json', 'manifest.legacy.json']) {
+    const manifest = JSON.parse(await fs.readFile(path.join(__dirname, '..', 'extension', name), 'utf8'));
+    assert.equal(idFromKey(manifest.key), FIXED_EXTENSION_ID, name);
+  }
+  const firefox = JSON.parse(await fs.readFile(path.join(__dirname, '..', 'extension', 'manifest.firefox.json'), 'utf8'));
+  assert.equal(firefox.browser_specific_settings.gecko.id, FIREFOX_EXTENSION_ID);
+});
+
+test('installed browsers are paired with the fixed ID without scanning profiles', async t => {
+  const o = await setup(t);
+  const local = path.join(o.root, 'local'), roaming = path.join(o.root, 'roaming');
+  await fs.mkdir(path.join(local, 'Google', 'Chrome', 'User Data'), { recursive: true }); await fs.mkdir(path.join(roaming, 'Mozilla', 'Firefox'), { recursive: true });
+  const found = await ensureDefaultRegistrations(o, { env: { LOCALAPPDATA: local, APPDATA: roaming } });
+  assert.deepEqual([...found].sort(), ['Chrome', 'Firefox']);
+  const known = JSON.parse(await fs.readFile(path.join(o.dataDirectory, 'known-extensions.json'), 'utf8'));
+  assert.deepEqual([...known.Chrome], [FIXED_EXTENSION_ID]); assert.deepEqual([...known.Firefox], [FIREFOX_EXTENSION_ID]); assert.equal(known.Edge, undefined);
+  assert.deepEqual([...await ensureDefaultRegistrations(o, { env: {} })], []);
+});

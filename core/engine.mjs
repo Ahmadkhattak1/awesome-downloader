@@ -694,8 +694,8 @@ export class DownloadEngine extends EventEmitter {
         if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
         return;
       } catch (error) {
-        if (signal.aborted || attempt === 3) throw error;
-        await delay(retryDelay(error, attempt), undefined, { signal });
+        if (signal.aborted || attempt === 3 || error.retryable === false) throw error;
+        await delay(error.retryDelay ?? retryDelay(error, attempt), undefined, { signal });
       }
     }
   }

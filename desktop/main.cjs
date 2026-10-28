@@ -80,6 +80,7 @@ if (process.argv.includes('--native-host')) {
       const connectBrowsers = async () => {
         const registrationApi = require('./browser-registration.cjs'), options = { dataDirectory: app.getPath('userData'), integrationRoot };
         // The .cmd launcher still works when the .NET compiler failed, so a build error no longer blocks registration.
+        try { await registrationApi.ensureDefaultRegistrations(options); } catch { /* browsers are optional */ }
         try { connectedBrowsers = await registrationApi.connectInstalledBrowsers(options); connectionError = ''; }
         catch (error) { connectionError = error.message; }
         try { await registrationApi.repairRegistrations(options); registration = await registrationApi.registrationStatus(options); }

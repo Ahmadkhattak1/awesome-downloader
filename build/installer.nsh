@@ -28,3 +28,8 @@
 !macro customCheckAppRunning
   !insertmacro awesomeStopApp
 !macroend
+
+; Hide the "<product> <version>" branding text at the bottom of the installer and uninstaller windows.
+!macro customHeader
+  BrandingText " "
+!macroend
