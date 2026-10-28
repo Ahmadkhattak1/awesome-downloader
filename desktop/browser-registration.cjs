@@ -4,11 +4,37 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const exec = promisify(execFile);
 
-async function registerBrowser({ browser, extensionId }, { dataDirectory, integrationRoot }) {
-  if (!['Chrome', 'Edge', 'Firefox'].includes(browser)) throw new Error('Choose Chrome, Edge, or Firefox.');
+// Chromium browsers share the same extension-ID format, profile layout and
+// native-messaging manifest shape. Firefox is handled separately in
+// registerBrowser below, and is not part of this table.
+const browserInfo = {
+  Chrome: {
+    registryRoot: 'Google\\Chrome',
+    userData: 'Google/Chrome/User Data',
+    executable: 'Google/Chrome/Application/chrome.exe',
+    extensionsUrl: 'chrome://extensions/',
+  },
+  Edge: {
+    registryRoot: 'Microsoft\\Edge',
+    userData: 'Microsoft/Edge/User Data',
+    executable: 'Microsoft/Edge/Application/msedge.exe',
+    extensionsUrl: 'edge://extensions/',
+  },
+  Brave: {
+    // Brave keeps its own native-messaging registry key on Windows, it does
+    // not fall back to Chrome's key.
+    registryRoot: 'BraveSoftware\\Brave-Browser',
+    userData: 'BraveSoftware/Brave-Browser/User Data',
+    executable: 'BraveSoftware/Brave-Browser/Application/brave.exe',
+    extensionsUrl: 'brave://extensions/',
+  },
+};
+
+async function registerBrowser({ browser, extensionId }, { dataDirectory, integrationRoot, execFn = exec } = {}) {
+  if (!['Chrome', 'Edge', 'Brave', 'Firefox'].includes(browser)) throw new Error('Choose Chrome, Edge, Brave, or Firefox.');
   if (typeof extensionId !== 'string' || !(browser === 'Firefox' ? /^[A-Za-z0-9@._{}-]{1,128}$/ : /^[a-p]{32}$/).test(extensionId)) throw new Error('Copy the extension ID from your browser’s extensions page.');
   const host = 'com.awesome.downloader';
-  const roots = { Chrome: 'Google\\Chrome', Edge: 'Microsoft\\Edge', Firefox: 'Mozilla' };
+  const roots = { Chrome: 'Google\\Chrome', Edge: 'Microsoft\\Edge', Brave: 'BraveSoftware\\Brave-Browser', Firefox: 'Mozilla' };
   const key = `HKCU\\Software\\${roots[browser]}\\NativeMessagingHosts\\${host}`;
   const folder = path.join(dataDirectory, 'NativeMessaging');
   const manifestPath = path.join(folder, `${browser}.json`);
@@ -23,12 +49,12 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
   if (previous && previous !== content) await fs.writeFile(`${manifestPath}.${stamp}.bak`, previous);
   let registry = null;
-  try { registry = (await exec('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
+  try { registry = (await execFn('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
   catch (error) { if (error.code !== 1) throw error; }
   const previousPath = registry?.match(/REG_SZ\s+(.+)\r?\n?/)?.[1]?.trim();
   if (registry && previousPath !== manifestPath) await fs.writeFile(path.join(folder, `${browser}.${stamp}.registry-backup.txt`), registry);
   if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
-  if (previousPath !== manifestPath) await exec('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
+  if (previousPath !== manifestPath) await execFn('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
   let extensionPath = path.join(integrationRoot, 'extension');
   if (browser === 'Firefox') {
     extensionPath = path.join(folder, 'firefox-extension');
@@ -38,9 +64,9 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   return { ok: true, manifestPath, extensionPath };
 }
 // Read only extension registrations, never browser history, cookies, or page data.
-async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA }) {
+async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, execFn = exec } = {}) {
   const results = [];
-  for (const [browser, relative] of [['Chrome', 'Google/Chrome/User Data'], ['Edge', 'Microsoft/Edge/User Data']]) {
+  for (const [browser, relative] of Object.entries(browserInfo).map(([name, info]) => [name, info.userData])) {
     const root = path.join(localAppData, relative);
     let profiles;
     try { profiles = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
@@ -65,7 +91,7 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
       }
     }
     if (ids.size) {
-      const result = await registerBrowser({ browser, extensionId: [...ids][0] }, { dataDirectory, integrationRoot });
+      const result = await registerBrowser({ browser, extensionId: [...ids][0] }, { dataDirectory, integrationRoot, execFn });
       // Multiple profiles may assign different IDs to this same unpacked extension.
       const manifest = JSON.parse(await fs.readFile(result.manifestPath, 'utf8'));
       manifest.allowed_origins = [...ids].map(id => `chrome-extension://${id}/`);
@@ -85,4 +111,4 @@ async function prepareNativeHost(integrationRoot, executable) {
   }
   await fs.writeFile(path.join(folder, 'runtime-path.txt'), executable, 'utf8');
 }
-module.exports = { registerBrowser, connectInstalledBrowsers, prepareNativeHost };
+module.exports = { registerBrowser, connectInstalledBrowsers, prepareNativeHost, browserInfo };
