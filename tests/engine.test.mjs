@@ -8,13 +8,14 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
-import { probe } from '../core/http.mjs';
+import { probe, retryAfter, transientStatus } from '../core/http.mjs';
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-test-'));
   const data = randomBytes(3 * 1024 * 1024 + 37);
   const ranges = [];
   const server = http.createServer((req, res) => {
+    if (options.intercept?.(req, res)) return;
     if (req.url === '/redirect') { res.writeHead(302, { location: '/file.bin' }); return res.end(); }
     if (req.url === '/missing') { res.writeHead(404); return res.end(); }
     const noRange = req.url === '/plain';
@@ -196,6 +197,55 @@ test('server ignoring ranges fails without publishing corrupt files', async t =>
   await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
   await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
   assert.equal(d.path, null);
+});
+
+test('permanent HTTP failures on byte ranges fail without retrying', async t => {
+  const requests = new Map();
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    requests.set(req.headers.range, (requests.get(req.headers.range) || 0) + 1);
+    res.writeHead(403); res.end(); return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => d.status === 'error'); assert.match(d.error, /HTTP 403/);
+  assert.ok(requests.size > 0); assert.deepEqual([...requests.values()].filter(n => n > 1), []);
+});
+
+test('503 with Retry-After waits as instructed, then completes the range', async t => {
+  let failed = null, failedAt = 0, retriedAt = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    if (!failed) { failed = req.headers.range; failedAt = Date.now(); res.writeHead(503, { 'retry-after': '1' }); res.end(); return true; }
+    if (req.headers.range === failed && !retriedAt) retriedAt = Date.now();
+    return false;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.ok(retriedAt - failedAt >= 900, `retried after ${retriedAt - failedAt}ms`);
+});
+
+test('cancel interrupts a Retry-After wait immediately', async t => {
+  let throttled = false;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    throttled = true; res.writeHead(429, { 'retry-after': '30' }); res.end(); return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => throttled && d.status === 'downloading'); await delay(100);
+  const started = Date.now(); await f.engine.action(id, 'cancel');
+  assert.equal(d.status, 'cancelled'); assert.ok(Date.now() - started < 2000);
+});
+
+test('Retry-After accepts seconds or an HTTP date and is bounded; only transient statuses retry', () => {
+  const now = Date.parse('2026-01-01T00:00:00Z');
+  assert.equal(retryAfter('5', now), 5000);
+  assert.equal(retryAfter('Thu, 01 Jan 2026 00:00:10 GMT', now), 10000);
+  assert.equal(retryAfter('Wed, 31 Dec 2025 23:59:00 GMT', now), 0);
+  assert.equal(retryAfter('3600', now), 60000);
+  assert.equal(retryAfter('soon', now), null); assert.equal(retryAfter(undefined, now), null);
+  assert.deepEqual([408, 429, 500, 503].map(transientStatus), [true, true, true, true]);
+  assert.deepEqual([400, 403, 404, 410, 416].map(transientStatus), [false, false, false, false, false]);
 });
 
 test('cancel releases queue capacity and removes partial files', async t => {

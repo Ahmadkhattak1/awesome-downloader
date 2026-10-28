@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { validUrl, cleanHeaders, request, probe } from './http.mjs';
+import { validUrl, cleanHeaders, request, probe, transientStatus, retryAfter } from './http.mjs';
 import { resolveHls, scopedHeaders } from './hls.mjs';
 import { youtubeUrl, downloadYoutube } from './youtube.mjs';
 import {streamProgress} from './stream-progress.mjs';
@@ -32,6 +32,8 @@ function suggestedName(url, disposition) {
   return 'download';
 }
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
+// Marks a transfer failure that another attempt cannot fix, or the wait the server asked for.
+const failure = (message, retryable = false, retryDelay = null) => Object.assign(new Error(message), { retryable, retryDelay });
 
 export class DownloadEngine extends EventEmitter {
   constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
@@ -418,13 +420,15 @@ export class DownloadEngine extends EventEmitter {
         if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
-          response.destroy(); throw new Error(`Server returned HTTP ${response.statusCode}${ranged ? ' instead of a byte range' : ''}.`);
+          const status = response.statusCode; response.destroy();
+          throw failure(`Server returned HTTP ${status}${ranged ? ' instead of a byte range' : ''}.`, transientStatus(status),
+            status === 429 || status === 503 ? retryAfter(response.headers['retry-after']) : null);
         }
         if (ranged) {
           const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers['content-range'] || '');
-          if (!match || Number(match[1]) !== start || Number(match[2]) !== segment.end || Number(match[3]) !== info.total) { response.destroy(); throw new Error('Server returned an inconsistent byte range.'); }
+          if (!match || Number(match[1]) !== start || Number(match[2]) !== segment.end || Number(match[3]) !== info.total) { response.destroy(); throw failure('Server returned an inconsistent byte range.'); }
         }
-        if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') { response.destroy(); throw new Error('Server ignored identity encoding; refusing to save corrupt ranges.'); }
+        if (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity') { response.destroy(); throw failure('Server ignored identity encoding; refusing to save corrupt ranges.'); }
         const out = await fs.open(file, 'a');
         try {
           for await (const chunk of response) {
@@ -438,8 +442,8 @@ export class DownloadEngine extends EventEmitter {
         if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
         return;
       } catch (error) {
-        if (signal.aborted || attempt === 3) throw error;
-        await delay(250 * 2 ** attempt, undefined, { signal });
+        if (signal.aborted || attempt === 3 || error.retryable === false) throw error;
+        await delay(error.retryDelay ?? 250 * 2 ** attempt, undefined, { signal });
       }
     }
   }
