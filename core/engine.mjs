@@ -201,7 +201,7 @@ export class DownloadEngine extends EventEmitter {
     if (wait) await delay(wait, undefined, { signal });
   }
   async run(d, signal) {
-    d.status = 'probing'; d.error = null; this.changed();
+    d.status = 'probing'; d.error = null; d.notice = null; this.changed();
     if(d.sabr){await this.runSabr(d,cleanHeaders(d.headers),signal);return;}
     if(youtubeUrl(d.url)) {
       const dir=path.join(this.partsDirectory,d.id);await fs.mkdir(dir,{recursive:true});
@@ -225,6 +225,8 @@ export class DownloadEngine extends EventEmitter {
     await fs.mkdir(dir, { recursive: true });
     // Resume only when both resource identity and range support can be established.
     if (!info.ranges || !info.validator || d.validator !== info.validator || d.total !== info.total) {
+      if (d.segments.some(s => s.downloaded > 0)) d.notice = `${!info.ranges ? 'The server does not support resuming'
+        : !info.validator ? 'The server does not identify the file version' : 'The file changed on the server'}; restarted from the beginning.`;
       await fs.rm(dir, { recursive: true, force: true });
       await fs.mkdir(dir, { recursive: true });
       d.segments = [];

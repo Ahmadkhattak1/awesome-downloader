@@ -111,7 +111,7 @@ test('pause then resume from saved partial bytes produces exact output', async t
   assert.equal(d.status, 'paused'); const partial = d.downloaded; assert.ok(partial > 0 && partial < f.data.length);
   const priorRanges = f.ranges.length;
   await f.engine.action(id, 'resume'); await until(() => ['complete', 'error'].includes(d.status));
-  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data)); assert.equal(d.notice, null);
   assert.ok(f.ranges.slice(priorRanges).some(([start]) => start % Math.floor(f.data.length / d.segments.length) !== 0));
 });
 test('non-range server downloads sequentially and queue/scheduled history survives restart', async t => {
@@ -174,6 +174,26 @@ test('bridge requires token and rejects web origins before enqueuing', async t =
   assert.equal((await fetch(endpoint, { method: 'POST', headers: { ...headers, origin: 'https://example.com' }, body: '{}' })).status, 403);
   const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ url: `${f.url}/file.bin` }) });
   assert.equal(response.status, 201); assert.equal((await response.json()).ids.length, 1);
+});
+
+test('resume explains a restart when the file changed on the server', async t => {
+  const options = { slow: true }, f = await fixture(t, options);
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 150000); await f.engine.action(id, 'pause');
+  options.etag = '"fixture-2"';
+  await f.engine.action(id, 'resume'); await until(() => d.notice || d.status === 'error');
+  assert.match(d.notice, /changed on the server; restarted from the beginning/);
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.match(f.engine.snapshot().downloads[0].notice, /changed on the server/);
+});
+
+test('resume explains a restart when the server does not support ranges', async t => {
+  const f = await fixture(t, { slow: true });
+  const [id] = await f.engine.add({ url: `${f.url}/plain` }); const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 150000); await f.engine.action(id, 'pause');
+  await f.engine.action(id, 'resume'); await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.match(d.notice, /does not support resuming/);
 });
 
 test('restart recovers paused offsets from actual disk files', async t => {
