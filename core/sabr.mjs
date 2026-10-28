@@ -49,19 +49,19 @@ async function writeReadable(readable,file,signal,onChunk) {
 }
 export async function downloadSabr({session,headers={},videoPath,audioPath,signal,onProgress=()=>{}}) {
   const selected=normalizeSabrSession(session);
-  let networkDownloaded=0,downloaded=0;
+  let downloaded=0;
   const tracks={};
   let total=null;
-  const report=()=>onProgress({downloaded,total,networkDownloaded,tracks:{...tracks}});
+  const report=()=>onProgress({downloaded,total,tracks:{...tracks}});
   const commonHeaders={};
   for(const [name,value] of Object.entries(headers||{}))if(typeof value==='string'&&value)commonHeaders[name]=value;
+  // Progress is measured from bytes written to disk, so the transport needs no
+  // per-chunk interception: every extra stream hop and progress callback costs
+  // throughput on bursty YouTube transfers.
   const fetchFunction=async(input,init={})=>{
     const merged=new Headers(init.headers||{});
     for(const [name,value] of Object.entries(commonHeaders))if(!merged.has(name))merged.set(name,value);
-    const response=await fetch(input,{...init,headers:merged,redirect:'follow'});
-    if(!response.body||!response.ok)return response;
-    const body=response.body.pipeThrough(new TransformStream({transform(chunk,controller){networkDownloaded+=chunk.byteLength;report();controller.enqueue(chunk);}}));
-    return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
+    return fetch(input,{...init,headers:merged,redirect:'follow'});
   };
   const sabr=new SabrStream({
     videoId:selected.videoId,serverAbrStreamingUrl:selected.serverAbrStreamingUrl,

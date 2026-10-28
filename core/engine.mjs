@@ -10,7 +10,7 @@ import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
-const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
+const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav|opus)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix|deb|rpm|appimage|flatpak|snap)$/i };
 export function safeFilename(value) {
   let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 180);
   if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = `download_${name || 'file'}`;
@@ -389,12 +389,13 @@ export class DownloadEngine extends EventEmitter {
     d.total=picked.every(f=>Number(f.contentLength)>0)?picked.reduce((sum,f)=>sum+Number(f.contentLength),0):null;
     d.segments=picked.map(f=>({start:0,end:Number(f.contentLength)>0?Number(f.contentLength)-1:null,downloaded:0}));
     d.connections=picked.length;d.status='downloading';await this.persist();this.changed();
-    let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(networkDownloaded-last)*1000/Math.max(1,now-at);last=networkDownloaded;at=now;this.changed();},this.tickMs);
+    // Report speed from bytes actually written so the rate matches progress even
+    // if a transport reports network bytes irregularly.
+    let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(d.downloaded-last)*1000/Math.max(1,now-at);last=d.downloaded;at=now;this.changed();},this.tickMs);
     let result;
     try{
       result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,onProgress:progress=>{
         d.downloaded=progress.downloaded;if(progress.total!==null)d.total=progress.total;
-        networkDownloaded=progress.networkDownloaded;
         for(let i=0;i<d.segments.length;i++)d.segments[i].downloaded=progress.tracks[picked[i].itag]||0;
       }});
     }finally{clearInterval(timer);}

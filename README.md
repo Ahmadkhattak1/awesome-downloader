@@ -1,8 +1,9 @@
 # Awesome Downloader
 
-A Windows download manager with a compact desktop interface and browser video
-buttons. Original open-source implementation; not affiliated with Internet
-Download Manager and not a complete feature-for-feature replacement.
+A desktop download manager with a compact interface and browser video buttons.
+Runs on Windows 10/11 and Linux x64. Original open-source implementation; not
+affiliated with Internet Download Manager and not a complete feature-for-feature
+replacement.
 
 **Early preview:** Private/sign-in-required, DRM and live media are unsupported. Please report bugs
 without sharing session tokens or signed media links.
@@ -16,14 +17,19 @@ Windows installer with Start-menu and
 desktop shortcuts. No GitHub account, Node.js, or developer tools are needed for
 the desktop app.
 
-The installer is currently an unsigned preview. Browser video buttons require
-one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
+Linux x64 builds are produced from source as an AppImage and a Debian package
+(`npm run dist:linux`); see the [Linux instructions](docs/INSTALL.md#linux) in the
+same guide. Build artifacts appear in `release/`.
+
+The Windows installer and Linux builds are currently unsigned previews. Browser video buttons
+require one manual "Load unpacked" setup; Chrome/Edge store listings are not
+available.
 
 ## Features
 
 - HTTP(S) downloads with parallel ranges where the server supports them.
 - Pause/resume for supported transfers, history, scheduling and speed limits.
-- Chrome/Edge media detection and quality selection; selected video/audio tracks
+- Chrome/Chromium/Edge media detection and quality selection; selected video/audio tracks
   are combined locally with FFmpeg.
 - Download File Info with save location, category, Download Later, Start and Cancel.
 - Separate progress and completion windows, duplicate-active-download prevention.
@@ -35,9 +41,9 @@ selection does not invoke it. Firefox YouTube capture has not reached parity.
 
 ## Develop
 
-On Windows x64 with Node.js 22+:
+On Windows x64 or Linux x64 with Node.js 22+:
 
-```powershell
+```sh
 npm ci
 npm test
 npm start
@@ -45,11 +51,18 @@ npm start
 
 `npm run package` builds the unpacked application. `npm run dist` builds a local
 NSIS installer, without publishing. `npm run dist:portable` builds a portable
-executable. See [release requirements](docs/RELEASING.md) before distributing
-either. Current builds are unsigned and have no auto-updater.
+executable. On Linux, `npm run package:linux` builds the unpacked application and
+`npm run dist:linux` builds an AppImage plus a Debian package. See
+[release requirements](docs/RELEASING.md) before distributing either. Current
+builds are unsigned and have no auto-updater.
 
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `npm ci` installs the locked media dependencies.
+On Linux, install the extractor with your package manager (for example
+`sudo apt install yt-dlp`) or place an executable named `yt-dlp` in `vendor/`.
+The app falls back to a distribution FFmpeg automatically when the bundled
+static binary cannot handle an input; install it with `sudo apt install ffmpeg`.
+Set `AWESOME_FFMPEG_PATH=/path/to/ffmpeg` to force a specific executable.
 
 ## Contribute
 
@@ -69,7 +82,8 @@ installer testing, browser-store packaging, and accessibility.
 
 Media request credentials are held in memory, not stored in download history.
 History and browser-integration configuration are stored locally in
-`%USERPROFILE%\.awesome-downloader`. The bridge is authenticated and loopback-only.
+`~/.awesome-downloader` (`%USERPROFILE%\.awesome-downloader` on Windows). The
+bridge is authenticated and loopback-only.
 Do not publish this directory or browser profiles in issues.
 
 Original project code is [MIT licensed](LICENSE). Third-party components retain

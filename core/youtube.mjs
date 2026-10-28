@@ -1,8 +1,8 @@
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import {promises as fs} from 'node:fs';
-import ffmpeg from 'ffmpeg-static';
+import {promises as fs, existsSync} from 'node:fs';
+import {ffmpegExecutable} from './mux.mjs';
 
 export function youtubeUrl(value) {
   try {
@@ -22,7 +22,7 @@ export function choicesFromInfo(info,url) {
   for(const f of formats.filter(f=>f.vcodec&&f.vcodec!=='none'&&f.ext==='mp4'&&f.height)) {
     if(f.acodec==='none'&&!audio)continue;
     const old=groups.get(f.height);
-    // Prefer a direct H.264 stream at each height for Windows compatibility.
+    // Prefer a direct H.264 stream at each height for broad compatibility.
     const score=v=>(v.protocol==='https'?100:0)+(/^avc/.test(v.vcodec)?50:0)+(v.fps||0)/100;
     if(!old||score(f)>score(old))groups.set(f.height,f);
   }
@@ -36,7 +36,13 @@ export function choicesFromInfo(info,url) {
   return result;
 }
 function executable() {
-  return process.versions.electron&&process.resourcesPath&&!process.defaultApp?path.join(process.resourcesPath,'tools','yt-dlp.exe'):fileURLToPath(new URL('../vendor/yt-dlp.exe',import.meta.url));
+  if (process.env.AWESOME_YTDLP_PATH) return process.env.AWESOME_YTDLP_PATH;
+  const name = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  const bundled = process.versions.electron && process.resourcesPath && !process.defaultApp
+    ? path.join(process.resourcesPath, 'tools', name)
+    : fileURLToPath(new URL(`../vendor/${name}`, import.meta.url));
+  // Linux users can install yt-dlp from their package manager; fall back to PATH.
+  return existsSync(bundled) ? bundled : name;
 }
 export function youtubeError(raw) {
   const message=String(raw);
@@ -56,7 +62,7 @@ function run(args,{signal,onLine,timeout=120000}={}) {
       else {output+=chunk;if(output.length>32*1024*1024){overflow=true;child.kill();}}
     });
     child.stderr.on('data',chunk=>{error=(error+chunk).slice(-4000);});
-    child.on('error',e=>{clearTimeout(timer);reject(e);});
+    child.on('error',e=>{clearTimeout(timer);reject(e.code==='ENOENT'?new Error('The optional yt-dlp helper is not installed. Install yt-dlp or place its executable in the vendor folder.'):e);});
     child.on('close',code=>{clearTimeout(timer);if(signal?.aborted)return reject(signal.reason);if(code===0&&!overflow)resolve(output);else reject(youtubeError(overflow?'YouTube response exceeded its size limit.':error));});
   });
 }
@@ -85,7 +91,7 @@ export async function downloadYoutube({url,formatKey,directory,signal,onProgress
   if(!choice)throw new Error('This YouTube format is no longer available. Refresh the video menu.');
   onMetadata?.(choice);
   const audio=choice.youtubeFormat.startsWith('audio:');
-  const args=['--newline','--progress','--progress-delta','0.5','--progress-template','download:ADPROGRESS:%(progress)j','--ffmpeg-location',ffmpeg.replace('app.asar','app.asar.unpacked'),'-f',audio?choice.youtubeFormat.slice(6):choice.youtubeFormat,'-o',path.join(directory,'media.%(ext)s')];
+  const args=['--newline','--progress','--progress-delta','0.5','--progress-template','download:ADPROGRESS:%(progress)j','--ffmpeg-location',ffmpegExecutable(),'-f',audio?choice.youtubeFormat.slice(6):choice.youtubeFormat,'-o',path.join(directory,'media.%(ext)s')];
   if(speedLimitKbps)args.push('--limit-rate',String(speedLimitKbps*1024));
   args.push(...(audio?['--extract-audio','--audio-format','mp3']:['--merge-output-format','mp4']),youtubeUrl(url));
   const finished=new Map();let completedBytes=0;

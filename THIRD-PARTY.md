@@ -25,7 +25,9 @@ Source and license: https://github.com/LuanRT/GoogleVideo
 The Windows build includes yt-dlp 2026.08.19 from its official GitHub release,
 SHA-256 `66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a`.
 Source: https://github.com/yt-dlp/yt-dlp/tree/2026.08.19 . The core is public domain;
-the Windows executable includes additional components under their own licenses.
+the official executable includes additional components under their own licenses.
 Full upstream notices are included in `vendor/LICENSE.txt` and
 `vendor/THIRD_PARTY_LICENSES.txt`, copied to the packaged `resources/tools` folder.
+Linux builds do not bundle an extractor: install `yt-dlp` with your package
+manager or place an executable at `vendor/yt-dlp` before packaging.
 This is an independent extractor, not recovered IDM implementation code.

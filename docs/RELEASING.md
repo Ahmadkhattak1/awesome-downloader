@@ -3,16 +3,17 @@
 Public source and public binaries are separate release steps. Do not publish a
 download asset just because a local package command succeeds.
 
-1. Run `npm ci` and `npm test` on Windows x64.
+1. Run `npm ci` and `npm test` on Windows x64 and Linux x64.
 2. Review the source diff and export for private data and proprietary material.
 3. Verify third-party license notices and provide corresponding source and build
    material for the actual bundled GPL binaries (including their linked components).
    The FFmpeg commit alone is not a complete source bundle for its external libraries.
    Mirror required source archives alongside binary release assets. Record hashes.
    Review the yt-dlp executable's bundled components too if it is included.
-4. `npm run dist` builds an unsigned per-user NSIS installer. Test it on a clean
-   Windows machine without Node.js: install, launch, extension setup, native handoff,
-   download with audio, completion, update, and uninstall.
+4. `npm run dist` builds an unsigned per-user NSIS installer. `npm run dist:linux`
+   builds an unsigned AppImage and Debian package. Test each on a clean machine for
+   its platform without Node.js: install or launch, extension setup, native
+   handoff, download with audio, completion, update, and uninstall.
 5. Publish a **prerelease** until the clean-machine checks and known limitations
    are documented. Attach installer, checksums, notices, and required source assets.
 6. Never attach research, browser profiles, diagnostics with media URLs, or user data.

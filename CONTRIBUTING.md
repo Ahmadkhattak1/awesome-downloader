@@ -1,6 +1,6 @@
 # Contributing
 
-Issues and pull requests are welcome. This is an early Windows preview, not a
+Issues and pull requests are welcome. This is an early desktop preview, not a
 finished replacement for every commercial downloader feature.
 
 Read the [contributor start guide](docs/CONTRIBUTOR-START-HERE.md) before choosing
@@ -10,21 +10,23 @@ maintainer before coding. Propose features outside the backlog for approval firs
 
 ## Development
 
-Use Windows x64 and Node.js 22 or newer with npm. Fork this repository, clone your
-fork, and create a branch for one focused change.
+Use Windows x64 or Linux x64 and Node.js 22 or newer with npm. Fork this
+repository, clone your fork, and create a branch for one focused change.
 
-```powershell
+```sh
 npm ci
 npm test
 npm start
 ```
 
 The legacy manual YouTube URL resolver needs the optional executable described
-in THIRD-PARTY.md; the browser-capture path does not invoke it.
+in THIRD-PARTY.md; the browser-capture path does not invoke it. On Linux, install
+`yt-dlp` from your package manager or place an executable at `vendor/yt-dlp`.
 
 Run `npm run package` to build the unpacked app or `npm run dist` for a local
-Windows installer. These commands do not publish a release. Review
-[release requirements](docs/RELEASING.md) before distributing binaries.
+Windows installer. On Linux, use `npm run package:linux` and `npm run dist:linux`
+for an AppImage and Debian package. These commands do not publish a release.
+Review [release requirements](docs/RELEASING.md) before distributing binaries.
 
 ## Pull requests
 
@@ -34,7 +36,7 @@ Windows installer. These commands do not publish a release. Review
   changes to merge and pass validation before merging dependent work.
 - Explain the problem, the change, and how you tested it.
 - Add regressions for parsing, transfers, authentication, and lifecycle changes.
-- Preserve the compact Windows layout and keyboard accessibility.
+- Preserve the compact desktop layout and keyboard accessibility.
 - Distinguish local fixture tests from live-browser verification.
 - Keep captured URLs, cookies, tokens, browser profiles, and downloads out of Git.
 - Do not include proprietary IDM code, extracted binaries, or DRM bypasses.

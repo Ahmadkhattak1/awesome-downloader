@@ -1,7 +1,8 @@
 {
   "name": "awesome-downloader",
   "version": "0.1.0",
-  "description": "A Windows download manager with segmented transfers and browser video capture",
+  "description": "A desktop download manager with segmented transfers and browser video capture",
+  "desktopName": "awesome-downloader.desktop",
   "main": "desktop/main.cjs",
   "private": true,
   "repository": { "type": "git", "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git" },
@@ -13,7 +14,9 @@
     "test": "node --test tests/*.test.mjs integration/*.test.cjs extension/*.test.cjs",
     "package": "electron-builder --win dir",
     "dist": "electron-builder --win nsis --x64 --publish never",
-    "dist:portable": "electron-builder --win portable --x64 --publish never"
+    "dist:portable": "electron-builder --win portable --x64 --publish never",
+    "package:linux": "electron-builder --linux dir",
+    "dist:linux": "electron-builder --linux AppImage deb --x64 --publish never"
   },
   "devDependencies": {
     "electron": "44.9.0",
@@ -39,14 +42,12 @@
     ],
     "asar": true,
     "extraResources": [
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" },
-      { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" },
       { "from": "node_modules/googlevideo/LICENSE", "to": "licenses/googlevideo-LICENSE.txt" },
       {
         "from": "vendor",
         "to": "tools",
         "filter": [
+          "yt-dlp",
           "yt-dlp.exe",
           "*.txt"
         ]
@@ -72,13 +73,36 @@
       }
     ],
     "asarUnpack": [
-      "node_modules/ffmpeg-static/ffmpeg.exe"
+      "node_modules/ffmpeg-static/ffmpeg*"
     ],
     "electronDist": "node_modules/electron/dist",
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "build/icon.ico",
-      "signExecutable": false
+      "signExecutable": false,
+      "extraResources": [
+        { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
+        { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" },
+        { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" }
+      ]
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.png",
+      "executableName": "awesome-downloader",
+      "syncDesktopName": true,
+      "category": "Network",
+      "synopsis": "Download manager with segmented transfers and browser video capture",
+      "maintainer": "Awesome Downloader contributors <noreply@github.com>",
+      "artifactName": "Awesome-Downloader-${version}-Linux-${arch}.${ext}",
+      "extraResources": [
+        { "from": "node_modules/ffmpeg-static/ffmpeg.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
+        { "from": "node_modules/ffmpeg-static/ffmpeg.README", "to": "licenses/FFmpeg-BUILD.txt" },
+        { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" }
+      ]
     },
     "portable": {
       "artifactName": "Awesome-Downloader-${version}-Windows.exe"
