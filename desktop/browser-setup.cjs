@@ -2,25 +2,51 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { spawn } = require('node:child_process');
 
-async function openExtensions(browser) {
-  const definitions={
-    Chrome:{relative:'Google/Chrome/Application/chrome.exe',url:'chrome://extensions/'},
-    Edge:{relative:'Microsoft/Edge/Application/msedge.exe',url:'edge://extensions/'},
-    Brave:{relative:'BraveSoftware/Brave-Browser/Application/brave.exe',url:'brave://extensions/'},
-    Opera:{relative:'Programs/Opera/launcher.exe',url:'opera://extensions/'}
-  };
-  const definition=definitions[browser];
-  if (!definition) throw new Error('Choose Chrome, Edge, Brave, or Opera.');
-  for (const root of [process.env.LOCALAPPDATA, process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean)) {
-    const executable = path.join(root, definition.relative);
-    try { await fs.access(executable); } catch { continue; }
-    await new Promise((resolve, reject) => {
-      const child = spawn(executable, [definition.url], { detached: true, stdio: 'ignore', windowsHide: true });
-      child.once('error', reject);
-      child.once('spawn', () => { child.unref(); resolve(); });
-    });
-    return;
-  }
-  throw new Error(`${browser} was not found. Open ${definition.url} in your browser manually.`);
+const DEFINITIONS = {
+  Chrome: { url: 'chrome://extensions/', candidates: [
+    ['LOCALAPPDATA', 'Google/Chrome/Application/chrome.exe'], ['ProgramFiles', 'Google/Chrome/Application/chrome.exe'], ['ProgramFiles(x86)', 'Google/Chrome/Application/chrome.exe']
+  ] },
+  Edge: { url: 'edge://extensions/', candidates: [
+    ['ProgramFiles(x86)', 'Microsoft/Edge/Application/msedge.exe'], ['ProgramFiles', 'Microsoft/Edge/Application/msedge.exe'], ['LOCALAPPDATA', 'Microsoft/Edge/Application/msedge.exe']
+  ] },
+  Brave: { url: 'brave://extensions/', candidates: [
+    ['LOCALAPPDATA', 'BraveSoftware/Brave-Browser/Application/brave.exe'], ['ProgramFiles', 'BraveSoftware/Brave-Browser/Application/brave.exe'], ['ProgramFiles(x86)', 'BraveSoftware/Brave-Browser/Application/brave.exe']
+  ] },
+  Opera: { url: 'opera://extensions/', candidates: [
+    ['LOCALAPPDATA', 'Programs/Opera/launcher.exe'], ['LOCALAPPDATA', 'Programs/Opera GX/launcher.exe'], ['ProgramFiles', 'Opera/launcher.exe'], ['ProgramFiles(x86)', 'Opera/launcher.exe']
+  ] },
+  Firefox: { url: 'about:debugging#/runtime/this-firefox', firefox: true, candidates: [
+    ['ProgramFiles', 'Mozilla Firefox/firefox.exe'], ['ProgramFiles(x86)', 'Mozilla Firefox/firefox.exe'], ['LOCALAPPDATA', 'Mozilla Firefox/firefox.exe']
+  ] }
+};
+
+function definitionFor(browser) {
+  const definition = DEFINITIONS[browser];
+  if (!definition) throw new Error('Choose Chrome, Edge, Brave, Opera, or Firefox.');
+  return definition;
 }
-module.exports = { openExtensions };
+
+async function findBrowserExecutable(browser, environment = process.env) {
+  const definition = definitionFor(browser);
+  for (const [rootName, relative] of definition.candidates) {
+    const root = environment[rootName];
+    if (!root) continue;
+    const executable = path.join(root, relative);
+    try { await fs.access(executable); return executable; } catch { /* Try the next supported location. */ }
+  }
+  return null;
+}
+
+async function openExtensions(browser, environment = process.env) {
+  const definition = definitionFor(browser);
+  const executable = await findBrowserExecutable(browser, environment);
+  if (!executable) throw new Error(`${browser} was not found. Copy ${definition.url} into that browser's address bar.`);
+  const args = definition.firefox ? ['-new-tab', definition.url] : ['--new-window', definition.url];
+  await new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
+  });
+  return { browser, url: definition.url };
+}
+module.exports = { DEFINITIONS, definitionFor, findBrowserExecutable, openExtensions };

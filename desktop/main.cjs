@@ -61,21 +61,42 @@ if (process.argv.includes('--native-host')) {
         const fs = require('node:fs/promises');
         await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
       }
-      let connectedBrowsers = [], connectionError = '';
+      const browserSetup = require('./browser-setup.cjs');
+      let connectedBrowsers = [], browsers = [], connectionError = '';
       await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe'));
       // Keep the browser intent in the launch configuration as well as the
       // connector. This lets an upgraded desktop repair an older connector
       // before that connector has been replaced on disk.
       await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? ['--browser-download'] : [root,'--browser-download']}));
       const connectBrowsers = async () => {
-        try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
+        try {
+          connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot });
+          const connected = new Map(connectedBrowsers.map(item => [item.browser, item]));
+          browsers = await Promise.all(Object.keys(browserSetup.DEFINITIONS).map(async name => {
+            const executable = await browserSetup.findBrowserExecutable(name);
+            let icon = '';
+            if (executable) try { icon = (await app.getFileIcon(executable, { size: 'normal' })).toDataURL(); } catch { /* The status remains useful without an icon. */ }
+            const connection = connected.get(name);
+            return {
+              name,
+              installed: Boolean(executable),
+              connected: Boolean(connection),
+              profiles: connection?.profiles || 0,
+              icon,
+              extensionPage: browserSetup.definitionFor(name).url,
+              extensionPath: name === 'Firefox' ? path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension') : path.join(integrationRoot, 'extension'),
+              support: name === 'Firefox' ? 'preview' : 'supported'
+            };
+          }));
+          connectionError = '';
+        }
         catch (error) { connectionError = error.message; }
       };
       await connectBrowsers();
       const browserScan = setInterval(connectBrowsers, 15000);
       browserScan.unref();
       const integration = async () => { await connectBrowsers(); return integrationInfo(); };
-      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
+      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, browsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
       const handlers = {
         snapshot,
@@ -116,10 +137,22 @@ if (process.argv.includes('--native-host')) {
       };
       handlers.registerBrowser = data => require('./browser-registration.cjs').registerBrowser(data, { dataDirectory: app.getPath('userData'), integrationRoot });
       handlers.browserSetup = async ({ action, browser } = {}) => {
-        if (action === 'open') return require('./browser-setup.cjs').openExtensions(browser);
-        if (action === 'copy') { clipboard.writeText(path.join(integrationRoot, 'extension')); return; }
+        const firefoxPath = path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension');
+        const extensionPath = browser === 'Firefox' ? firefoxPath : path.join(integrationRoot, 'extension');
+        if (action === 'open') return browserSetup.openExtensions(browser);
+        if (action === 'copyAddress') { clipboard.writeText(browserSetup.definitionFor(browser).url); return; }
+        if (action === 'prepare' && browser === 'Firefox') {
+          await require('./browser-registration.cjs').registerBrowser({ browser, extensionId: 'awesome-downloader@morluto.local' }, { dataDirectory: app.getPath('userData'), integrationRoot });
+          await connectBrowsers();
+          return { extensionPath };
+        }
+        if (action === 'copy') { clipboard.writeText(extensionPath); return; }
         if (action === 'folder') {
-          const error = await shell.openPath(path.join(integrationRoot, 'extension'));
+          if (browser === 'Firefox') {
+            try { await require('node:fs/promises').access(extensionPath); }
+            catch { await require('./browser-registration.cjs').registerBrowser({ browser, extensionId: 'awesome-downloader@morluto.local' }, { dataDirectory: app.getPath('userData'), integrationRoot }); }
+          }
+          const error = await shell.openPath(extensionPath);
           if (error) throw new Error(error);
           return;
         }
