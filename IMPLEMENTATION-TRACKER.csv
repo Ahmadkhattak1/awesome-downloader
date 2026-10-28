@@ -1,0 +1,23 @@
+# Implementation Status
+Candidate suggestions are not implementation authorization. This tracker does not claim tests passed, code fixes landed, upstream approvals received or merges performed.
+
+| ID | Priority | Issue/PR | Status | Branch/fork | Latest SHA | Checks | Review/blocker | Next action |
+|---|---|---|---|---|---|---|---|---|
+| S01 | P1 | Coordinate #15/#16 | NEEDS_APPROVAL | — | — | Not run | URL persistence/resume policy | Ask maintainer to approve data model |
+| S02 | P1 | Candidate new issue | NEEDS_APPROVAL | — | — | Not run | Recovery UX/data preservation | Ask maintainer for recovery policy |
+| S03 | P1 | Coordinate #41 | NEEDS_INVESTIGATION | — | — | Not run | Binary provenance/hash unverified | Confirm exact yt-dlp artifact |
+| S04 | P1 | Coordinate #41 | BLOCKED | — | — | Not run | Corresponding-source/compliance review | Release owner review |
+| S05 | P1 | Extend #13/#41 | NEEDS_APPROVAL | — | — | Not run | Clean Windows environment needed | Design test VM/workflow |
+| S06 | P1 | Coordinate #16/#17 | NEEDS_INVESTIGATION | — | — | Not run | No confirmed exploit | Audit dataflow/lifecycle first |
+| S07 | P1 | Existing #42 | IN_PROGRESS | — | — | Root cause unconfirmed | Sanitized reproduction required | Diagnose current report |
+| S08 | P1 | Existing #40; PR #47 | BLOCKED | — | — | PR #47 conflict | Registration change under review | Recheck after PR #47 |
+| S09 | P1 | Existing #13 | IN_PROGRESS | — | — | Not independently run | Fork CI must remain secret-free | Extend existing ticket |
+| S10 | P1 | Existing #41 | IN_PROGRESS | — | — | Current release workflow manual | Keep public promotion manual | Extend existing ticket |
+| S11 | P1 | #15, PR #45/#46 | IN_PROGRESS | — | — | PR workflows not confirmed passed | Active shared engine files | Review exact heads and CI |
+| S12 | P1 | #12, PR #37 | IN_PROGRESS | — | — | No benchmark run here | Cause remains empirical | Measure before tuning |
+| S13 | P1 | #14 and PR #33/#35/#36/#39/#47 | NEEDS_MAINTAINER_REVIEW | — | — | Some PRs non-mergeable snapshot | Scope/dependency overlap | Agree sequence; separate concerns |
+| S14 | P2 | PR #50 and #36 | IN_PROGRESS | security/electron-44.9.1 in fork | 6973546d5aadb0a378ccc1fdcd3410dd0c3f01d6 | GitHub Actions action_required | Electron version conflict | Reconcile target and run CI |
+| S15 | P2 | Candidate new issue | NEEDS_APPROVAL | — | — | Not run | Privacy schema needed | Maintainer review of allowlist |
+| S16 | P2 | Extend #13/#18 | NEEDS_APPROVAL | — | — | Not run | Keyboard/screenreader validation | Agree scope and test method |
+| S17 | P2 | Existing browser goals | DEFERRED | — | — | Not run | Store/signing/update policy | Design decision before code |
+| S18 | P2 | #14 and child goals | BLOCKED_BY_DEPENDENCIES | — | — | Not run | Shared adapters/platform dependencies | Follow documented prerequisite order |
