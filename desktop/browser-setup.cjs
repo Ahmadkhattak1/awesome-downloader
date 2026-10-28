@@ -3,9 +3,10 @@ const fs = require('node:fs/promises');
 const { spawn } = require('node:child_process');
 
 async function openExtensions(browser) {
-  const relative = { Chrome: 'Google/Chrome/Application/chrome.exe', Edge: 'Microsoft/Edge/Application/msedge.exe' }[browser];
-  if (!relative) throw new Error('Choose Chrome or Edge.');
-  const url = browser === 'Chrome' ? 'chrome://extensions/' : 'edge://extensions/';
+  const info = require('./browser-registration.cjs').browserInfo[browser];
+  if (!info) throw new Error('Choose Chrome, Edge, or Brave.');
+  const relative = info.executable;
+  const url = info.extensionsUrl;
   for (const root of [process.env.LOCALAPPDATA, process.env.ProgramFiles, process.env['ProgramFiles(x86)']].filter(Boolean)) {
     const executable = path.join(root, relative);
     try { await fs.access(executable); } catch { continue; }
