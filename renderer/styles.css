@@ -18,3 +18,9 @@
 .settings-panel{min-height:230px;padding-top:6px}
 .advanced-fields{margin:6px 0}
 .advanced-fields summary{cursor:pointer;color:#17317b;margin-bottom:6px}
+
+/* Browser confirmation lives in its own window, never over the dashboard. */
+.progress-window.review-window #add-dialog{position:static;margin:0;width:100%;max-width:none;max-height:none;min-height:100vh;border:0;box-shadow:none;border-radius:0}
+.progress-window.review-window #add-dialog::backdrop{background:#f0f0f0}
+.progress-window.review-window #add-dialog>.dialog-title{display:none}
+

@@ -8,16 +8,19 @@ import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
+import { probe, retryAfter, transientStatus } from '../core/http.mjs';
 
 async function fixture(t, options = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-test-'));
   const data = randomBytes(3 * 1024 * 1024 + 37);
   const ranges = [];
   const server = http.createServer((req, res) => {
+    if (options.intercept?.(req, res)) return;
     if (req.url === '/redirect') { res.writeHead(302, { location: '/file.bin' }); return res.end(); }
     if (req.url === '/missing') { res.writeHead(404); return res.end(); }
     const noRange = req.url === '/plain';
     res.setHeader('etag', options.etag || '"fixture-1"');
+    if (options.disposition) res.setHeader('content-disposition', options.disposition);
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
     if (req.headers.range && req.url === '/ignore-range') { res.setHeader('content-length', data.length); return res.end(data); }
@@ -94,6 +97,14 @@ test('parallel ranged transfers reconstruct exact bytes and preserve existing fi
   assert.equal(await fs.readFile(path.join(f.root, 'downloads', 'file.bin'), 'utf8'), 'existing');
   assert.equal(d.filename, 'file (1).bin');
 });
+test('malformed extended filename falls back to the plain content-disposition filename', async t => {
+  const f = await fixture(t, { disposition: `attachment; filename="report.pdf"; filename*=UTF-8''report%ZZ.pdf` });
+  await f.engine.add({ url: `${f.url}/opaque` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.filename, 'report.pdf');
+});
 test('pause then resume from saved partial bytes produces exact output', async t => {
   const f = await fixture(t, { slow: true });
   const [id] = await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
@@ -101,7 +112,7 @@ test('pause then resume from saved partial bytes produces exact output', async t
   assert.equal(d.status, 'paused'); const partial = d.downloaded; assert.ok(partial > 0 && partial < f.data.length);
   const priorRanges = f.ranges.length;
   await f.engine.action(id, 'resume'); await until(() => ['complete', 'error'].includes(d.status));
-  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data)); assert.equal(d.notice, null);
   assert.ok(f.ranges.slice(priorRanges).some(([start]) => start % Math.floor(f.data.length / d.segments.length) !== 0));
 });
 test('non-range server downloads sequentially and queue/scheduled history survives restart', async t => {
@@ -115,12 +126,56 @@ test('non-range server downloads sequentially and queue/scheduled history surviv
   t.after(() => restored.close()); assert.equal(restored.downloads[1].status, 'scheduled'); assert.equal(restored.downloads[0].status, 'complete');
   await restored.close();
 });
+test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET probe', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-probe-test-'));
+  const data = randomBytes(4097);
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(403); return res.end(); }
+    if (req.headers.range !== 'bytes=0-0') { res.writeHead(416); return res.end(); }
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes 0-0/${data.length}`,
+      'content-length': '1',
+      etag: '"probe-1"'
+    });
+    res.end(data.subarray(0, 1));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
+  const info = await probe(`http://127.0.0.1:${server.address().port}/coursera.mp4`, {}, new AbortController().signal);
+  assert.equal(info.total, data.length);
+  assert.equal(info.ranges, true);
+  assert.equal(info.validator, '"probe-1"');
+});
+test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  await assert.rejects(
+    probe(`http://127.0.0.1:${server.address().port}/notfound.mp4`, {}, new AbortController().signal),
+    /Server returned HTTP 404\./
+  );
+});
 test('invalid batches fail atomically; reserved Windows names are sanitized', async t => {
   const f = await fixture(t);
   await assert.rejects(f.engine.add({ urls: [`${f.url}/file.bin`, 'file:///C:/secret'] })); assert.equal(f.engine.downloads.length, 0);
   assert.equal(safeFilename('../../CON.exe'), 'download_CON.exe');
   await assert.rejects(f.engine.add({ url: `${f.url}/file.bin`, outputFormat: 'mkv' }), /output format/);
   await f.engine.updateSettings({ maxConcurrent: 1 }); // DASH manifests are accepted now (ffmpeg copies them)
+});
+test('long filenames retain their extension and automatic category', async t => {
+  const f = await fixture(t);
+  const original = `${'a'.repeat(200)}.pdf`;
+  const shortened = safeFilename(original);
+  assert.equal(shortened.length, 180);
+  assert.ok(shortened.endsWith('.pdf'));
+  await f.engine.add({ url: `${f.url}/opaque`, filename: original, queueOnly: true });
+  assert.equal(f.engine.downloads[0].filename, shortened);
+  assert.equal(f.engine.downloads[0].category, 'Documents');
 });
 test('bridge requires token and rejects web origins before enqueuing', async t => {
   const f = await fixture(t); const bridge = await startBridge(f.engine, { dataDirectory: path.join(f.root, 'state'), port: 0 });
@@ -131,6 +186,26 @@ test('bridge requires token and rejects web origins before enqueuing', async t =
   assert.equal((await fetch(endpoint, { method: 'POST', headers: { ...headers, origin: 'https://example.com' }, body: '{}' })).status, 403);
   const response = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ url: `${f.url}/file.bin` }) });
   assert.equal(response.status, 201); assert.equal((await response.json()).ids.length, 1);
+});
+
+test('resume explains a restart when the file changed on the server', async t => {
+  const options = { slow: true }, f = await fixture(t, options);
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 150000); await f.engine.action(id, 'pause');
+  options.etag = '"fixture-2"';
+  await f.engine.action(id, 'resume'); await until(() => d.notice || d.status === 'error');
+  assert.match(d.notice, /changed on the server; restarted from the beginning/);
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.match(f.engine.snapshot().downloads[0].notice, /changed on the server/);
+});
+
+test('resume explains a restart when the server does not support ranges', async t => {
+  const f = await fixture(t, { slow: true });
+  const [id] = await f.engine.add({ url: `${f.url}/plain` }); const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 150000); await f.engine.action(id, 'pause');
+  await f.engine.action(id, 'resume'); await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.match(d.notice, /does not support resuming/);
 });
 
 test('restart recovers paused offsets from actual disk files', async t => {
@@ -153,6 +228,70 @@ test('server ignoring ranges fails without publishing corrupt files', async t =>
   await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
   await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
   assert.equal(d.path, null);
+});
+
+test('permanent HTTP failures on byte ranges fail without retrying', async t => {
+  const requests = new Map();
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    requests.set(req.headers.range, (requests.get(req.headers.range) || 0) + 1);
+    res.writeHead(403); res.end(); return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => d.status === 'error'); assert.match(d.error, /HTTP 403/);
+  assert.ok(requests.size > 0); assert.deepEqual([...requests.values()].filter(n => n > 1), []);
+});
+
+test('503 with Retry-After waits as instructed, then completes the range', async t => {
+  let failed = null, failedAt = 0, retriedAt = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    if (!failed) { failed = req.headers.range; failedAt = Date.now(); res.writeHead(503, { 'retry-after': '1' }); res.end(); return true; }
+    if (req.headers.range === failed && !retriedAt) retriedAt = Date.now();
+    return false;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error); assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  assert.ok(retriedAt - failedAt >= 900, `retried after ${retriedAt - failedAt}ms`);
+});
+
+test('long server cooldown stops without issuing an early retry', async t => {
+  const requests=new Map();
+  const f=await fixture(t,{intercept:(req,res)=>{
+    if(req.method!=='GET'||!req.headers.range)return false;
+    requests.set(req.headers.range,(requests.get(req.headers.range)||0)+1);
+    res.writeHead(429,{'retry-after':'3600'});res.end();return true;
+  }});
+  await f.engine.add({url:`${f.url}/file.bin`});const d=f.engine.downloads[0];
+  await until(()=>d.status==='error');
+  assert.match(d.error,/3600 seconds/);
+  assert.ok(requests.size>0);assert.ok([...requests.values()].every(count=>count===1));
+  assert.equal(d.path,null);
+});
+
+test('cancel interrupts a Retry-After wait immediately', async t => {
+  let throttled = false;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    throttled = true; res.writeHead(429, { 'retry-after': '30' }); res.end(); return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
+  await until(() => throttled && d.status === 'downloading'); await delay(100);
+  const started = Date.now(); await f.engine.action(id, 'cancel');
+  assert.equal(d.status, 'cancelled'); assert.ok(Date.now() - started < 2000);
+});
+
+test('Retry-After preserves server cooldowns and excludes unsupported protocol responses', () => {
+  const now = Date.parse('2026-01-01T00:00:00Z');
+  assert.equal(retryAfter('5', now), 5000);
+  assert.equal(retryAfter('Thu, 01 Jan 2026 00:00:10 GMT', now), 10000);
+  assert.equal(retryAfter('Wed, 31 Dec 2025 23:59:00 GMT', now), 0);
+  assert.equal(retryAfter('3600', now), 3600000);
+  assert.deepEqual([501,505,600].map(transientStatus),[false,false,false]);
+  assert.equal(retryAfter('soon', now), null); assert.equal(retryAfter(undefined, now), null);
+  assert.deepEqual([408, 429, 500, 503].map(transientStatus), [true, true, true, true]);
+  assert.deepEqual([400, 403, 404, 410, 416].map(transientStatus), [false, false, false, false, false]);
 });
 
 test('cancel releases queue capacity and removes partial files', async t => {

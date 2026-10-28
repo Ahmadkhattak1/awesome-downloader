@@ -8,6 +8,10 @@
   "background": {"scripts": ["hls.js", "youtube-media.js", "background.js"]},
   "icons": {"16":"icons/icon16.png","32":"icons/icon32.png","48":"icons/icon48.png","128":"icons/icon128.png"},
   "action": {"default_popup": "popup.html", "default_title": "Awesome Downloader", "default_icon":{"16":"icons/icon16.png","32":"icons/icon32.png"}},
-  "browser_specific_settings": {"gecko": {"id": "awesome-downloader@morluto.local", "strict_min_version": "121.0", "data_collection_permissions": {"required": ["none"]}}},
-  "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["media-choices.js", "content.js"], "all_frames": true, "run_at": "document_idle"}]
+  "browser_specific_settings": {"gecko": {"id": "awesome-downloader@morluto.local", "strict_min_version": "128.0", "data_collection_permissions": {"required": ["none"]}}},
+  "content_scripts": [
+    {"matches":["https://www.youtube.com/*","https://youtube.com/*","https://m.youtube.com/*"],"js":["youtube-media.js","youtube-page.js"],"world":"MAIN","run_at":"document_start"},
+    {"matches":["https://www.youtube.com/*","https://youtube.com/*","https://m.youtube.com/*"],"js":["youtube-relay.js"],"run_at":"document_start"},
+    {"matches": ["http://*/*", "https://*/*"], "js": ["media-choices.js", "content.js"], "all_frames": true, "run_at": "document_idle"}
+  ]
 }
