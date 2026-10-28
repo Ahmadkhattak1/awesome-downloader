@@ -15,7 +15,7 @@ import { downloadBlock } from './chunk.mjs';
 import { ChunkPool } from './pool.mjs';
 import { configureTransport, transportConfig, throttleFrom, preferMultiplex } from './http.mjs';
 import { RangeSet } from './ranges.mjs';
-import { BlockScheduler, MIN_BLOCK } from './scheduler.mjs';
+import { BlockScheduler, MIN_BLOCK, maxBlockFor } from './scheduler.mjs';
 import { HashService } from './hasher.mjs';
 import { HashSession } from './hash-session.mjs';
 import { normalizeChecksum, digestsFromHeaders } from './digest.mjs';
@@ -74,7 +74,7 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, watchClipboard: false, directWrite: true, workerThreads: true, http2: true, adaptive: true, verifyHashes: true, memoryBudgetMb: 128, closeToTray: true, launchAtLogin: false };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, watchClipboard: true, directWrite: true, workerThreads: true, http2: true, adaptive: true, verifyHashes: true, memoryBudgetMb: 256, closeToTray: true, launchAtLogin: false };
     this.pool = null;
     this.hashService = null;
     this.downloads = [];
@@ -452,7 +452,7 @@ export class DownloadEngine extends EventEmitter {
       await downloadBlock({ ...task, signal: blockSignal, onBytes });
     };
     scheduler = new BlockScheduler({ total, done: done.toJSON(), sources, connections: d.connections, fetchBlock, adaptive: this.settings.adaptive !== false,
-      memoryBudget: (this.settings.memoryBudgetMb || 128) * MiB, maxAttempts: 4, tickMs: Math.min(400, Math.max(50, this.tickMs)) });
+      maxBlock: maxBlockFor(total), memoryBudget: (this.settings.memoryBudgetMb || 256) * MiB, maxAttempts: 4, tickMs: Math.min(400, Math.max(50, this.tickMs)) });
     done = scheduler.done; // single source of truth from here on
 
     // Rate limited (429/503): the scheduler already halved this origin's connections; also move it to one multiplexed

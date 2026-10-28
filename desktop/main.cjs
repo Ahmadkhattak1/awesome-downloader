@@ -21,6 +21,8 @@ if (process.argv.includes('--native-host')) {
   if (!locked) app.quit();
   else {
     app.on('second-instance', () => { window?.show(); window?.focus(); });
+    // Windows toasts (and their click events) need a stable AppUserModelID; it matches electron-builder's appId.
+    if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? (/legacy/i.test(app.getName()) ? 'com.awesomedownloader.desktop.legacy' : 'com.awesomedownloader.desktop') : process.execPath);
     app.whenReady().then(async () => {
       const fs = require('node:fs/promises');
       const history = path.join(sharedDataDirectory, 'downloads.json');
@@ -70,21 +72,25 @@ if (process.argv.includes('--native-host')) {
         const fs = require('node:fs/promises');
         await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
       }
-      let connectedBrowsers = [], connectionError = '';
+      let connectedBrowsers = [], connectionError = '', registration = [];
       let nativeHostError = '';
       try { await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe')); }
       catch (error) { nativeHostError = error.message; }
       await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? [] : [root]}));
       const connectBrowsers = async () => {
-        if (nativeHostError) { connectionError = nativeHostError; return; }
-        try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
+        const registrationApi = require('./browser-registration.cjs'), options = { dataDirectory: app.getPath('userData'), integrationRoot };
+        // The .cmd launcher still works when the .NET compiler failed, so a build error no longer blocks registration.
+        try { connectedBrowsers = await registrationApi.connectInstalledBrowsers(options); connectionError = ''; }
         catch (error) { connectionError = error.message; }
+        try { await registrationApi.repairRegistrations(options); registration = await registrationApi.registrationStatus(options); }
+        catch (error) { connectionError = connectionError || error.message; }
+        if (nativeHostError && !connectionError) connectionError = `${nativeHostError} (using the fallback launcher)`;
       };
       await connectBrowsers();
       const browserScan = setInterval(connectBrowsers, 15000);
       browserScan.unref();
       const integration = async () => { await connectBrowsers(); return integrationInfo(); };
-      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
+      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, registration, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
       let aboutWindow = null;
       const openAbout = async () => {
@@ -98,7 +104,7 @@ if (process.argv.includes('--native-host')) {
         showProgress(aboutWindow);
       };
       const fromAbout = event => aboutWindow && !aboutWindow.isDestroyed() && event.senderFrame === aboutWindow.webContents.mainFrame;
-      ipcMain.handle('about:info', event => { if (!fromAbout(event)) throw new Error('Untrusted renderer.'); return buildAboutInfo({ version: app.getVersion(), versions: process.versions, root, dataDirectory: sharedDataDirectory, packaged: app.isPackaged }); });
+      ipcMain.handle('about:info', event => { if (!fromAbout(event)) throw new Error('Untrusted renderer.'); return buildAboutInfo({ versions: process.versions, root, dataDirectory: sharedDataDirectory, packaged: app.isPackaged }); });
       ipcMain.handle('about:copy', (event, text) => { if (!fromAbout(event) || typeof text !== 'string' || text.length > 4096) throw new Error('Untrusted renderer.'); clipboard.writeText(text); });
       ipcMain.handle('about:open', async (event, url) => { if (!fromAbout(event) || !ABOUT_LINKS.some(link => link.url === url)) throw new Error('Untrusted renderer.'); await shell.openExternal(url); });
       const applyLoginItem = () => { if (app.isPackaged) { try { app.setLoginItemSettings({ openAtLogin: engine.settings.launchAtLogin === true }); } catch { /* unsupported platform */ } } };
@@ -184,7 +190,7 @@ if (process.argv.includes('--native-host')) {
               await dialog.showMessageBox(window, { message: `Imported ${urls.length} downloads.`, detail: 'The imported downloads are paused. Select Start Queue to begin.' });
             } catch (e) { dialog.showErrorBox('Could not import downloads', e.message); }
           } }] },
-          { type: 'separator' }, { label: 'Monitor clipboard for download links', type: 'checkbox', checked: engine.settings.watchClipboard === true, click: item => { Promise.resolve().then(() => engine.updateSettings({ watchClipboard: item.checked })).catch(e => dialog.showErrorBox('Could not change setting', e.message)); } },
+          { type: 'separator' }, { label: 'Monitor clipboard for download links', type: 'checkbox', checked: engine.settings.watchClipboard !== false, click: item => { Promise.resolve().then(() => engine.updateSettings({ watchClipboard: item.checked })).catch(e => dialog.showErrorBox('Could not change setting', e.message)); } },
           { type: 'separator' }, { label: 'Exit', click: () => app.quit() } ] },
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
@@ -208,21 +214,33 @@ if (process.argv.includes('--native-host')) {
         if (engine.settings.notifyOnComplete && Notification.isSupported()) new Notification({ title: 'Download complete', body: d.filename }).show();
         if (engine.settings.revealOnComplete && d.path) shell.showItemInFolder(d.path);
       });
-      // Optional clipboard link monitor: off by default, never downloads without a click.
-      let lastClipboard = clipboard.readText();
+      // Clipboard link monitor (on by default, can be switched off in Options). A copied download link opens "Download File Info"
+      // straight away while the app is in front, otherwise a notification offers it. Nothing downloads without a click.
+      const { clipboardLinks } = require('./clipboard-links.cjs');
+      let lastClipboard = '', lastOffered = '';
+      const liveNotes = new Set(); // Electron drops a notification (and its click handler) when it is garbage collected
+      const offerLinks = offer => {
+        const payload = { command: 'clipboardLink', text: offer.links.join('\n'), extract: offer.extract };
+        if (window && !window.isDestroyed() && window.isVisible() && !window.isMinimized() && window.isFocused()) { window.webContents.send('downloader:command', payload); return; }
+        if (!Notification.isSupported()) { if (window && !window.isDestroyed()) { window.show(); window.webContents.send('downloader:command', payload); } return; }
+        const note = new Notification({ title: offer.links.length > 1 ? `${offer.links.length} download links copied` : 'Download link copied', body: offer.links[0].slice(0, 120) + ' \u2014 click to add it to Awesome Downloader.' });
+        liveNotes.add(note);
+        note.on('click', () => { liveNotes.delete(note); if (!window || window.isDestroyed()) return; window.show(); window.focus(); window.webContents.send('downloader:command', payload); });
+        note.on('close', () => liveNotes.delete(note));
+        note.show(); setTimeout(() => liveNotes.delete(note), 120000).unref();
+      };
       const clipboardTimer = setInterval(() => {
         try {
-          if (!engine.settings.watchClipboard) { lastClipboard = clipboard.readText(); return; }
-          const text = clipboard.readText().trim();
-          if (!text || text === lastClipboard) return;
+          const text = clipboard.readText();
+          if (text === lastClipboard) return;
           lastClipboard = text;
-          if (text.length > 2048 || /\s/.test(text) || !/^https?:\/\/[^/]+\/.+\.(zip|7z|rar|iso|img|exe|msi|msix|pdf|mp4|mkv|webm|mov|avi|flv|ts|m3u8|mpd|mp3|m4a|aac|ogg|opus|flac|wav|jpe?g|png|gif|webp|svg|docx?|xlsx?|pptx?|epub|apk|dmg|pkg|deb|rpm|gz|xz|bz2|zst|tar|torrent)(?:[?#].*)?$/i.test(text)) return;
-          if (!Notification.isSupported()) return;
-          const note = new Notification({ title: 'Download link copied', body: 'Click to add it to Awesome Downloader.' });
-          note.on('click', () => { if (window.isDestroyed()) return; window.show(); window.focus(); window.webContents.send('downloader:command', 'paste'); });
-          note.show();
+          if (engine.settings.watchClipboard === false) return;
+          const offer = clipboardLinks(text);
+          if (!offer || offer.links.join('\n') === lastOffered) return;
+          lastOffered = offer.links.join('\n');
+          offerLinks(offer);
         } catch { /* clipboard can be locked by another application */ }
-      }, 1500);
+      }, 700);
       clipboardTimer.unref();
       const icon = nativeImage.createFromPath(trayIconPath);
       tray = new Tray(icon);

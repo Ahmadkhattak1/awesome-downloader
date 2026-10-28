@@ -16,7 +16,7 @@ Not included: HTTP/3 and BBR (Node has no QUIC; congestion control is an OS sett
 
 ## Block scheduler, adaptive connections and integrity
 
-- Files that support byte ranges are downloaded as sequential **2–4 MB blocks**. Each block is aggregated in memory
+- Files that support byte ranges are downloaded as sequential blocks of **2–4 MB**, growing with the file size to 16 MB (from 1 GiB), 32 MB (from 16 GiB) and 64 MB (from 128 GiB) so a 500 GB file needs ~10,000 requests instead of ~125,000. Each block is aggregated in memory
   (`BlockBuffer`, `allocUnsafe`-backed) and written to its final offset by an ordered write queue only after every byte
   was overwritten by received data; incomplete blocks are never written.
 - **Adaptive chunk sizing:** fast connections get 4 MB blocks, slow ones 2 MB; the memory budget (Options → Integrity &

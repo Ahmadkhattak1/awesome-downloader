@@ -8,9 +8,9 @@ const { buildAboutInfo, diagnosticsText, LINKS } = require('../desktop/about-win
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('About info carries version, runtime, license and third-party notices', () => {
-  const info = buildAboutInfo({ version: '1.2.3', versions: { electron: '44', chrome: '140', node: '22', v8: '14' }, root, dataDirectory: 'C:\\data', packaged: true });
-  assert.equal(info.version, '1.2.3'); assert.equal(info.runtime.Electron, '44'); assert.match(info.license, /MIT/);
+  const info = buildAboutInfo({ versions: { electron: '44', chrome: '140', node: '22', v8: '14' }, root, dataDirectory: 'C:\\data', packaged: true });
+  assert.equal('version' in info, false); assert.equal(info.runtime.Electron, '44'); assert.match(info.license, /MIT/);
   assert.ok(info.thirdParty.length > 10); assert.ok(info.links.every(l => l.url.startsWith('https://')) && info.links === LINKS);
-  assert.match(diagnosticsText(info), /Awesome Downloader 1\.2\.3\nElectron: 44/);
-  assert.equal(buildAboutInfo({ version: '1', root: path.join(root, 'nope') }).license, '');
+  assert.match(diagnosticsText(info), /^Awesome Downloader\nElectron: 44/); assert.doesNotMatch(diagnosticsText(info), /\d+\.\d+\.\d+ /);
+  assert.equal(buildAboutInfo({ root: path.join(root, 'nope') }).license, '');
 });

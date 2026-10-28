@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New release tag, e.g. v0.2.0 (empty = v<package version>-r<run number>)'
+        description: 'New release tag, e.g. 0.2.0 or v0.2.0 (the v is added for you; empty = v<package version>-r<run number>)'
         required: false
         default: ''
       title:
@@ -102,7 +102,11 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"
           elif [ -n "${IN_TAG}" ]; then TAG="${IN_TAG}"
           else TAG="v${VERSION}-r${GITHUB_RUN_NUMBER}"; fi
-          case "$TAG" in v[0-9]*) ;; *) echo "Tag must look like v1.2.3 (got '$TAG')"; exit 1;; esac
+          TAG="$(printf '%s' "$TAG" | tr -d '[:space:]')"
+          case "$TAG" in v*|V*) TAG="v${TAG#?}";; *) TAG="v${TAG}";; esac   # "0.2.0" -> "v0.2.0"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+)*([-+.][0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag must look like 0.2.0 or v0.2.0 (got '$TAG')"; exit 1
+          fi
           TITLE="${IN_TITLE:-Awesome Downloader ${TAG}}"
           cd dist
           ls -l

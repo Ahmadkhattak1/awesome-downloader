@@ -38,7 +38,10 @@ export function extractError(raw) {
   return new Error(line.replace(/https?:\/\/\S+/g, '[URL]').slice(0, 600));
 }
 
-function spawnLines(command, args, { signal, onLine, onStderr, env }) {
+// A tool path ending in .js/.cjs/.mjs (used by tests and for wrapper scripts) is run through Node, so it works on every OS.
+function resolveTool(command, args) { return /\.(?:c|m)?js$/i.test(command) ? { command: process.execPath, args: [command, ...args] } : { command, args }; }
+function spawnLines(tool, toolArgs, { signal, onLine, onStderr, env }) {
+  const { command, args } = resolveTool(tool, toolArgs);
   return new Promise((resolve, reject) => {
     let child;
     try { child = spawn(command, args, { windowsHide: true, env: { ...process.env, ...env }, signal, stdio: ['ignore', 'pipe', 'pipe'] }); } catch (error) { return reject(error); }

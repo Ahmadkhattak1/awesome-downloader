@@ -2,12 +2,19 @@ import { EventEmitter } from 'node:events';
 import { RangeSet } from './ranges.mjs';
 
 const KiB = 1024, MiB = 1024 * KiB, BLOCK_STEP = 256 * KiB;
-export const MIN_BLOCK = 2 * MiB, MAX_BLOCK = 4 * MiB;
+export const MIN_BLOCK = 2 * MiB, MAX_BLOCK = 4 * MiB, HUGE_BLOCK = 64 * MiB;
+// Largest block for a file: small files keep 2-4 MB blocks; a 500 GB game would need ~125,000 requests at 4 MB, so the
+// ceiling grows with the file (16 MB from 1 GiB, 32 MB from 16 GiB, 64 MB from 128 GiB). Speed and the memory budget still
+// decide the actual size, so slow links keep small blocks.
+export function maxBlockFor(total) {
+  const GiB = 1024 * MiB;
+  return total >= 128 * GiB ? HUGE_BLOCK : total >= 16 * GiB ? 32 * MiB : total >= GiB ? 16 * MiB : MAX_BLOCK;
+}
 const abortError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError', code: 'ABORT_ERR' });
 
-// Adaptive chunk sizing: fast connections get 4 MB blocks (fewer round trips), slow ones 2 MB (small loss if they
+// Adaptive chunk sizing: fast connections get big blocks (fewer round trips), slow ones 2 MB (small loss if they
 // stall or are dropped). Many parallel connections are capped by the memory budget but never go below 2 MB.
-export function chooseBlockSize({ speed = 0, allowed = 1, memoryBudget = 128 * MiB, min = MIN_BLOCK, max = MAX_BLOCK, targetSeconds = 1.5 } = {}) {
+export function chooseBlockSize({ speed = 0, allowed = 1, memoryBudget = 256 * MiB, min = MIN_BLOCK, max = MAX_BLOCK, targetSeconds = 1.5 } = {}) {
   const memoryCap = Math.max(min, Math.floor(memoryBudget / Math.max(1, allowed)));
   const wanted = speed > 0 ? speed * targetSeconds : min;
   const size = Math.min(max, memoryCap, Math.max(min, wanted));
@@ -23,7 +30,7 @@ export function chooseBlockSize({ speed = 0, allowed = 1, memoryBudget = 128 * M
 //  - Endgame: when only a few blocks remain, an idle fast slot duplicates a straggler; the first copy to finish wins.
 // I/O is injected through fetchBlock(), which keeps this class free of sockets and easy to test.
 export class BlockScheduler extends EventEmitter {
-  constructor({ total, done = [], sources, connections, fetchBlock, minBlock = MIN_BLOCK, maxBlock = MAX_BLOCK, memoryBudget = 128 * MiB,
+  constructor({ total, done = [], sources, connections, fetchBlock, minBlock = MIN_BLOCK, maxBlock = MAX_BLOCK, memoryBudget = 256 * MiB,
     adaptive = true, slowRatio = 0.25, slowWarmupMs = 2000, tickMs = 400, maxAttempts = 5, recoverMs = 10000, dropCooldownMs = 10000, now = () => Date.now() }) {
     super();
     if (!Number.isSafeInteger(total) || total <= 0) throw new RangeError('A positive file size is required.');

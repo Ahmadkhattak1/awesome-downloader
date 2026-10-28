@@ -14,7 +14,7 @@ test('status and control travel from the native host to the engine and back',asy
   const config=readBridge(path.join(root,'b','bridge.json'));
   const [id]=await engine.add({url:'https://example.com/file.zip',queueOnly:true});
   const status=await submitDownload(sanitizeRequest({action:'status'}),config);
-  assert.equal(status.ok,true);assert.equal(status.items[0].id,id);assert.equal(status.settings.watchClipboard,false);
+  assert.equal(status.ok,true);assert.equal(status.items[0].id,id);assert.equal(status.settings.watchClipboard,true);
   await submitDownload(sanitizeRequest({action:'control',id,control:'retry'}),config);
   assert.notEqual(engine.downloads.find(d=>d.id===id).status,'paused');
   await submitDownload(sanitizeRequest({action:'control',id,control:'cancel'}),config);

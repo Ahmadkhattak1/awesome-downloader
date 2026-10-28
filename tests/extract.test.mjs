@@ -14,9 +14,9 @@ const require = createRequire(import.meta.url);
 async function until(check, timeout = 15000) { const end = Date.now() + timeout; while (!check()) { if (Date.now() > end) throw new Error('timeout'); await delay(10); } }
 async function setup(t, { ytdlp, ffmpeg } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'extract-test-'));
-  const script = async (name, body) => { const file = path.join(root, name); await fs.writeFile(file, `#!/usr/bin/env node\n${body}`, { mode: 0o755 }); return file; };
-  if (ytdlp) process.env.AWESOME_YTDLP = await script('yt-dlp', ytdlp);
-  if (ffmpeg) process.env.AWESOME_FFMPEG = await script('ffmpeg', ffmpeg);
+  const script = async (name, body) => { const file = path.join(root, name); await fs.writeFile(file, body); return file; };
+  if (ytdlp) process.env.AWESOME_YTDLP = await script('yt-dlp.cjs', ytdlp);
+  if (ffmpeg) process.env.AWESOME_FFMPEG = await script('ffmpeg.cjs', ffmpeg);
   const engine = await new DownloadEngine({ dataDirectory: path.join(root, 's'), downloadDirectory: path.join(root, 'd'), tickMs: 30 }).init();
   t.after(async () => { await engine.close(); delete process.env.AWESOME_YTDLP; delete process.env.AWESOME_FFMPEG; await fs.rm(root, { recursive: true, force: true }); });
   return { engine, root };
@@ -33,7 +33,7 @@ const ext = audio >= 0 ? a[audio + 1] : (merge >= 0 ? a[merge + 1].split('/')[0]
 console.log('ADTITLE:My: Great/Video'); console.log('ADDURATION:12');
 console.log('ADPROGRESS:' + JSON.stringify({ status: 'downloading', downloaded_bytes: 500, total_bytes: 1000, speed: 100, filename: 'a' }));
 fs.writeFileSync(out.replace('%(ext)s', ext), Buffer.alloc(1000, 7));
-fs.writeFileSync(process.env.FAKE_ARGS || '/dev/null', JSON.stringify(a));
+fs.writeFileSync(process.env.FAKE_ARGS || require('os').devNull, JSON.stringify(a));
 console.log('ADPROGRESS:' + JSON.stringify({ status: 'finished', downloaded_bytes: 1000, total_bytes: 1000, filename: 'a' }));
 `;
 const html = '<html><body>watch</body></html>';

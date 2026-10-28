@@ -26,11 +26,12 @@ function call(info, route, body) {
   });
 }
 
-test('watchClipboard is a validated boolean setting that defaults to off', async t => {
+test('watchClipboard is a validated boolean setting that defaults to on', async t => {
   const { engine } = await setup(t);
+  assert.equal(engine.settings.watchClipboard, true);
+  await engine.updateSettings({ watchClipboard: false });
   assert.equal(engine.settings.watchClipboard, false);
   await engine.updateSettings({ watchClipboard: true });
-  assert.equal(engine.settings.watchClipboard, true);
   assert.throws(() => engine.updateSettings({ watchClipboard: 'yes' }), /Invalid watchClipboard/);
 });
 

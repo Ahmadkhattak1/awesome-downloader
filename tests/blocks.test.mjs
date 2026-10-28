@@ -382,3 +382,21 @@ test('engine: legacy fixed-segment histories (committed offsets) are converted a
   await until(() => ['complete', 'error'].includes(d.status));
   assert.equal(d.status, 'complete', d.error); assert.equal(sha(await fs.readFile(d.path)), sha(data)); assert.equal(d.integrity.sha256, sha(data));
 });
+
+test('block ceiling grows with file size so huge files do not need hundreds of thousands of requests', async () => {
+  const { maxBlockFor } = await import('../core/scheduler.mjs'), GiB = 1024 * MiB;
+  assert.equal(maxBlockFor(100 * MiB), 4 * MiB); assert.equal(maxBlockFor(2 * GiB), 16 * MiB); assert.equal(maxBlockFor(20 * GiB), 32 * MiB); assert.equal(maxBlockFor(500 * GiB), 64 * MiB);
+  assert.equal(chooseBlockSize({ speed: 500 * MiB, allowed: 4, memoryBudget: 256 * MiB, max: maxBlockFor(500 * GiB) }), 64 * MiB);
+  assert.equal(chooseBlockSize({ speed: 500 * MiB, allowed: 64, memoryBudget: 256 * MiB, max: maxBlockFor(500 * GiB) }), 4 * MiB);
+  assert.equal(chooseBlockSize({ speed: 1 * MiB, allowed: 4, max: maxBlockFor(500 * GiB) }), 1.5 * MiB < MIN_BLOCK ? MIN_BLOCK : 1.5 * MiB);
+  const total = 600 * MiB * 8; // 4.7 GiB: blocks stay <= 16 MiB, cover the file exactly once
+  const log = [], s = new BlockScheduler({ total, sources: [{ url: 'http://a/x' }], connections: 4, maxBlock: maxBlockFor(total), fetchBlock: async ({ start, end, onBytes }) => { log.push(end - start + 1); onBytes(end - start + 1); }, slowWarmupMs: 150, tickMs: 25 });
+  await s.run(new AbortController().signal);
+  assert.ok(s.complete()); assert.ok(Math.max(...log) <= 16 * MiB && Math.min(...log.slice(0, -1)) >= MIN_BLOCK); assert.equal(log.reduce((a, b) => a + b, 0), total);
+});
+test('a 64 MiB block is aggregated and written exactly', async t => {
+  const { BlockBuffer } = await import('../core/block-buffer.mjs'), b = new BlockBuffer(64 * MiB), piece = randomBytes(MiB);
+  for (let i = 0; i < 64; i++) b.append(piece);
+  assert.equal(b.view().length, 64 * MiB); b.release();
+  const again = new BlockBuffer(10 * MiB); assert.ok(again.data.length >= 10 * MiB); again.release();
+});

@@ -4,14 +4,16 @@
 // safe when no byte that was never written by the network can ever reach the disk. The class enforces that by
 // construction: data can only be appended, and view() - the only way to obtain bytes for a disk write - throws unless
 // every one of the `length` bytes has been overwritten with received data.
-const CAPACITY = 4 * 1024 * 1024, KEEP = 4;
-const free = [];
+const MiB = 1024 * 1024, KEEP = 4, KEEP_BYTES = 192 * MiB;
+const free = []; // recycled buffers of any capacity (blocks grow with the file size, up to 64 MiB)
 
 export class BlockBuffer {
   constructor(length) {
     if (!Number.isSafeInteger(length) || length <= 0) throw new RangeError('Block length must be a positive integer.');
     this.length = length; this.filled = 0; this.released = false;
-    this.data = length <= CAPACITY ? (free.pop() || Buffer.allocUnsafe(CAPACITY)) : Buffer.allocUnsafe(length);
+    let best = -1;
+    for (let i = 0; i < free.length; i++) if (free[i].length >= length && (best < 0 || free[i].length < free[best].length)) best = i;
+    this.data = best >= 0 ? free.splice(best, 1)[0] : Buffer.allocUnsafe(length);
   }
   get complete() { return this.filled === this.length; }
   get remaining() { return this.length - this.filled; }
@@ -28,7 +30,7 @@ export class BlockBuffer {
   release() {
     if (this.released) return;
     this.released = true;
-    if (this.data.length === CAPACITY && free.length < KEEP) free.push(this.data);
+    if (free.length < KEEP && free.reduce((n, b) => n + b.length, this.data.length) <= KEEP_BYTES) free.push(this.data);
     this.data = null;
   }
 }

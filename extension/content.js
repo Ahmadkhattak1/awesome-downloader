@@ -99,7 +99,7 @@
     }
     position();
   }
-  function friendlyError(message) { return /native messaging host not found/i.test(message || '') ? 'Chrome cannot find the desktop connector. Open Awesome Downloader → Browser Integration → Refresh browsers, then reload this extension and page. Details: '+message : message; }
+  function friendlyError(message) { return /native messaging host not found/i.test(message || '') ? 'Chrome cannot find the desktop connector. Keep Awesome Downloader running (it repairs the connection by itself), or open Browser Integration → Refresh, then reload this extension and page. Details: '+message : message; }
   function closeChoosers(except) {
     for(const record of records){
       if(record===except)continue;
