@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateSet('Chrome','Edge','Firefox')][string]$Browser = 'Chrome',
+  [ValidateSet('Chrome','Edge','Brave','Opera','Firefox')][string]$Browser = 'Chrome',
   [Parameter(Mandatory=$true)][string]$ExtensionId,
   [string]$HostPath = (Join-Path $PSScriptRoot 'native-host.exe')
 )
@@ -12,11 +12,20 @@ if ($Browser -eq 'Firefox') {
 $hostName = 'com.awesome.downloader'
 $installDirectory = Join-Path $env:USERPROFILE '.awesome-downloader\NativeMessaging'
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
-$manifestPath = Join-Path $installDirectory "$hostName.$Browser.json"
+$manifestName = if ($Browser -eq 'Opera') { 'Chrome' } else { $Browser }
+$manifestPath = Join-Path $installDirectory "$manifestName.json"
 $manifest = [ordered]@{ name=$hostName; description='Awesome Downloader browser bridge'; path=$resolvedHost; type='stdio' }
 if ($Browser -eq 'Firefox') { $manifest.allowed_extensions = @($ExtensionId); $key = "HKCU:\Software\Mozilla\NativeMessagingHosts\$hostName" }
 elseif ($Browser -eq 'Edge') { $manifest.allowed_origins = @("chrome-extension://$ExtensionId/"); $key = "HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\$hostName" }
+elseif ($Browser -eq 'Brave') { $manifest.allowed_origins = @("chrome-extension://$ExtensionId/"); $key = "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$hostName" }
 else { $manifest.allowed_origins = @("chrome-extension://$ExtensionId/"); $key = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$hostName" }
+$priorContent = if (Test-Path -LiteralPath $manifestPath) { Get-Content -LiteralPath $manifestPath -Raw } else { $null }
+if ($priorContent -and $Browser -ne 'Firefox') {
+  try {
+    $prior = $priorContent | ConvertFrom-Json
+    $manifest.allowed_origins = @($prior.allowed_origins) + @($manifest.allowed_origins) | Where-Object { $_ -match '^chrome-extension://[a-p]{32}/$' } | Select-Object -Unique
+  } catch { }
+}
 $newContent = $manifest | ConvertTo-Json -Depth 5
 if (Test-Path -LiteralPath $manifestPath) {
   if ((Get-Content -LiteralPath $manifestPath -Raw).Trim() -ne $newContent.Trim()) {

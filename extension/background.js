@@ -3,13 +3,31 @@ if(typeof importScripts==='function') importScripts('hls.js','youtube-media.js')
 const api = globalThis.browser || chrome;
 const HOST = 'com.awesome.downloader';
 const CACHE_KEY = 'mediaByTab';
+const SABR_KEY = 'sabrByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
 const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
+function rememberSabrCapture(tabId,seed){
+  youtubeSabrObserved.set(tabId,seed);
+  if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
+  updateSession(SABR_KEY,map=>{map[tabId]={url:seed.url,requestBody:seed.requestBody};}).catch(()=>{});
+}
+async function sabrCapture(tabId){
+  const live=youtubeSabrObserved.get(tabId);
+  if(live)return live;
+  await serial;
+  try{
+    const data=await api.storage.session.get(SABR_KEY),stored=data[SABR_KEY]?.[tabId];
+    if(stored&&typeof stored.url==='string'&&typeof stored.requestBody==='string'){
+      const capture={...stored,tabId};youtubeSabrObserved.set(tabId,capture);return capture;
+    }
+  }catch{}
+}
 function clearSabrCapture(tabId){
   youtubeSabrObserved.delete(tabId);
   for(const [id,seed] of youtubeSabrSeed)if(seed.tabId===tabId)youtubeSabrSeed.delete(id);
+  updateSession(SABR_KEY,map=>{delete map[tabId];}).catch(()=>{});
 }
 function bytesBase64(bytes){let binary='';const view=new Uint8Array(bytes);for(let i=0;i<view.length;i+=8192)binary+=String.fromCharCode(...view.subarray(i,i+8192));return btoa(binary);}
 api.webRequest.onBeforeRequest?.addListener(details=>{
@@ -74,11 +92,13 @@ async function enqueue(item, tabId) {
     if(!player||!Number.isSafeInteger(audioItag)||audioItag<=0||videoItag!==undefined&&(!Number.isSafeInteger(videoItag)||videoItag<=0))throw new Error('The captured YouTube session expired. Reopen the menu.');
     const audio=player.formats.find(f=>f.itag===audioItag&&/^audio\/mp4/i.test(f.mimeType));
     const video=videoItag===undefined?undefined:player.formats.find(f=>f.itag===videoItag&&/^video\/mp4/i.test(f.mimeType));
-    const captured=youtubeSabrObserved.get(tabId);
+    const captured=await sabrCapture(tabId);
     if(!captured)throw new Error('Play this YouTube video briefly so its streaming session can be captured, then try again.');
     const serverAbrStreamingUrl=captured.url;
     if(!audio||videoItag!==undefined&&!video||!globalThis.youtubeMedia.sabrUrl(serverAbrStreamingUrl)||!player.ustreamerConfig)throw new Error('The captured YouTube SABR session is incomplete. Play the video briefly and reopen the menu.');
-    sabr={videoId:player.videoId,serverAbrStreamingUrl,videoPlaybackUstreamerConfig:player.ustreamerConfig,clientInfo:{clientName:player.clientName,clientVersion:player.clientVersion},formats:player.formats,videoItag,audioItag,requestBody:captured.requestBody};
+    // Native messaging is limited to 1 MiB. The desktop only needs the two
+    // selected tracks, not every format advertised by YouTube's player.
+    sabr={videoId:player.videoId,serverAbrStreamingUrl,videoPlaybackUstreamerConfig:player.ustreamerConfig,clientInfo:{clientName:player.clientName,clientVersion:player.clientVersion},formats:[video,audio].filter(Boolean),videoItag,audioItag,requestBody:captured.requestBody};
   }
   const url = httpUrl(sabr?.serverAbrStreamingUrl||item.url);
   if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
@@ -86,19 +106,20 @@ async function enqueue(item, tabId) {
   const requestHeaders=requestContext.get(tabId)?.get(url);
   return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
-function updateCache(change) {
+function updateSession(key,change) {
   const next = serial.then(async () => {
-    const data = await api.storage.session.get(CACHE_KEY);
-    const map = data[CACHE_KEY] || {};
+    const data = await api.storage.session.get(key);
+    const map = data[key] || {};
     await change(map);
     // Bound total tracked tabs as well as each tab's results.
     const keys = Object.keys(map);
-    keys.slice(0, Math.max(0, keys.length - 50)).forEach(key => delete map[key]);
-    await api.storage.session.set({[CACHE_KEY]: map});
+    keys.slice(0, Math.max(0, keys.length - 50)).forEach(entry => delete map[entry]);
+    await api.storage.session.set({[key]: map});
   });
   serial = next.catch(() => {});
   return next;
 }
+const updateCache=change=>updateSession(CACHE_KEY,change);
 async function remember(tabId, items) {
   if (tabId < 0) return;
   await updateCache(map => {
@@ -123,9 +144,8 @@ api.webRequest.onHeadersReceived.addListener(details => {
   const capturedSabr=globalThis.youtubeMedia?.sabrUrl(details.url);
   if(capturedSabr && details.tabId>=0 && [200,206].includes(details.statusCode)){
     const seed=youtubeSabrSeed.get(details.requestId);
-    if(seed?.tabId===details.tabId&&seed.url===capturedSabr)youtubeSabrObserved.set(details.tabId,seed);
+    if(seed?.tabId===details.tabId&&seed.url===capturedSabr)rememberSabrCapture(details.tabId,seed);
     youtubeSabrSeed.delete(details.requestId);
-    if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
   }
   if(captured && details.tabId>=0 && [200,206].includes(details.statusCode) && /^(video|audio)\//i.test(mime)) {
     const urls=youtubeObserved.get(details.tabId)||[];
@@ -142,6 +162,8 @@ api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObs
 api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
 api.runtime.onInstalled.addListener(async () => {
   try {
+    const current=await api.storage.local.get('interceptDownloads');
+    if(current.interceptDownloads===undefined)await api.storage.local.set({interceptDownloads:true});
     await api.contextMenus.removeAll();
     api.contextMenus.create({id: 'awesome-link', title: 'Download with Awesome Downloader', contexts: ['link', 'video', 'audio']});
     api.contextMenus.create({id: 'awesome-page', title: 'Find downloadable links on this page', contexts: ['page']});
@@ -190,9 +212,15 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
         if(!/^[\w-]{11}$/.test(id||''))return {ok:true,items:[]};
         await api.tabs.sendMessage(sender.tab.id,{action:'refreshPlayer'}).catch(()=>{});
         const player=youtubePlayers.get(sender.tab.id);
-        const active=player?.videoId===id?{...player,sabrUrl:youtubeSabrObserved.get(sender.tab.id)?.url||player.sabrUrl}:null;
-        const items=active?globalThis.youtubeMedia.choices(active,youtubeObserved.get(sender.tab.id)||[]):[];
-        return {ok:true,items,notice:!items.length&&player?.videoId===id&&player.sabr?'This video uses YouTube SABR streaming, which this version cannot download yet. No download has been started.':undefined};
+        if(player?.videoId!==id)return {ok:true,items:[]};
+        const capture=player.sabr?await sabrCapture(sender.tab.id):undefined;
+        const active={...player,sabrUrl:capture?.url||player.sabrUrl};
+        let items=globalThis.youtubeMedia.choices(active,youtubeObserved.get(sender.tab.id)||[]);
+        if(!capture&&items.some(item=>item.sabrSelection)){
+          items=items.filter(item=>!item.sabrSelection);
+          if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured, then reopen this menu.'};
+        }
+        return {ok:true,items};
       }
       await serial;
       const data = await api.storage.session.get(CACHE_KEY);
@@ -203,14 +231,24 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   task().then(respond, error => respond({ok: false, error: error.message}));
   return true;
 });
+const pendingHandoffs=new Map();
+function sharedHandoff(url,item){
+  let pending=pendingHandoffs.get(url);if(pending)return pending;
+  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(url));
+  pendingHandoffs.set(url,pending);pending.catch(()=>{});return pending;
+}
 api.downloads.onCreated.addListener(async item => {
-  let paused=false;
+  const url=item.finalUrl||item.url;
+  let paused=false,accepted=false;
   try {
     const {interceptDownloads = false} = await api.storage.local.get('interceptDownloads');
-    if (!interceptDownloads || !httpUrl(item.finalUrl || item.url)) return;
+    if (!interceptDownloads || !httpUrl(url) || item.state==='complete') return;
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id); paused=true;
-    await enqueue({url: item.finalUrl || item.url, filename: item.filename?.split(/[\\/]/).pop(), referer: item.referrer},item.tabId);
+    await sharedHandoff(url,item);accepted=true;
     await api.downloads.cancel(item.id);
-  } catch (e) { if(paused)await api.downloads.resume(item.id).catch(()=>{}); await api.storage.local.set({lastError: `Browser download was kept: ${e.message}`}); }
+  } catch (e) {
+    if(paused&&!accepted)await api.downloads.resume(item.id).catch(()=>{});
+    await api.storage.local.set({lastError:accepted?`The browser download could not be canceled; Awesome Downloader continues the transfer: ${e.message}`:`Browser download was kept: ${e.message}`});
+  }
 });

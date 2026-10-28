@@ -17,13 +17,13 @@ desktop shortcuts. No GitHub account, Node.js, or developer tools are needed for
 the desktop app.
 
 The installer is currently an unsigned preview. Browser video buttons require
-one manual "Load unpacked" setup; Chrome/Edge store listings are not available.
+one manual "Load unpacked" setup; browser-store listings are not available.
 
 ## Features
 
 - HTTP(S) downloads with parallel ranges where the server supports them.
 - Pause/resume for supported transfers, history, scheduling and speed limits.
-- Chrome/Edge media detection and quality selection; selected video/audio tracks
+- Chrome, Edge, Brave, and Opera media detection and quality selection; selected video/audio tracks
   are combined locally with FFmpeg.
 - Download File Info with save location, category, Download Later, Start and Cancel.
 - Separate progress and completion windows, duplicate-active-download prevention.

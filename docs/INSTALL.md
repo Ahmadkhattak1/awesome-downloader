@@ -5,7 +5,7 @@
 Windows 10/11, 64-bit Intel/AMD PCs are the intended target. Native ARM builds
 are not provided. This is preview software; YouTube speed and compatibility vary.
 
-Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.4)
+Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.5)
 and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
 account, Git, Node.js, or a terminal to install the application. Do not download
 the automatically generated "Source code" archives to install it.
@@ -18,7 +18,7 @@ Run the installer and follow the wizard. Launch **Awesome Downloader** from the
 Start menu. Keep the app installed at its chosen location so browser integration
 can find it.
 
-## Enable video buttons (Chrome / Edge)
+## Enable video buttons (Chrome / Edge / Brave / Opera)
 
 The browser extension adds **Download this video** buttons to supported web
 videos. It is included with the installed application; you do not need to download
@@ -30,10 +30,11 @@ add it once to each browser you use:
 2. In **Awesome Downloader**, click **Copy extension folder path**. This copies
    the location of the extension that came with the app. It is **not** the folder
    where your downloaded videos will be saved.
-3. Click **Open Chrome extensions** or **Open Edge extensions** in the app.
+3. Click the extensions button for **Chrome**, **Edge**, **Brave**, or **Opera** in the app.
    Your browser opens its **Extensions** page. If the button cannot find your
-   browser, type `chrome://extensions` in Chrome's web address bar, or
-   `edge://extensions` in Edge's web address bar, then press **Enter**.
+   browser, type `chrome://extensions`, `edge://extensions`,
+   `brave://extensions`, or `opera://extensions` in that browser's address bar,
+   then press **Enter**.
 4. On the browser's Extensions page, switch on **Developer mode**. In Chrome it
    is usually at the upper right. In Edge, check the left sidebar; expand the menu
    if the sidebar is hidden.
@@ -70,8 +71,10 @@ Do not move or delete this folder after loading it into your browser.
 ### If setup does not work
 
 - **“Manifest file is missing or unreadable”:** Cancel the folder selection and
-  copy the path from Awesome Downloader again. Select the folder containing
-  `manifest.json`, not the app's installation folder, Downloads, or `icons`.
+  click **Show extension folder** in Awesome Downloader. Confirm that the opened
+  folder contains `manifest.json`. Return to the Extensions page, choose **Load
+  unpacked**, and select that exact opened `extension` folder—not the app's
+  installation folder, Downloads, `manifest.json` itself, or the `icons` folder.
 - **No connection message:** Keep the app running, confirm the extension is
   switched on in the same browser you set up, then click **Refresh browsers** in
   the app. Reload the extension on the browser's Extensions page and retry.
@@ -82,7 +85,8 @@ Do not move or delete this folder after loading it into your browser.
 
 Only install the extension if you trust this project. Its page/network permissions
 allow it to detect media and hand the selected media session to the desktop app.
-Firefox does not yet have equivalent verified YouTube support.
+Firefox integration remains a preview and is not yet included in this guided
+Windows setup.
 
 ## Download a file or video
 
