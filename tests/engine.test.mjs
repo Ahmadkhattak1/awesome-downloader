@@ -165,6 +165,16 @@ test('invalid batches fail atomically; reserved Windows names are sanitized', as
   assert.equal(safeFilename('../../CON.exe'), 'download_CON.exe');
   await assert.rejects(f.engine.add({ url: `${f.url}/stream.mpd` }), /muxing engine/);
 });
+test('long filenames retain their extension and automatic category', async t => {
+  const f = await fixture(t);
+  const original = `${'a'.repeat(200)}.pdf`;
+  const shortened = safeFilename(original);
+  assert.equal(shortened.length, 180);
+  assert.ok(shortened.endsWith('.pdf'));
+  await f.engine.add({ url: `${f.url}/opaque`, filename: original, queueOnly: true });
+  assert.equal(f.engine.downloads[0].filename, shortened);
+  assert.equal(f.engine.downloads[0].category, 'Documents');
+});
 test('bridge requires token and rejects web origins before enqueuing', async t => {
   const f = await fixture(t); const bridge = await startBridge(f.engine, { dataDirectory: path.join(f.root, 'state'), port: 0 });
   t.after(() => bridge.close()); const endpoint = `http://127.0.0.1:${bridge.port}/downloads`;
