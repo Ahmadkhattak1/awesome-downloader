@@ -1,0 +1,63 @@
+{
+  "manifest_version": 3,
+  "name": "Awesome Downloader Integration",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq61ftuAbo3Ro/P2v2GcfGVoCVmUEdY+dVkC8ucDFBms9JxzKXVHf/AtPr1sS3vVgMkNATwUiOYmiSj+VUqaDqtrPr9BmCLRnqKP5soieZQMjvjEkUOGdtLDmi4zCzXiQrSE5DpadTM/p52Mgq7O6i2pucv7x/XiK7rUt9JCYWsCT9R1HmbusBJ3f9P94XjJ+IVlcudpriJ8Ac6fQ2kmRDUekjsRXXZdLRSb2uxE5PDfWzpZf6yrXkwi74qt3ACcz8NOhFvA3WIj3pxwZJLXWAUjUyVz547QupgH84zQCAfdBswYPGxAkvKvehGPeegnv1Ch4NXGfF185fCI62V61BwIDAQAB",
+  "version": "0.2.0",
+  "description": "Send links and detected direct video downloads to Awesome Downloader for Windows.",
+  "permissions": [
+    "nativeMessaging",
+    "storage",
+    "activeTab",
+    "contextMenus",
+    "webRequest",
+    "downloads",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Awesome Downloader",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://youtube.com/*",
+        "https://m.youtube.com/*"
+      ],
+      "js": [
+        "youtube-relay.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "media-choices.js",
+        "content.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ],
+  "minimum_chrome_version": "102"
+}

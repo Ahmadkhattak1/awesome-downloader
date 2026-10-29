@@ -44,8 +44,9 @@ test('native framing rejects JSON primitives and arrays',async()=>{
 });
 test('request validation restricts URL, filenames, actions and passed fields',()=>{
   assert.deepEqual(sanitizeRequest({action:'download',url:'https://example.com/file',headers:{Cookie:'secret'},command:'bad'}),{url:'https://example.com/file'});
-  for(const item of [{action:'execute',url:'https://example.com'},{action:'download',url:'file:///c:/x'},{action:'download',url:'https://user:pass@example.com'},{action:'download',url:'https://example.com',filename:'../x'},{action:'download',url:'https://example.com/a.mpd'}]) assert.throws(()=>sanitizeRequest(item));
+  for(const item of [{action:'execute',url:'https://example.com'},{action:'download',url:'file:///c:/x'},{action:'download',url:'https://user:pass@example.com'},{action:'download',url:'https://example.com',filename:'../x'},{action:'download',url:'https://example.com/a.m3u8',extract:'yes',extractFormat:'--exec x'}]) assert.throws(()=>sanitizeRequest(item));
   assert.equal(sanitizeRequest({action:'download',url:'https://example.com/a.m3u8'}).url,'https://example.com/a.m3u8');
+  assert.equal(sanitizeRequest({action:'download',url:'https://example.com/a.mpd'}).url,'https://example.com/a.mpd');
 });
 test('desktop handoff authenticates, sends fields, and requires acceptance',async()=>{
   let rejectRequest=false;

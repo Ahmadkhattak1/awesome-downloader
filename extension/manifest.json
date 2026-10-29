@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Awesome Downloader Integration",
-  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq61ftuAbo3Ro/P2v2GcfGVoCVmUEdY+dVkC8ucDFBms9JxzKXVHf/AtPr1sS3vVgMkNATwUiOYmiSj+VUqaDqtrPr9BmCLRnqKP5soieZQMjvjEkUOGdtLDmi4zCzXiQrSE5DpadTM/p52Mgq7O6i2pucv7x/XiK7rUt9JCYWsCT9R1HmbusBJ3f9P94XjJ+IVlcudpriJ8Ac6fQ2kmRDUekjsRXXZdLRSb2uxE5PDfWzpZf6yrXkwi74qt3ACcz8NOhFvA3WIj3pxwZJLXWAUjUyVz547QupgH84zQCAfdBswYPGxAkvKvehGPeegnv1Ch4NXGfF185fCI62V61BwIDAQAB",
+  "version": "0.2.0",
   "description": "Send links and detected direct video downloads to Awesome Downloader for Windows.",
   "permissions": ["nativeMessaging", "storage", "activeTab", "contextMenus", "webRequest", "downloads"],
   "host_permissions": ["http://*/*", "https://*/*"],

@@ -7,7 +7,20 @@
 .tree-expander[role=button]{cursor:default;color:#555}.tree-expander[role=button]:focus-visible{outline:1px dotted #111}.tree-expander.spacer{height:12px;flex:0 0 12px}.table-scroll{user-select:none}.selection-rectangle{position:absolute;z-index:4;border:1px dotted #225b8b;background:#78b8eb26;pointer-events:none}:root body.progress-window.details-collapsed #details-dialog{overflow:hidden}
 .completed-panel{display:none;padding:10px 14px;color:#111}.is-complete>.dialog-body,.is-complete>.dialog-footer{display:none!important}.is-complete>.completed-panel{display:block}.completed-summary{display:flex;gap:12px;align-items:center;white-space:pre-line;min-height:44px;margin-bottom:12px}.completed-icon{font-size:28px;color:#448b55}.completed-field{display:block;margin:8px 0}.completed-field input{display:block;width:100%;margin-top:4px;height:23px;color:#111}.completed-panel .transfer-buttons{display:flex;gap:10px;margin:10px 0}.completed-panel .transfer-buttons .button{min-width:86px;padding:2px 8px}.completed-panel .transfer-buttons .button:last-child{margin-left:auto}.completed-panel .checkbox-label{margin:9px 0 0}
 
+/* protocol indicators, tabs in Options, advanced add fields */
+.protocol-badges{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px;min-height:18px}
+.badge{display:inline-block;padding:1px 7px;border-radius:9px;border:1px solid #b8c4cc;background:#eef3f6;color:#2d4552;font-size:10px;line-height:15px;white-space:nowrap}
+.badge-good{background:#dff3e4;border-color:#8cc99b;color:#1f6a35}
+.badge-warn{background:#fff1d6;border-color:#e2b865;color:#7a5410}
+.badge-bad{background:#fde1df;border-color:#e39a95;color:#8f2a24}
+.mono{font-family:Consolas,"Courier New",monospace;font-size:10px}
+.source-list{margin:6px 0}
+.settings-panel{min-height:230px;padding-top:6px}
+.advanced-fields{margin:6px 0}
+.advanced-fields summary{cursor:pointer;color:#17317b;margin-bottom:6px}
+
 /* Browser confirmation lives in its own window, never over the dashboard. */
 .progress-window.review-window #add-dialog{position:static;margin:0;width:100%;max-width:none;max-height:none;min-height:100vh;border:0;box-shadow:none;border-radius:0}
 .progress-window.review-window #add-dialog::backdrop{background:#f0f0f0}
 .progress-window.review-window #add-dialog>.dialog-title{display:none}
+

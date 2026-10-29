@@ -77,7 +77,12 @@ function sanitizeSabr(value,downloadUrl) {
   return {videoId,serverAbrStreamingUrl,videoPlaybackUstreamerConfig,clientInfo,formats,videoItag,audioItag,requestBody};
 }
 function sanitizeRequest(message) {
-  if (!message || !['download','formats'].includes(message.action)) throw new Error('Unsupported native action.');
+  if (!message || !['download','formats','status','control'].includes(message.action)) throw new Error('Unsupported native action.');
+  if (message.action==='status') return {action:'status'};
+  if (message.action==='control') {
+    if (typeof message.id!=='string'||message.id.length>80||!/^[\w-]+$/.test(message.id)||!['pause','resume','retry','cancel'].includes(message.control)) throw new Error('Invalid control request.');
+    return {action:'control',id:message.id,control:message.control};
+  }
   const result = {url:validateUrl(message.url)};
   if(message.action==='formats') {
     const u=new URL(result.url);
@@ -88,8 +93,10 @@ function sanitizeRequest(message) {
   if(message.sabr!==undefined)result.sabr=sanitizeSabr(message.sabr,result.url);
   if (message.startNow === true) result.startNow = true;
   if (message.audioUrl) result.audioUrl = validateUrl(message.audioUrl);
-  if(message.outputFormat!==undefined){if(!['mp4','mp3'].includes(message.outputFormat))throw new Error('Invalid output format.');result.outputFormat=message.outputFormat;}
-  if (/\.mpd(?:[?#]|$)/i.test(result.url)) throw new Error('DASH manifests are not supported.');
+  const wide = message.extract === true || /\.mpd(?:[?#]|$)/i.test(result.url);
+  if (message.extract === true) result.extract = true;
+  if (message.extractFormat !== undefined) { if (typeof message.extractFormat !== 'string' || message.extractFormat.length > 200 || !/^[\w\s\-+*/[\]<>=!.,:()|&^$~]+$/.test(message.extractFormat) || message.extractFormat.startsWith('-')) throw new Error('Invalid video format selector.'); result.extractFormat = message.extractFormat; }
+  if(message.outputFormat!==undefined){if(!(wide?['mp4','mkv','webm','mp3','m4a','flac','wav','ogg','opus']:['mp4','mp3']).includes(message.outputFormat))throw new Error('Invalid output format.');result.outputFormat=message.outputFormat;}
   if (message.filename) {
     if (typeof message.filename !== 'string' || message.filename.length > 255 || /[\x00-\x1f<>:"/\\|?*]/.test(message.filename) || ['.', '..'].includes(message.filename)) throw new Error('Invalid filename.');
     result.filename = message.filename;
@@ -113,8 +120,8 @@ function readBridge(configPath) {
 }
 function submitDownload(payload, config) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify(payload);
-    const request = http.request({host:'127.0.0.1',port:config.port,path:payload.action==='formats'?'/formats':'/downloads',method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),'Authorization':`Bearer ${config.token}`},timeout:payload.action==='formats'?55000:15000}, response => {
+    const body = JSON.stringify(payload.action==='control'?{id:payload.id,action:payload.control}:payload);
+    const request = http.request({host:'127.0.0.1',port:config.port,path:{formats:'/formats',status:'/status',control:'/control'}[payload.action]||'/downloads',method:'POST',headers:{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body),'Authorization':`Bearer ${config.token}`},timeout:payload.action==='formats'?55000:15000}, response => {
       let result='';
       response.on('data', chunk => { result += chunk; if (result.length > MAX_MESSAGE) response.destroy(new Error('Desktop response too large.')); });
       response.on('error',reject);
@@ -124,7 +131,7 @@ function submitDownload(payload, config) {
           try { const data=JSON.parse(result);if(typeof data.error==='string')reason=data.error.replace(/https?:\/\/\S+/g,'[URL]').replace(/[\x00-\x1f\x7f]/g,' ').slice(0,700); } catch {}
           reject(new Error(reason ? `${reason} (${response.statusCode})` : `Desktop request failed (${response.statusCode}).`)); return;
         }
-        try { const data=JSON.parse(result); if (!data || typeof data !== 'object' || data.ok === false) throw new Error(data?.error || 'Desktop rejected download.'); resolve(payload.action==='formats'?{ok:true,items:data.items}:{ok:true,id:data.id || data.download?.id || data.ids?.[0]}); } catch(error) { reject(new Error(`Invalid desktop response: ${error.message}`)); }
+        try { const data=JSON.parse(result); if (!data || typeof data !== 'object' || data.ok === false) throw new Error(data?.error || 'Desktop rejected download.'); resolve(payload.action==='formats'||payload.action==='status'?{ok:true,items:data.items,settings:data.settings}:payload.action==='control'?{ok:true}:{ok:true,id:data.id || data.download?.id || data.ids?.[0]}); } catch(error) { reject(new Error(`Invalid desktop response: ${error.message}`)); }
       });
     });
     request.on('timeout',()=>request.destroy(new Error('Desktop connection timed out.')));
@@ -143,7 +150,7 @@ function runNativeHost({input=process.stdin,output=process.stdout,configPath}={}
         let result;
         try { result = await submitDownload(payload,readBridge(configPath)); }
         catch (error) {
-          if (!['ENOENT','ECONNREFUSED'].includes(error.code)) throw error;
+          if (!['ENOENT','ECONNREFUSED'].includes(error.code) || ['status','control'].includes(payload.action)) throw error;
           const launch = JSON.parse(fs.readFileSync(path.join(__dirname,'desktop-launch.json'),'utf8'));
           if (!path.isAbsolute(launch.executable) || !Array.isArray(launch.args)) throw new Error('Desktop launch configuration is invalid.');
           const env = {...process.env}; delete env.ELECTRON_RUN_AS_NODE;

@@ -1,0 +1,5 @@
+This application bundles an FFmpeg executable (ffmpeg.exe) used only to combine and convert
+downloaded audio/video tracks. FFmpeg is a separate program licensed under the LGPL/GPL.
+Project, license and source code: https://ffmpeg.org/ and https://ffmpeg.org/legal.html
+The 32-bit build downloads its FFmpeg binary at build time (see legacy/fetch-ffmpeg.mjs); the
+exact download URL is printed in the build log.

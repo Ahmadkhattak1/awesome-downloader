@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Awesome Downloader Integration",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Send links and detected direct video downloads to Awesome Downloader for Windows.",
   "permissions": ["nativeMessaging", "storage", "activeTab", "contextMenus", "webRequest", "downloads"],
   "host_permissions": ["http://*/*", "https://*/*"],

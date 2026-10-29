@@ -1,3 +1,4 @@
+import './compat.mjs';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -13,8 +14,8 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
     const auth = Buffer.from(req.headers.authorization || '');
     const expected = Buffer.from(`Bearer ${token}`);
     if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) return answer(401, { error: 'Unauthorized.' });
-    if (req.method === 'GET' && req.url === '/health') return answer(200, { ok: true, version: '0.1.0' });
-    if (req.method !== 'POST' || !['/downloads','/formats'].includes(req.url)) return answer(404, { error: 'Not found.' });
+    if (req.method === 'GET' && req.url === '/health') return answer(200, { ok: true });
+    if (req.method !== 'POST' || !['/downloads','/formats','/status','/control'].includes(req.url)) return answer(404, { error: 'Not found.' });
     if (!String(req.headers['content-type']).startsWith('application/json')) return answer(415, { error: 'JSON required.' });
     let size = 0;
     try {
@@ -25,9 +26,14 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(req.url==='/status')return answer(200,{ok:true,items:engine.statusList(),settings:{watchClipboard:engine.settings.watchClipboard}});
+      if(req.url==='/control'){
+        if(typeof body.id!=='string'||!['pause','resume','retry','cancel'].includes(body.action))throw new Error('Invalid control request.');
+        await engine.action(body.id,body.action);return answer(200,{ok:true});
+      }
       if(req.url==='/formats')return answer(200,{ok:true,items:await youtubeFormats(body.url)});
       // Browser callers cannot select filesystem destinations or arbitrary app actions.
-      const payload = { url: body.url, youtubeFormat:body.youtubeFormat, sabr:body.sabr, startNow: body.startNow === true, audioUrl: body.audioUrl, outputFormat:body.outputFormat, urls: body.urls, filename: body.filename, referer: body.referer, headers: body.headers };
+      const payload = { url: body.url, youtubeFormat:body.youtubeFormat, sabr:body.sabr, startNow: body.startNow === true, audioUrl: body.audioUrl, outputFormat:body.outputFormat, extract: body.extract === true ? true : undefined, extractFormat: body.extractFormat, urls: body.urls, filename: body.filename, referer: body.referer, headers: body.headers };
       const ids = await (onDownload ? onDownload(payload) : engine.add(payload));
       answer(201, { ok: true, ids });
     } catch (error) { if (!res.headersSent) answer([429,422].includes(error.statusCode)?error.statusCode:400, { error: error.message }); }
@@ -41,7 +47,7 @@ export async function startBridge(engine, { dataDirectory, port = 17843, onDownl
   try { await fs.writeFile(configPath, JSON.stringify({ port: actualPort, token }), { mode: 0o600 }); }
   catch (error) { server.close(); throw error; }
   return { port: actualPort, async close() {
-    await new Promise(resolve => { server.close(resolve); server.closeIdleConnections(); });
+    await new Promise(resolve => { server.close(resolve); server.closeIdleConnections?.(); });
     try { const saved = JSON.parse(await fs.readFile(configPath, 'utf8')); if (saved.token === token) await fs.unlink(configPath); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   } };
 }

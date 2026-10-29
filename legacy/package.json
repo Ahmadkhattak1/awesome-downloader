@@ -1,0 +1,98 @@
+{
+  "name": "awesome-downloader-legacy",
+  "version": "0.1.0",
+  "description": "Awesome Downloader for 32-bit and legacy Windows (7, 8, 8.1)",
+  "main": "stage/desktop/main.cjs",
+  "private": true,
+  "license": "MIT",
+  "author": "Zelvior (Faizan Raza) <https://github.com/zelvior/>; core by Ahmad Khattak <https://github.com/AhmadKhattak1/>",
+  "scripts": {
+    "stage": "node stage.mjs",
+    "dist:ia32": "npm run stage && electron-builder --win nsis --ia32 --publish never -c.nsis.artifactName=Awesome-Downloader-32bit.exe",
+    "dist:x64": "npm run stage && electron-builder --win nsis --x64 --publish never -c.nsis.artifactName=Awesome-Downloader-64bit.exe",
+    "verify": "node verify.mjs",
+    "ffmpeg:ia32": "node fetch-ffmpeg.mjs"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "24.13.3"
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.3.0"
+  },
+  "build": {
+    "appId": "com.awesomedownloader.desktop.legacy",
+    "productName": "Awesome Downloader Legacy",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "stage/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "extraResources": [
+      {
+        "from": "ffmpeg-notice",
+        "to": "licenses"
+      },
+      {
+        "from": "stage/vendor",
+        "to": "tools",
+        "filter": [
+          "yt-dlp.exe",
+          "*.txt"
+        ]
+      },
+      {
+        "from": "stage/extension",
+        "to": "browser/extension",
+        "filter": [
+          "**/*",
+          "!*.test.cjs"
+        ]
+      },
+      {
+        "from": "stage/integration",
+        "to": "browser/integration",
+        "filter": [
+          "native-host.exe",
+          "native-host.cjs",
+          "NativeHostLauncher.cs",
+          "README.md",
+          "register-native-host.ps1"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "ia32",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "stage/build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Awesome Downloader",
+      "artifactName": "Awesome-Downloader-${arch}.exe",
+      "include": "stage/build/installer.nsh",
+      "installerIcon": "stage/build/installerIcon.ico",
+      "uninstallerIcon": "stage/build/uninstallerIcon.ico",
+      "installerHeader": "stage/build/installerHeader.bmp",
+      "installerSidebar": "stage/build/installerSidebar.bmp",
+      "uninstallerSidebar": "stage/build/uninstallerSidebar.bmp",
+      "uninstallDisplayName": "${productName}",
+      "deleteAppDataOnUninstall": false
+    },
+    "npmRebuild": false
+  }
+}

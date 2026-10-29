@@ -1,5 +1,8 @@
+// libuv's default 4-thread pool throttles parallel disk writes and DNS lookups; must be set before first use.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '32';
 const path = require('node:path');
 const {showProgress,closeCancelledProgress}=require('./progress-window.cjs');
+const {buildAboutInfo,LINKS:ABOUT_LINKS}=require('./about-window.cjs');
 
 if (process.argv.includes('--native-host')) {
   require('../integration/native-host.cjs').runNativeHost();
@@ -17,7 +20,15 @@ if (process.argv.includes('--native-host')) {
   const progressWindowSizes = new WeakMap();
   if (!locked) app.quit();
   else {
-    app.on('second-instance', (_event, argv) => { if (!argv.includes('--browser-download')) { window?.show(); window?.focus(); } });
+    app.on('second-instance', (_event, argv) => {
+      if (!argv.includes('--browser-download')) {
+        window?.show();
+        window?.focus();
+      }
+    });
+    // Windows toasts (and their click events) need a stable AppUserModelID; it matches electron-builder's appId.
+    if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? (/legacy/i.test(app.getName()) ? 'com.awesomedownloader.desktop.legacy' : 'com.awesomedownloader.desktop') : process.execPath);
+
     app.whenReady().then(async () => {
       const fs = require('node:fs/promises');
       const history = path.join(sharedDataDirectory, 'downloads.json');
@@ -39,6 +50,7 @@ if (process.argv.includes('--native-host')) {
       catch (error) { dialog.showErrorBox('Browser connection unavailable', error.message); }
       const root = path.join(__dirname, '..');
       const appIconPath = path.join(root, 'assets', 'app-icon.png');
+      const trayIconPath = path.join(root, 'assets', 'tray-icon.png');
       let integrationRoot = root;
       if (app.isPackaged) {
         const fs = require('node:fs/promises');
@@ -61,24 +73,51 @@ if (process.argv.includes('--native-host')) {
         const fs = require('node:fs/promises');
         await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
       }
-      let connectedBrowsers = [], connectionError = '';
-      await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe'));
+      let connectedBrowsers = [], connectionError = '', registration = [];
+      let nativeHostError = '';
+      try { await require('./browser-registration.cjs').prepareNativeHost(integrationRoot, app.getPath('exe')); }
+      catch (error) { nativeHostError = error.message; }
       // Keep the browser intent in the launch configuration as well as the
       // connector. This lets an upgraded desktop repair an older connector
       // before that connector has been replaced on disk.
       await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? ['--browser-download'] : [root,'--browser-download']}));
+
       const connectBrowsers = async () => {
-        try { connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }); connectionError = ''; }
+        const registrationApi = require('./browser-registration.cjs'), options = { dataDirectory: app.getPath('userData'), integrationRoot };
+        // The .cmd launcher still works when the .NET compiler failed, so a build error no longer blocks registration.
+        try { await registrationApi.ensureDefaultRegistrations(options); } catch { /* browsers are optional */ }
+        try { connectedBrowsers = await registrationApi.connectInstalledBrowsers(options); connectionError = ''; }
         catch (error) { connectionError = error.message; }
+        try { await registrationApi.repairRegistrations(options); registration = await registrationApi.registrationStatus(options); }
+        catch (error) { connectionError = connectionError || error.message; }
+        if (nativeHostError && !connectionError) connectionError = `${nativeHostError} (using the fallback launcher)`;
       };
       await connectBrowsers();
       const browserScan = setInterval(connectBrowsers, 15000);
       browserScan.unref();
       const integration = async () => { await connectBrowsers(); return integrationInfo(); };
-      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
+      const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, connectionError, registration, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo() });
+      let aboutWindow = null;
+      const openAbout = async () => {
+        if (aboutWindow && !aboutWindow.isDestroyed()) { showProgress(aboutWindow); return; }
+        aboutWindow = new BrowserWindow({ width: 560, height: 520, minWidth: 480, minHeight: 420, title: 'About Awesome Downloader', icon: appIconPath, backgroundColor: '#f6f8fa', autoHideMenuBar: true, parent: window && !window.isDestroyed() ? window : undefined,
+          webPreferences: { preload: path.join(__dirname, 'about-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+        aboutWindow.setMenu(null);
+        aboutWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        aboutWindow.webContents.on('will-navigate', event => event.preventDefault());
+        await aboutWindow.loadFile(path.join(root, 'renderer', 'about.html'));
+        showProgress(aboutWindow);
+      };
+      const fromAbout = event => aboutWindow && !aboutWindow.isDestroyed() && event.senderFrame === aboutWindow.webContents.mainFrame;
+      ipcMain.handle('about:info', event => { if (!fromAbout(event)) throw new Error('Untrusted renderer.'); return buildAboutInfo({ versions: process.versions, root, dataDirectory: sharedDataDirectory, packaged: app.isPackaged }); });
+      ipcMain.handle('about:copy', (event, text) => { if (!fromAbout(event) || typeof text !== 'string' || text.length > 4096) throw new Error('Untrusted renderer.'); clipboard.writeText(text); });
+      ipcMain.handle('about:open', async (event, url) => { if (!fromAbout(event) || !ABOUT_LINKS.some(link => link.url === url)) throw new Error('Untrusted renderer.'); await shell.openExternal(url); });
+      const applyLoginItem = () => { if (app.isPackaged) { try { app.setLoginItemSettings({ openAtLogin: engine.settings.launchAtLogin === true }); } catch { /* unsupported platform */ } } };
+      applyLoginItem();
       const handlers = {
         snapshot,
+        about: openAbout,
         openProgress: async ({id}) => {
           const d=engine.downloads.find(d=>d.id===id); if(!d)throw new Error('Download not found.');
           if(progressWindows.has(id)){showProgress(progressWindows.get(id));return;}
@@ -106,9 +145,10 @@ if (process.argv.includes('--native-host')) {
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
         },
-        settings: data => engine.updateSettings(data),
+        settings: async data => { const result = await engine.updateSettings(data); applyLoginItem(); return result; },
         chooseDirectory: async (_data, senderWindow) => {
           const result = await dialog.showOpenDialog(senderWindow || window, { properties: ['openDirectory', 'createDirectory'] });
+
           return result.canceled ? null : result.filePaths[0];
         },
         clipboard: () => clipboard.readText(),
@@ -160,11 +200,12 @@ if (process.argv.includes('--native-host')) {
               await dialog.showMessageBox(window, { message: `Imported ${urls.length} downloads.`, detail: 'The imported downloads are paused. Select Start Queue to begin.' });
             } catch (e) { dialog.showErrorBox('Could not import downloads', e.message); }
           } }] },
+          { type: 'separator' }, { label: 'Monitor clipboard for download links', type: 'checkbox', checked: engine.settings.watchClipboard !== false, click: item => { Promise.resolve().then(() => engine.updateSettings({ watchClipboard: item.checked })).catch(e => dialog.showErrorBox('Could not change setting', e.message)); } },
           { type: 'separator' }, { label: 'Exit', click: () => app.quit() } ] },
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
         { label: 'View', submenu: [ { label: 'All downloads', click: command('all') }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' } ] },
-        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Windows download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
+        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => openAbout().catch(error => dialog.showErrorBox('Could not open About', error.message)) } ] }
       ]));
       engine.on('change', () => {
         const data=snapshot();
@@ -176,19 +217,60 @@ if (process.argv.includes('--native-host')) {
           progress.webContents.send('downloader:change',data);
         }
       });
+      engine.on('integrity-warning', d => { if (Notification.isSupported()) new Notification({ title: 'Checksum differs from the server', body: `${d.filename} does not match the digest announced by the server.` }).show(); });
       engine.on('complete', d => {
         const progress=progressWindows.get(d.id);
         if(progress&&!progress.isDestroyed()){if(engine.settings.hideCompletionDialog)progress.close();else{progress.setMinimumSize(470,270);progress.setSize(480,280);progress.setTitle('Download complete');}}
         if (engine.settings.notifyOnComplete && Notification.isSupported()) new Notification({ title: 'Download complete', body: d.filename }).show();
         if (engine.settings.revealOnComplete && d.path) shell.showItemInFolder(d.path);
       });
-      const icon = nativeImage.createFromPath(appIconPath).resize({width:16,height:16});
+      // Clipboard link monitor (on by default, can be switched off in Options). A copied download link opens "Download File Info"
+      // straight away while the app is in front, otherwise a notification offers it. Nothing downloads without a click.
+      const { clipboardLinks } = require('./clipboard-links.cjs');
+      let lastClipboard = '', lastOffered = '';
+      const liveNotes = new Set(); // Electron drops a notification (and its click handler) when it is garbage collected
+      const offerLinks = offer => {
+        const payload = { command: 'clipboardLink', text: offer.links.join('\n'), extract: offer.extract };
+        if (window && !window.isDestroyed() && window.isVisible() && !window.isMinimized() && window.isFocused()) { window.webContents.send('downloader:command', payload); return; }
+        if (!Notification.isSupported()) { if (window && !window.isDestroyed()) { window.show(); window.webContents.send('downloader:command', payload); } return; }
+        const note = new Notification({ title: offer.links.length > 1 ? `${offer.links.length} download links copied` : 'Download link copied', body: offer.links[0].slice(0, 120) + ' \u2014 click to add it to Awesome Downloader.' });
+        liveNotes.add(note);
+        note.on('click', () => { liveNotes.delete(note); if (!window || window.isDestroyed()) return; window.show(); window.focus(); window.webContents.send('downloader:command', payload); });
+        note.on('close', () => liveNotes.delete(note));
+        note.show(); setTimeout(() => liveNotes.delete(note), 120000).unref();
+      };
+      const clipboardTimer = setInterval(() => {
+        try {
+          const text = clipboard.readText();
+          if (text === lastClipboard) return;
+          lastClipboard = text;
+          if (engine.settings.watchClipboard === false) return;
+          const offer = clipboardLinks(text);
+          if (!offer || offer.links.join('\n') === lastOffered) return;
+          lastOffered = offer.links.join('\n');
+          offerLinks(offer);
+        } catch { /* clipboard can be locked by another application */ }
+      }, 700);
+      clipboardTimer.unref();
+      const icon = nativeImage.createFromPath(trayIconPath);
       tray = new Tray(icon);
       tray.setToolTip('Awesome Downloader');
-      tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show downloads', click: () => window.show() }, { label: 'Quit', click: () => app.quit() }]));
+      tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show downloads', click: () => window.show() }, { label: 'About Awesome Downloader', click: () => openAbout().catch(() => {}) }, { type: 'separator' }, { label: 'Quit', click: () => app.quit() }]));
       tray.on('double-click', () => window.show());
       window.on('minimize', dismissBrowserIntegration);
-      window.on('close', event => { if (!quitting) { event.preventDefault(); dismissBrowserIntegration(); window.hide(); } });
+      window.on('close', event => {
+        if (quitting) return;
+        dismissBrowserIntegration();
+        if (engine.settings.closeToTray === false) {
+          quitting = false;
+          event.preventDefault();
+          app.quit();
+          return;
+        }
+        event.preventDefault();
+        window.hide();
+      });
+
       app.on('activate', () => window.show());
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {

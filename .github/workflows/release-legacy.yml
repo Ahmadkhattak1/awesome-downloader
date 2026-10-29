@@ -1,0 +1,138 @@
+name: Build and release Windows installers (32-bit and 64-bit)
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New release tag, e.g. 0.2.0 or v0.2.0 (the v is added for you; empty = v<package version>-r<run number>)'
+        required: false
+        default: ''
+      title:
+        description: 'Release title (empty = "Awesome Downloader <tag>")'
+        required: false
+        default: ''
+      notes:
+        description: 'Release notes (empty = auto-generated from commits since the previous release)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: false
+      overwrite:
+        description: 'Replace the files of an EXISTING release with this tag (off = always create a new release)'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ia32, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - name: Install dependencies (x64)
+        if: matrix.arch == 'x64'
+        working-directory: legacy
+        run: npm install --no-audit --no-fund
+      - name: Install dependencies (ia32, without ffmpeg-static's x64-only downloader)
+        if: matrix.arch == 'ia32'
+        working-directory: legacy
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Fetch and verify 32-bit ffmpeg.exe
+        if: matrix.arch == 'ia32'
+        working-directory: legacy
+        env:
+          FFMPEG_IA32_URL: ${{ vars.FFMPEG_IA32_URL }}
+        run: node fetch-ffmpeg.mjs
+      - name: Fetch and verify yt-dlp (page video extraction)
+        run: node scripts/fetch-ytdlp.mjs vendor ${{ matrix.arch }}
+      - name: Stage and verify legacy sources
+        working-directory: legacy
+        run: |
+          npm run stage
+          npm run verify
+      - name: Build installer
+        working-directory: legacy
+        run: npm run dist:${{ matrix.arch }}
+      - name: Check installer name
+        shell: bash
+        run: |
+          if [ "${{ matrix.arch }}" = "ia32" ]; then f=Awesome-Downloader-32bit.exe; else f=Awesome-Downloader-64bit.exe; fi
+          test -f "legacy/release/$f"
+          echo "FILE=legacy/release/$f" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.arch }}
+          path: ${{ env.FILE }}
+          if-no-files-found: error
+          retention-days: 7
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IN_TAG: ${{ inputs.tag }}
+          IN_TITLE: ${{ inputs.title }}
+          IN_NOTES: ${{ inputs.notes }}
+          IN_PRERELEASE: ${{ inputs.prerelease }}
+          IN_OVERWRITE: ${{ inputs.overwrite }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./legacy/package.json').version")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${IN_TAG}" ]; then TAG="${IN_TAG}"
+          else TAG="v${VERSION}-r${GITHUB_RUN_NUMBER}"; fi
+          TAG="$(printf '%s' "$TAG" | tr -d '[:space:]')"
+          case "$TAG" in v*|V*) TAG="v${TAG#?}";; *) TAG="v${TAG}";; esac   # "0.2.0" -> "v0.2.0"
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+(\.[0-9]+)*([-+.][0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag must look like 0.2.0 or v0.2.0 (got '$TAG')"; exit 1
+          fi
+          TITLE="${IN_TITLE:-Awesome Downloader ${TAG}}"
+          cd dist
+          ls -l
+          sha256sum Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe > SHA256SUMS.txt
+          {
+            echo "## ${TITLE}"; echo
+            echo "Windows installers (unsigned):"; echo
+            echo "| File | For |"; echo "|---|---|"
+            echo '| `Awesome-Downloader-32bit.exe` | 32-bit Windows 7 / 8 / 8.1 / 10 / 11 |'
+            echo '| `Awesome-Downloader-64bit.exe` | 64-bit Windows 7 / 8 / 8.1 / 10 / 11 |'
+            echo; echo "### Notes"
+            if [ -n "${IN_NOTES}" ]; then printf '%s\n' "${IN_NOTES}"; fi
+            echo "- YouTube capture (SABR) is unavailable in this build; direct files, HLS and other sites work."
+            echo "- Windows may show an unsigned-app warning: choose **More info > Run anyway**."
+            echo "- Windows 7 needs updates KB4474419 and KB4490628 installed."
+            echo '- Verify downloads with `SHA256SUMS.txt`.'
+            echo; echo "See docs/LEGACY.md for details."
+          } > ../notes.md
+          FLAGS=""; if [ "${IN_PRERELEASE}" = "true" ]; then FLAGS="--prerelease"; fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            if [ "${IN_OVERWRITE}" != "true" ]; then
+              echo "::error::Release $TAG already exists. Choose a new tag, or enable 'overwrite' to replace its files."
+              exit 1
+            fi
+            gh release upload "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --title "$TITLE" --notes-file ../notes.md $FLAGS --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" Awesome-Downloader-32bit.exe Awesome-Downloader-64bit.exe SHA256SUMS.txt --title "$TITLE" --notes-file ../notes.md --generate-notes --target "$GITHUB_SHA" $FLAGS --repo "$GITHUB_REPOSITORY"
+          fi
