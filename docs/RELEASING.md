@@ -152,7 +152,8 @@ Dragging the app to the Trash leaves behind:
   partial downloads (`parts`), Chromium caches, `NativeMessaging/` manifest
   backups and `BrowserIntegration/` (the unpacked extension the browser loads,
   and the native-host launcher);
-- `~/Library/Preferences/com.awesomedownloader.desktop.plist`;
+- `~/Library/Preferences/com.awesomedownloader.desktop.plist` and
+  `~/Library/Saved Application State/com.awesomedownloader.desktop.savedState`;
 - the unpacked extension in each browser, until removed from its extensions page.
 
 To remove everything, quit the app, remove the extension in the browser, then:
@@ -163,6 +164,7 @@ ELECTRON_RUN_AS_NODE=1 "/Applications/Awesome Downloader.app/Contents/MacOS/Awes
   ~/.awesome-downloader/BrowserIntegration
 rm -rf "/Applications/Awesome Downloader.app" ~/.awesome-downloader
 rm -f ~/Library/Preferences/com.awesomedownloader.desktop.plist
+rm -rf ~/Library/Saved\ Application\ State/com.awesomedownloader.desktop.savedState
 ```
 
 The first command removes `com.awesome.downloader.json` from each browser's
