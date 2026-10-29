@@ -115,6 +115,7 @@ codesign --verify --deep --strict --verbose=2 "$app"
 codesign -dv --entitlements - "$app"   # Authority=Developer ID Application, TeamIdentifier, flags=…(runtime)
 spctl --assess --type execute --verbose "$app"   # "accepted, source=Notarized Developer ID"
 xcrun stapler validate "$app"
+npx @electron/fuses read --app "$app"   # RunAsNode is Enabled
 shasum -a 256 release/Awesome-Downloader-*-macOS-*.dmg
 ```
 
@@ -143,16 +144,28 @@ the native host (including one that needs audio and video merged), install the
 next build over it, then uninstall. Intel support stays unclaimed until it has
 been tested on Intel hardware.
 
-Uninstall leaves the history and settings folder and the browser manifests in
-place. To remove everything: quit the app, then
+Dragging the app to the Trash leaves behind:
+
+- `com.awesome.downloader.json` in each browser's `NativeMessagingHosts` folder
+  under `~/Library/Application Support/`;
+- `~/.awesome-downloader`: download history (`downloads.json`), settings,
+  partial downloads (`parts`), Chromium caches, `NativeMessaging/` manifest
+  backups and `BrowserIntegration/` (the unpacked extension the browser loads,
+  and the native-host launcher);
+- `~/Library/Preferences/com.awesomedownloader.desktop.plist`;
+- the unpacked extension in each browser, until removed from its extensions page.
+
+To remove everything, quit the app, remove the extension in the browser, then:
 
 ```sh
 ELECTRON_RUN_AS_NODE=1 "/Applications/Awesome Downloader.app/Contents/MacOS/Awesome Downloader" \
   "/Applications/Awesome Downloader.app/Contents/Resources/app.asar/integration/unregister-native-host.cjs" \
   ~/.awesome-downloader/BrowserIntegration
 rm -rf "/Applications/Awesome Downloader.app" ~/.awesome-downloader
+rm -f ~/Library/Preferences/com.awesomedownloader.desktop.plist
 ```
 
 The first command removes `com.awesome.downloader.json` from each browser's
 `NativeMessagingHosts` folder (only when it names this host) and the generated
-launcher files.
+launcher files. Skip the `~/.awesome-downloader` removal to keep history and
+settings for a later install.
