@@ -13,3 +13,16 @@ test('cancel closes progress, but completion keeps its completion actions visibl
   assert.equal(windows.closeCancelledProgress(window,{status:'cancelled'}),true);
   assert.equal(closed,1);
 });
+test('only unfinished downloads ask whether to minimize or cancel on window close',()=>{
+  assert.equal(windows.needsCloseChoice({status:'downloading'}),true);
+  assert.equal(windows.needsCloseChoice({status:'paused'}),true);
+  assert.equal(windows.needsCloseChoice({status:'paused',needsReview:true}),false);
+  assert.equal(windows.needsCloseChoice({status:'complete'}),false);
+  assert.equal(windows.needsCloseChoice({status:'cancelled'}),false);
+  assert.equal(windows.needsCloseChoice(null),false);
+});
+test('an unstarted confirmation cancels directly when its native close button is used',()=>{
+  assert.equal(windows.shouldCancelReviewOnClose({status:'paused',needsReview:true}),true);
+  assert.equal(windows.shouldCancelReviewOnClose({status:'downloading'}),false);
+  assert.equal(windows.shouldCancelReviewOnClose(null),false);
+});

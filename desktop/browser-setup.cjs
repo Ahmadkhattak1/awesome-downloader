@@ -37,16 +37,15 @@ async function findBrowserExecutable(browser, environment = process.env) {
   return null;
 }
 
-async function openExtensions(browser, environment = process.env) {
-  const definition = definitionFor(browser);
+async function openBrowser(browser, environment = process.env) {
+  definitionFor(browser);
   const executable = await findBrowserExecutable(browser, environment);
-  if (!executable) throw new Error(`${browser} was not found. Copy ${definition.url} into that browser's address bar.`);
-  const args = definition.firefox ? ['-new-tab', definition.url] : ['--new-window', definition.url];
+  if (!executable) throw new Error(`${browser} was not found.`);
   await new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    const child = spawn(executable, [], { detached: true, stdio: 'ignore', windowsHide: true });
     child.once('error', reject);
     child.once('spawn', () => { child.unref(); resolve(); });
   });
-  return { browser, url: definition.url };
+  return { browser };
 }
-module.exports = { DEFINITIONS, definitionFor, findBrowserExecutable, openExtensions };
+module.exports = { DEFINITIONS, definitionFor, findBrowserExecutable, openBrowser };

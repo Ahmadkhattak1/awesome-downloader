@@ -162,8 +162,6 @@ api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObs
 api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
 api.runtime.onInstalled.addListener(async () => {
   try {
-    const current=await api.storage.local.get('interceptDownloads');
-    if(current.interceptDownloads===undefined)await api.storage.local.set({interceptDownloads:true});
     await api.contextMenus.removeAll();
     api.contextMenus.create({id: 'awesome-link', title: 'Download with Awesome Downloader', contexts: ['link', 'video', 'audio']});
     api.contextMenus.create({id: 'awesome-page', title: 'Find downloadable links on this page', contexts: ['page']});
@@ -242,8 +240,7 @@ api.downloads.onCreated.addListener(async item => {
   const url=item.finalUrl||item.url;
   let paused=false,accepted=false;
   try {
-    const {interceptDownloads = false} = await api.storage.local.get('interceptDownloads');
-    if (!interceptDownloads || !httpUrl(url) || item.state==='complete') return;
+    if (!httpUrl(url) || item.state==='complete') return;
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id); paused=true;
     await sharedHandoff(url,item);accepted=true;

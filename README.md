@@ -46,7 +46,8 @@ npm start
 `npm run package` builds the unpacked application. `npm run dist` builds a local
 NSIS installer, without publishing. `npm run dist:portable` builds a portable
 executable. See [release requirements](docs/RELEASING.md) before distributing
-either. Current builds are unsigned and have no auto-updater.
+either. Current builds are unsigned. Version 0.1.1 and later can check GitHub
+Releases for updates and always ask before downloading or restarting.
 
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).
 Do not commit its executable. `npm ci` installs the locked media dependencies.

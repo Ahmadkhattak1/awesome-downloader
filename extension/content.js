@@ -87,7 +87,13 @@
               row.onclick=async event=>{
                 event.preventDefault();event.stopPropagation();row.disabled=true;
                 hint.textContent='Opening download options…';
-                try{const response=await send({action:'download',item:{...item,startNow:false}});hint.textContent=response.ok?'Download opened in Awesome Downloader. Choose Start Download or Download Later there. An active download is opened instead of duplicated.':friendlyError(response.error);}catch(error){hint.textContent=friendlyError(error.message);}
+                try{
+                  const response=await send({action:'download',item:{...item,startNow:false}});
+                  globalThis.awesomeMenuResult(response,{
+                    accepted:()=>{chooser.remove();position();},
+                    rejected:message=>{hint.textContent=friendlyError(message);}
+                  });
+                }catch(error){hint.textContent=friendlyError(error.message);}
                 row.disabled=!!item.unsupported;
               };chooser.append(row);
             }); position();

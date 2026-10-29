@@ -90,20 +90,15 @@ test('SABR choices are hidden until the browser captures a usable session',async
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999',ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4',height:1080,qualityLabel:'1080p',bitrate:3000000},{itag:140,mimeType:'audio/mp4',bitrate:128000}]}},sender);
  const result=await h.request({action:'listForFrame'},sender);assert.equal(result.items.length,0);assert.match(result.notice,/captured/i);
 });
-test('fresh installs enable safe browser download handoff by default',async()=>{
- const h=harness();
- await h.events.installed();
- assert.equal(h.data.interceptDownloads,true);
-});
 test('duplicate browser downloads share one native handoff',async()=>{
- const h=harness();h.data.interceptDownloads=true;
+ const h=harness();
  const first=h.createDownload({id:1,url:'https://example.com/file.bin',filename:'C:\\Downloads\\file.bin'}),second=h.createDownload({id:2,url:first.url,filename:first.filename});
  await Promise.all([h.events.download(first),h.events.download(second)]);
  assert.equal(h.nativeRequests.length,1);assert.equal(h.download(1),undefined);assert.equal(h.download(2),undefined);
  assert.deepEqual(h.downloadCalls.filter(([name])=>name==='pause').length,2);assert.deepEqual(h.downloadCalls.filter(([name])=>name==='cancel').length,2);
 });
 test('identical URLs from different tabs do not share a credential-bearing handoff',async()=>{
- const h=harness();h.data.interceptDownloads=true;
+ const h=harness();
  const url='https://example.com/file.bin';
  for(const tabId of [3,4])h.events.requestHeaders({tabId,url,requestHeaders:[{name:'Cookie',value:'session='+tabId}]});
  await Promise.all([3,4].map(tabId=>h.events.download(h.createDownload({id:tabId,tabId,url}))));

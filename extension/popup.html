@@ -1,1 +1,19 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Awesome Downloader</title><link rel="stylesheet" href="popup.css"></head><body><header><h1>Awesome Downloader</h1><p>Videos and links from this tab</p></header><div class="tools"><button id="collect">Find page links</button><button id="selected">Download selected</button></div><label class="setting"><input type="checkbox" id="intercept"> Send new browser downloads to desktop</label><p class="hint">Off by default. Browser downloads are canceled only after the desktop app accepts them.</p><p id="status" role="status"></p><main id="items"></main><footer>Start the Windows app and register the browser bridge first. HLS VOD supports TS/fMP4 output; live, encrypted, separate-audio, DASH, and DRM streams are unsupported.</footer><script src="popup.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Awesome Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="">
+    <div><h1>Awesome Downloader</h1><p>Browser integration installed</p></div>
+  </header>
+  <main>
+    <p>Play a supported video, then use <strong>Download this video</strong> above the player to choose a quality and send it to the desktop app.</p>
+    <p>You can also right-click a file, video, audio, or link and choose <strong>Download with Awesome Downloader</strong>.</p>
+  </main>
+  <footer>Keep Awesome Downloader running. If the video button is missing, open <strong>Browser Integration</strong> in the desktop app, refresh the browser status, and reload the page.</footer>
+</body>
+</html>

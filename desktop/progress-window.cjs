@@ -17,4 +17,8 @@ function closeCancelledProgress(window,download){
   }
   return false;
 }
-module.exports={showProgress,closeCancelledProgress};
+function needsCloseChoice(download){
+  return Boolean(download && !download.needsReview && !['complete','completed','cancelled','canceled'].includes(String(download.status||'').toLowerCase()));
+}
+function shouldCancelReviewOnClose(download){return download?.needsReview===true;}
+module.exports={showProgress,closeCancelledProgress,needsCloseChoice,shouldCancelReviewOnClose};

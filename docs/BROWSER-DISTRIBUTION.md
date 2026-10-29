@@ -15,7 +15,7 @@ silently enable a bundled unpacked extension. Edge supports external installatio
 from its own store or the Chrome Web Store.
 
 Firefox 74 and newer does not allow an ordinary desktop application to silently
-install its companion add-on. The app provides a temporary developer-preview
+install its companion add-on. The supported Firefox option currently uses a temporary
 flow; permanent distribution requires a signed XPI or an AMO listing.
 
 ## Prepare the submission

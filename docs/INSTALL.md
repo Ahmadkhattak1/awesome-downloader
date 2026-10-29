@@ -86,8 +86,8 @@ Do not move or delete this folder after loading it into your browser.
 
 Only install the extension if you trust this project. Its page/network permissions
 allow it to detect media and hand the selected media session to the desktop app.
-Firefox has a separate preview card. **Prepare and open Firefox** creates its
-browser-specific folder and opens Firefox's temporary add-on page. Choose
+Firefox is a supported browser option. **Set up Firefox** creates its
+browser-specific folder and opens Firefox's add-on setup page. Choose
 **This Firefox**, then **Load Temporary Add-on**, and select `manifest.json` from
 the folder shown by the app. Firefox removes a temporary add-on when it restarts;
 a signed AMO release is still required for permanent consumer installation.
@@ -109,9 +109,13 @@ not supported. Slow YouTube transfers remain a known limitation.
 
 ## Updates and uninstall
 
-Quit the app before installing a newer release. After updating, reload the
-extension on the browser's extensions page and refresh your video tabs.
+Awesome Downloader checks GitHub Releases for updates after startup and every
+six hours. It asks before downloading and again before restarting. Active
+downloads are never restarted automatically; choose **Later** and let them
+finish first. You can also choose **Help → Check for updates** at any time.
+After an extension update, reload your video tabs if their download button is
+missing.
 
 Uninstall through Windows **Settings → Apps**. Remove the browser extension
 separately. Downloads and the `.awesome-downloader` folder in your Windows user
-folder are not automatically deleted. There is no automatic updater yet.
+folder are not automatically deleted.

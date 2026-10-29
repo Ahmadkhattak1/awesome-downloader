@@ -67,7 +67,7 @@ test('uncovered browser and renderer entry scripts parse', () => {
   // test suites, so a syntax error here previously shipped silently.
   const files = [
     'renderer/app.js',
-    'extension/popup.js',
+    'extension/menu-behavior.js',
     'extension/content.js',
     'extension/youtube-page.js',
     'extension/youtube-relay.js',

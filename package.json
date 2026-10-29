@@ -1,11 +1,16 @@
 {
   "name": "awesome-downloader",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Windows download manager with segmented transfers and browser video capture",
   "main": "desktop/main.cjs",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git" },
-  "bugs": { "url": "https://github.com/Ahmadkhattak1/awesome-downloader/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ahmadkhattak1/awesome-downloader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Ahmadkhattak1/awesome-downloader/issues"
+  },
   "author": "Awesome Downloader contributors",
   "license": "MIT",
   "scripts": {
@@ -17,7 +22,7 @@
   },
   "devDependencies": {
     "electron": "44.9.1",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "26.18.1",
     "playwright": "^1.58.2"
   },
   "build": {
@@ -26,6 +31,14 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Ahmadkhattak1",
+        "repo": "awesome-downloader",
+        "releaseType": "release"
+      }
+    ],
     "files": [
       "desktop/**/*",
       "core/**/*",
@@ -39,10 +52,22 @@
     ],
     "asar": true,
     "extraResources": [
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE", "to": "licenses/FFmpeg-LICENSE.txt" },
-      { "from": "node_modules/ffmpeg-static/ffmpeg.exe.README", "to": "licenses/FFmpeg-BUILD.txt" },
-      { "from": "node_modules/ffmpeg-static/LICENSE", "to": "licenses/ffmpeg-static-LICENSE.txt" },
-      { "from": "node_modules/googlevideo/LICENSE", "to": "licenses/googlevideo-LICENSE.txt" },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe.LICENSE",
+        "to": "licenses/FFmpeg-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe.README",
+        "to": "licenses/FFmpeg-BUILD.txt"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/LICENSE",
+        "to": "licenses/ffmpeg-static-LICENSE.txt"
+      },
+      {
+        "from": "node_modules/googlevideo/LICENSE",
+        "to": "licenses/googlevideo-LICENSE.txt"
+      },
       {
         "from": "vendor",
         "to": "tools",
@@ -76,7 +101,14 @@
     ],
     "electronDist": "node_modules/electron/dist",
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "signExecutable": false
     },
@@ -94,6 +126,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "6.8.12",
     "ffmpeg-static": "^5.3.0",
     "googlevideo": "^5.0.1"
   }

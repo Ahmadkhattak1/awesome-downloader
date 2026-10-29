@@ -10,4 +10,5 @@ for a private reporting channel without publishing exploitation details or secre
 The native bridge must remain authenticated and loopback-only. No DRM bypass,
 credential harvesting, or page-controlled filesystem paths are accepted.
 
-Only the latest preview is maintained. There is no automatic updater yet.
+Only the latest release is maintained. Version 0.1.1 and later checks GitHub
+Releases for updates and asks before downloading or restarting.

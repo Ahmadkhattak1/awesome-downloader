@@ -8,9 +8,10 @@
 .completed-panel{display:none;padding:10px 14px;color:#111}.is-complete>.dialog-body,.is-complete>.dialog-footer{display:none!important}.is-complete>.completed-panel{display:block}.completed-summary{display:flex;gap:12px;align-items:center;white-space:pre-line;min-height:44px;margin-bottom:12px}.completed-icon{font-size:28px;color:#448b55}.completed-field{display:block;margin:8px 0}.completed-field input{display:block;width:100%;margin-top:4px;height:23px;color:#111}.completed-panel .transfer-buttons{display:flex;gap:10px;margin:10px 0}.completed-panel .transfer-buttons .button{min-width:86px;padding:2px 8px}.completed-panel .transfer-buttons .button:last-child{margin-left:auto}.completed-panel .checkbox-label{margin:9px 0 0}
 
 /* Browser confirmation lives in its own window, never over the dashboard. */
-.progress-window.review-window #add-dialog{position:static;margin:0;width:100%;max-width:none;max-height:none;min-height:100vh;border:0;box-shadow:none;border-radius:0}
+.progress-window #add-dialog{position:static;margin:0;width:100%;max-width:none;max-height:none;height:100vh;border:0;box-shadow:none;border-radius:0}
 .progress-window.review-window #add-dialog::backdrop{background:#f0f0f0}
-.progress-window.review-window #add-dialog>.dialog-title{display:none}
+.progress-window #add-dialog>form>.dialog-title{display:none!important}
+.progress-window.review-window .address-help,.progress-window.review-window .schedule-line,.progress-window.review-window #paste-button{display:none!important}
 
 /* Browser setup uses the installed applications' own icons and reveals one guide at a time. */
 #integration-dialog{width:min(680px,calc(100vw - 24px));height:min(620px,calc(100vh - 24px));overflow:hidden}
@@ -43,3 +44,63 @@
 .extension-path-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px}.extension-path-row input{font-family:Consolas,monospace;font-size:10px;min-width:0}
 .automatic-setup-note{margin-top:14px;border-top:1px solid #e0e3e5;padding-top:10px;color:#59636c}.automatic-setup-note summary{color:#315d81}.automatic-setup-note p{line-height:1.5;margin:8px 0 0}
 @media(max-width:600px){.browser-grid{grid-template-columns:1fr}.extension-path-row{grid-template-columns:1fr 1fr}.extension-path-row input{grid-column:1/-1}}
+
+/* Native application text does not behave like selectable web-page copy. */
+body{user-select:none}
+input,textarea,select{user-select:text}
+
+/* Browser integration is a real movable desktop window, not a dashboard modal. */
+body.integration-window{background:#f0f0f0}
+.integration-window .app-shell,.integration-window #toast,.integration-window dialog:not(#integration-dialog){display:none!important}
+.integration-window #integration-dialog{display:flex;flex-direction:column;position:static;margin:0;width:100%;max-width:none;height:100vh;max-height:none;border:0;box-shadow:none;border-radius:0}
+.integration-window #integration-dialog::backdrop{display:none}
+.integration-window #integration-dialog>.dialog-title{display:none}
+.integration-window #integration-dialog>.dialog-body{flex:1;height:auto;min-height:0}
+.integration-window #integration-dialog>.dialog-footer{flex:0 0 47px}
+
+/* The table itself owns every visible grid line. A painted background grid
+   remains stationary while rows scroll, which creates doubled cell lines. */
+.table-scroll{background:#fff;overflow:auto}
+.downloads-table tbody td{background:#fff;border-bottom:1px solid #eee}
+.download-row.selected td{background:#cce8ff;border-bottom-color:#cce8ff}
+.file-type-icon.native-file-icon{width:16px;height:16px;border:0;border-radius:0;background:transparent;object-fit:contain;display:block}
+.file-type-icon.file-type-fallback{width:13px;height:15px;background:#f5faff;border:1px solid #8fa1b0;border-radius:0 3px 0 0;position:relative}
+.file-type-icon.file-type-fallback:after{content:"";position:absolute;right:-1px;top:-1px;width:4px;height:4px;border-left:1px solid #8fa1b0;border-bottom:1px solid #8fa1b0;background:#fff}
+.downloads-table th{position:relative;overflow:visible}
+.downloads-table th>button{overflow:hidden;text-overflow:ellipsis}
+.column-resizer{position:absolute;z-index:5;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;touch-action:none}
+.column-resizer:hover,.resizing-columns .column-resizer{border-right:1px solid #5794d0}
+body.resizing-columns{cursor:col-resize;user-select:none}
+
+/* Desktop UI text should not behave like selectable web-page content. */
+html,body,body *{-webkit-user-select:none!important;user-select:none!important}
+input,textarea,select,[contenteditable=true]{-webkit-user-select:text!important;user-select:text!important}
+
+/* Make browser setup obvious until at least one browser is connected. */
+.integration-tool.needs-attention{position:relative;border-color:#d19a32!important;background:#fff3c9!important;box-shadow:0 0 0 2px #f2c354 inset,0 0 7px #d89f3a}
+.integration-tool.needs-attention:after{content:"!";position:absolute;right:5px;top:3px;width:15px;height:15px;border-radius:50%;background:#d67b1f;color:#fff;font:bold 11px/15px "Segoe UI",sans-serif;text-align:center}
+.integration-tool.needs-attention svg{stroke:#9a611c!important}
+
+/* Standalone confirmation windows already have a native title-bar close button. */
+body.progress-window #add-dialog>form>.dialog-title{display:none!important}
+
+/* Options is a movable native desktop window; the native title bar owns Close. */
+body.options-window{background:#f0f0f0}
+.options-window .app-shell,.options-window #toast,.options-window dialog:not(#settings-dialog){display:none!important}
+.options-window #settings-dialog{display:block;position:static;margin:0;width:100%;max-width:none;height:100vh;max-height:none;border:0;box-shadow:none;border-radius:0;overflow:hidden}
+.options-window #settings-dialog::backdrop{display:none}
+.options-window #settings-dialog>form{height:100vh;display:flex;flex-direction:column}
+.options-window #settings-dialog>form>.dialog-title{display:none!important}
+.options-window #settings-dialog>form>.dialog-body{flex:1;min-height:0;overflow:auto;padding:16px}
+.options-window #settings-dialog>form>.dialog-footer{flex:0 0 48px;border-top:1px solid #ccc;background:#f0f0f0}
+
+/* Add URL and Scheduler are movable native windows; only Windows draws their title bars. */
+body.add-window,body.scheduler-window{background:#f0f0f0}
+.add-window .app-shell,.add-window #toast,.add-window dialog:not(#add-dialog),.scheduler-window .app-shell,.scheduler-window #toast,.scheduler-window dialog:not(#scheduler-dialog){display:none!important}
+.add-window #add-dialog,.scheduler-window #scheduler-dialog{display:block;position:static;margin:0;width:100%;max-width:none;height:100vh;max-height:none;border:0;box-shadow:none;border-radius:0;overflow:hidden}
+.scheduler-window #scheduler-dialog{display:flex;flex-direction:column}
+.add-window #add-dialog::backdrop,.scheduler-window #scheduler-dialog::backdrop{display:none}
+.add-window #add-dialog>form{height:100vh;display:flex;flex-direction:column}
+.add-window #add-dialog>form>.dialog-title,.scheduler-window #scheduler-dialog>.dialog-title{display:none!important}
+.add-window #add-dialog>form>.dialog-body,.scheduler-window #scheduler-dialog>.dialog-body{flex:1;min-height:0;overflow:auto;padding:16px}
+.add-window #add-dialog>form>.dialog-footer,.scheduler-window #scheduler-dialog>.dialog-footer{flex:0 0 48px;border-top:1px solid #ccc;background:#f0f0f0}

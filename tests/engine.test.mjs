@@ -315,6 +315,14 @@ test('scheduled downloads start when due and settings reject invalid changes ato
   await until(() => f.engine.downloads[0].status === 'complete');
 });
 
+test('Windows startup is enabled by default and only accepts a boolean setting', async t => {
+  const f = await fixture(t);
+  assert.equal(f.engine.settings.startWithWindows, true);
+  assert.throws(() => f.engine.updateSettings({ startWithWindows: 'yes' }), /Invalid startWithWindows/);
+  await f.engine.updateSettings({ startWithWindows: false });
+  assert.equal(f.engine.settings.startWithWindows, false);
+});
+
 test('browser review persists pending intent and starts only after confirmation', async t => {
   const f = await fixture(t);
   const [id] = await f.engine.add({ url: `${f.url}/file.bin`, reviewOnly: true });

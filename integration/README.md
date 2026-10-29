@@ -10,6 +10,6 @@ Captured cookies, authorization, user agent and referrer stay in extension memor
 
 Supported: HTTP(S), resumable byte ranges, unencrypted HLS VOD, TS/fMP4 segments, separate audio/video assembly, MP4 remuxing and MP3 extraction. Unsupported: DASH, live/encrypted HLS, byte-range HLS, arbitrary POST downloads, proxy inheritance and proprietary players. Blob URLs themselves cannot be downloaded; their observed network playlists may be supported.
 
-Browser interception is enabled on a fresh install and can be disabled from the extension popup. Native acceptance is required before cancelling a browser transfer; failure leaves the browser transfer intact. Store distribution and signing are not supplied.
+Browser interception is enabled when the extension is installed. Native acceptance is required before cancelling a browser transfer; failure leaves the browser transfer intact. Store distribution and signing are not supplied.
 
 API references: [Chrome native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging), [webRequest](https://developer.chrome.com/docs/extensions/reference/api/webRequest), [FFmpeg stream selection](https://ffmpeg.org/ffmpeg.html#Stream-selection).
