@@ -97,7 +97,9 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
     for (const profile of profiles.filter(p => p.isDirectory() && (p.name==='.'||/^(Default|Profile \d+)$/.test(p.name)))) {
       for (const file of ['Preferences', 'Secure Preferences']) {
         try {
-          const settings = JSON.parse(await fs.readFile(path.join(root, profile.name, file), 'utf8')).extensions?.settings || {};
+          const extensions = JSON.parse(await fs.readFile(path.join(root, profile.name, file), 'utf8')).extensions;
+          // Opera lists its extensions, unpacked ones included, under opsettings.
+          const settings = { ...extensions?.settings, ...extensions?.opsettings };
           for (const [id, entry] of Object.entries(settings)) {
             if (!/^[a-p]{32}$/.test(id) || !entry.path || !path.isAbsolute(entry.path)) continue;
             const installed = await fs.realpath(entry.path).catch(() => null);
