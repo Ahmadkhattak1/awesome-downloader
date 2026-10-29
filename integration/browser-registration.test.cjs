@@ -56,11 +56,12 @@ async function macFixture(t,{appRuntime=false}={}){
   return {root,home,dataDirectory,integrationRoot,runtime,support:path.join(home,'Library','Application Support')};
 }
 // Writes the Chromium preference entries a browser keeps for loaded extensions.
+// Opera keeps them under extensions.opsettings; its extensions.settings is empty.
 async function macProfiles(support,integrationRoot,profiles){
   for(const [browser,profile,ids] of profiles){
     const folder=path.join(support,BROWSERS[browser].mac,profile);await fs.mkdir(folder,{recursive:true});
     const settings=Object.fromEntries(ids.map(id=>[id,{path:path.join(integrationRoot,'extension')}]));
-    await fs.writeFile(path.join(folder,'Preferences'),JSON.stringify({extensions:{settings}}));
+    await fs.writeFile(path.join(folder,'Preferences'),JSON.stringify({extensions:browser==='Opera'?{settings:{},opsettings:settings}:{settings}}));
   }
 }
 // Another product's host in the same folders; nothing here may change or remove it.
