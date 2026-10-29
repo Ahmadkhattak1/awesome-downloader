@@ -74,7 +74,6 @@
     "asarUnpack": [
       "node_modules/ffmpeg-static/ffmpeg.exe"
     ],
-    "electronDist": "node_modules/electron/dist",
     "win": {
       "target": [{ "target": "nsis", "arch": ["x64"] }],
       "icon": "build/icon.ico",
