@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles JavaScript at run time. Under the hardened runtime this is the
+         only exception Electron needs: in the app, its helpers, and when the
+         native-host launcher runs the app with ELECTRON_RUN_AS_NODE=1.
+         Nothing else is requested: no unsigned executable memory, no disabled
+         library validation, and no camera, microphone or network entitlements
+         (the app sandbox is off, so network access needs none). -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+  </dict>
+</plist>
