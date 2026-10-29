@@ -11,6 +11,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test tests/*.test.mjs integration/*.test.cjs extension/*.test.cjs",
+    "unregister-native-host": "node integration/unregister-native-host.cjs",
     "package": "electron-builder --win dir",
     "dist": "electron-builder --win nsis --x64 --publish never",
     "dist:portable": "electron-builder --win portable --x64 --publish never"

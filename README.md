@@ -50,8 +50,9 @@ either. Current builds are unsigned and have no auto-updater.
 
 ### macOS (from source)
 
-macOS support is preview-only and there is no macOS build yet. On macOS with
-Node.js 22+, run from source:
+macOS support is preview-only and there is no macOS build yet. It has been run
+from source on Apple Silicon only; packaging, signing and Intel Macs are tracked
+in [#25](https://github.com/Ahmadkhattak1/awesome-downloader/issues/25). On macOS with Node.js 22+, run from source:
 
 ```sh
 npm ci
@@ -59,10 +60,28 @@ npm start
 ```
 
 Browser integration works as on Windows: load the unpacked extension shown in
-Browser Integration into your browser. The app writes its native-host manifest to
-`~/Library/Application Support/<browser>/NativeMessagingHosts/` and a small
-`integration/native-host` shell launcher in this checkout. For the
-optional legacy extractor, save the official `yt-dlp_macos` release as
+Browser Integration into your browser. Downloads history, settings and the
+local bridge configuration live in `~/.awesome-downloader`, as on Windows.
+
+While it runs, the app owns these files and keeps them in step with the
+extensions it finds:
+
+- `com.awesome.downloader.json` in
+  `~/Library/Application Support/<browser>/NativeMessagingHosts/` for Chrome
+  (shared with Opera), Edge and Brave. Its `allowed_origins` lists only the IDs
+  of this extension found in that browser's profiles, and the file is removed
+  once the extension is no longer installed. Firefox's manifest, under
+  `Mozilla/`, is written only when registered by hand.
+- `integration/native-host` (a `sh` launcher that runs the app's own runtime
+  with `ELECTRON_RUN_AS_NODE=1`), `runtime-path.txt` and `desktop-launch.json` in
+  this checkout.
+
+Other native hosts in those folders are never read or changed. To remove the
+integration, quit Awesome Downloader and run `npm run unregister-native-host`.
+This removes only manifests named for this product and the generated launcher
+files; delete `~/.awesome-downloader` as well to remove history and settings.
+
+For the optional legacy extractor, save the official `yt-dlp_macos` release as
 `vendor/yt-dlp`.
 
 The optional legacy extractor is described in [THIRD-PARTY.md](THIRD-PARTY.md).

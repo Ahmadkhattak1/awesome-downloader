@@ -16,7 +16,9 @@ const BROWSERS = {
   Opera: { registry: 'Google\\Chrome', data: 'Opera Software/Opera Stable', dataRoot: 'roaming', rootProfile: true, mac: 'com.operasoftware.Opera' },
   Firefox: { registry: 'Mozilla', firefox: true, mac: 'Mozilla' }
 };
+const HOST = 'com.awesome.downloader';
 const macSupport = home => path.join(home, 'Library', 'Application Support');
+const macManifestPath = (home, browser) => path.join(macSupport(home), BROWSERS[browser].mac, 'NativeMessagingHosts', `${HOST}.json`);
 
 function browserSpec(browser) {
   const spec = BROWSERS[browser];
@@ -24,10 +26,11 @@ function browserSpec(browser) {
   return spec;
 }
 
-async function registerBrowser({ browser, extensionId }, { dataDirectory, integrationRoot, platform = process.platform, home = os.homedir() }) {
+// `exclusive` replaces the allow-list with `extensionIds` instead of adding to it.
+async function registerBrowser({ browser, extensionId, extensionIds = [extensionId] }, { dataDirectory, integrationRoot, platform = process.platform, home = os.homedir(), exclusive = false, run = exec }) {
   const spec=browserSpec(browser);
-  if (typeof extensionId !== 'string' || !(spec.firefox ? /^[A-Za-z0-9@._{}-]{1,128}$/ : /^[a-p]{32}$/).test(extensionId)) throw new Error('Copy the extension ID from your browser’s extensions page.');
-  const host = 'com.awesome.downloader';
+  if (!extensionIds.length || extensionIds.some(id => typeof id !== 'string' || !(spec.firefox ? /^[A-Za-z0-9@._{}-]{1,128}$/ : /^[a-p]{32}$/).test(id))) throw new Error('Copy the extension ID from your browser’s extensions page.');
+  const host = HOST;
   const key = `HKCU\\Software\\${spec.registry}\\NativeMessagingHosts\\${host}`;
   const folder = path.join(dataDirectory, 'NativeMessaging');
   // Opera and Chrome intentionally share the Chrome registry location and
@@ -35,17 +38,17 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   const manifestName=browser==='Opera'?'Chrome':browser;
   // macOS has no registry: browsers read the manifest from a fixed per-user folder.
   const mac = platform === 'darwin';
-  const manifestFolder = mac ? path.join(macSupport(home), BROWSERS[manifestName].mac, 'NativeMessagingHosts') : folder;
-  const manifestPath = path.join(manifestFolder, mac ? `${host}.json` : `${manifestName}.json`);
+  const manifestPath = mac ? macManifestPath(home, manifestName) : path.join(folder, `${manifestName}.json`);
+  const manifestFolder = path.dirname(manifestPath);
   const manifest = { name: host, description: 'Awesome Downloader browser bridge', path: path.join(integrationRoot, 'integration', mac ? 'native-host' : 'native-host.exe'), type: 'stdio' };
-  if (spec.firefox) manifest.allowed_extensions = [extensionId];
-  else manifest.allowed_origins = [`chrome-extension://${extensionId}/`];
+  if (spec.firefox) manifest.allowed_extensions = [...extensionIds];
+  else manifest.allowed_origins = extensionIds.map(id => `chrome-extension://${id}/`);
   await fs.access(manifest.path);
   await fs.mkdir(folder, { recursive: true });
   await fs.mkdir(manifestFolder, { recursive: true });
   let previous;
   try { previous = await fs.readFile(manifestPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  if(previous&&!spec.firefox){
+  if(previous&&!spec.firefox&&!exclusive){
     try {
       const old=JSON.parse(previous);
       manifest.allowed_origins=[...new Set([...(old.allowed_origins||[]),...manifest.allowed_origins])].filter(value=>/^chrome-extension:\/\/[a-p]{32}\/$/.test(value));
@@ -59,12 +62,12 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
     if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
   } else {
     let registry = null;
-    try { registry = (await exec('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
+    try { registry = (await run('reg.exe', ['QUERY', key, '/ve'], { windowsHide: true })).stdout; }
     catch (error) { if (error.code !== 1) throw error; }
     const previousPath = registry?.match(/REG_SZ\s+(.+)\r?\n?/)?.[1]?.trim();
     if (registry && previousPath !== manifestPath) await fs.writeFile(path.join(folder, `${browser}.${stamp}.registry-backup.txt`), registry);
     if (previous !== content) await fs.writeFile(manifestPath, content, 'utf8');
-    if (previousPath !== manifestPath) await exec('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
+    if (previousPath !== manifestPath) await run('reg.exe', ['ADD', key, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { windowsHide: true });
   }
   let extensionPath = path.join(integrationRoot, 'extension');
   if (spec.firefox) {
@@ -78,8 +81,12 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
 async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, roamingAppData = process.env.APPDATA, platform = process.platform, home = os.homedir() }, { register = registerBrowser } = {}) {
   const results = [];
   const mac = platform === 'darwin';
+  // On macOS each host folder's allow-list is rebuilt from what this scan finds.
+  // A scan that could not read every preference file only adds IDs, never removes them.
+  const hosts = {};
   const expected = await fs.realpath(path.join(integrationRoot, 'extension'));
   for (const [browser, spec] of Object.entries(BROWSERS).filter(([,value])=>!value.firefox)) {
+    const host = hosts[browser === 'Opera' ? 'Chrome' : browser] ??= { ids: new Set(), complete: true };
     const base=mac?macSupport(home):spec.dataRoot==='roaming'?roamingAppData:localAppData;
     if(!base)continue;
     const root = path.join(base, mac ? spec.mac : spec.data);
@@ -96,22 +103,57 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
             const installed = await fs.realpath(entry.path).catch(() => null);
             let ownExtension=installed?.toLowerCase()===expected.toLowerCase();
             if(installed&&!ownExtension){
-              const manifest=JSON.parse(await fs.readFile(path.join(installed,'manifest.json'),'utf8'));
-              const background=await fs.readFile(path.join(installed,'background.js'),'utf8');
-              ownExtension=manifest.name==='Awesome Downloader Integration'&&manifest.background?.service_worker==='background.js'&&background.includes("const HOST = 'com.awesome.downloader'");
+              // Other extensions, such as macOS Chrome's built-in ones, may lack these files.
+              ownExtension=await (async()=>{
+                const manifest=JSON.parse(await fs.readFile(path.join(installed,'manifest.json'),'utf8'));
+                const background=await fs.readFile(path.join(installed,'background.js'),'utf8');
+                return manifest.name==='Awesome Downloader Integration'&&manifest.background?.service_worker==='background.js'&&background.includes("const HOST = 'com.awesome.downloader'");
+              })().catch(()=>false);
             }
             if (ownExtension) ids.add(id);
           }
-        } catch { /* A running browser can temporarily replace a preference file. */ }
+        } catch (error) {
+          // A running browser can temporarily replace a preference file.
+          if (error.code !== 'ENOENT') host.complete = false;
+        }
       }
     }
     if (ids.size) {
-      let result;
-      for(const extensionId of ids)result=await register({ browser, extensionId }, { dataDirectory, integrationRoot, platform, home });
+      if (mac) for (const id of ids) host.ids.add(id);
+      else for(const extensionId of ids)await register({ browser, extensionId }, { dataDirectory, integrationRoot, platform, home });
       results.push({ browser, connected: true });
     }
   }
+  if (mac) for (const [browser, host] of Object.entries(hosts)) {
+    if (host.ids.size) await register({ browser, extensionIds: [...host.ids] }, { dataDirectory, integrationRoot, platform, home, exclusive: host.complete });
+    else if (host.complete) await removeOwnedManifest(macManifestPath(home, browser), path.join(integrationRoot, 'integration', 'native-host'));
+  }
   return results;
+}
+// Deletes a manifest only when it is this product's host; with `launcher`, only when it
+// also points at that launcher, so another copy of the app keeps its registration.
+async function removeOwnedManifest(manifestPath, launcher) {
+  let manifest;
+  try { manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')); }
+  catch { return false; }
+  if (manifest?.name !== HOST || launcher && manifest.path !== launcher) return false;
+  await fs.rm(manifestPath, { force: true });
+  return true;
+}
+// The documented macOS uninstall step: remove every manifest naming this host and the
+// generated launcher files. Downloads history and settings in the data folder are kept.
+async function unregisterNativeHosts({ integrationRoot, platform = process.platform, home = os.homedir() }) {
+  if (platform !== 'darwin') throw new Error('This uninstall step is for macOS only.');
+  const removed = [];
+  for (const browser of ['Chrome', 'Edge', 'Brave', 'Firefox']) {
+    const manifestPath = macManifestPath(home, browser);
+    if (await removeOwnedManifest(manifestPath)) removed.push(manifestPath);
+  }
+  for (const name of ['native-host', 'runtime-path.txt', 'desktop-launch.json']) {
+    const file = path.join(integrationRoot, 'integration', name);
+    try { await fs.rm(file); removed.push(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  return removed;
 }
 async function prepareNativeHost(integrationRoot, executable, platform = process.platform) {
   const folder = path.join(integrationRoot, 'integration');
@@ -131,4 +173,4 @@ async function prepareNativeHost(integrationRoot, executable, platform = process
   }
   await fs.writeFile(path.join(folder, 'runtime-path.txt'), executable, 'utf8');
 }
-module.exports = { BROWSERS, browserSpec, registerBrowser, connectInstalledBrowsers, prepareNativeHost };
+module.exports = { BROWSERS, browserSpec, registerBrowser, connectInstalledBrowsers, prepareNativeHost, unregisterNativeHosts };
