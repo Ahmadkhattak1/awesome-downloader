@@ -53,11 +53,11 @@ if (process.argv.includes('--native-host')) {
           filter: require('./resource-copy.cjs').copyIfChanged
         });
         const quoteBatch = value => String(value).replaceAll('%', '%%');
-        await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'),
+        if (process.platform === 'win32') await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'),
           `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${quoteBatch(app.getPath('exe'))}" "%~dp0native-host.cjs"\r\n`);
       }
       // Use the bundled runtime even in development; browsers need not inherit Node's PATH.
-      if (!app.isPackaged) {
+      if (!app.isPackaged && process.platform === 'win32') {
         const fs = require('node:fs/promises');
         await fs.writeFile(path.join(integrationRoot, 'integration', 'native-host.cmd'), `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${app.getPath('exe').replaceAll('%', '%%')}" "%~dp0native-host.cjs"\r\n`);
       }
@@ -102,6 +102,13 @@ if (process.argv.includes('--native-host')) {
             const result = await shell.openPath(d.path); if (result) throw new Error(result);
           } else if (action === 'openWith') {
             if (d.status !== 'complete' || !d.path) throw new Error('This download has not finished.');
+            if (process.platform === 'darwin') {
+              // macOS has no system "Open With" dialog to launch; let the user pick an application.
+              const choice = await dialog.showOpenDialog(window, { title: 'Open with', defaultPath: '/Applications', filters: [{ name: 'Applications', extensions: ['app'] }], properties: ['openFile'] });
+              if (choice.canceled) return;
+              await new Promise((resolve,reject)=>require('node:child_process').execFile('open',['-a',choice.filePaths[0],d.path],error=>error?reject(error):resolve()));
+              return;
+            }
             await new Promise((resolve,reject)=>require('node:child_process').execFile(path.join(process.env.SystemRoot||'C:\\Windows','System32','OpenWith.exe'),[d.path],{windowsHide:true},error=>error?reject(error):resolve()));
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
@@ -142,7 +149,10 @@ if (process.argv.includes('--native-host')) {
       const dismissBrowserIntegration = () => {
         if (!window.isDestroyed()) window.webContents.send('downloader:command', 'dismissBrowserIntegration');
       };
+      // macOS puts the first menu under the app name and needs an Edit menu for copy/paste shortcuts.
+      const macMenus = process.platform === 'darwin' ? [{ role: 'appMenu' }, { role: 'editMenu' }] : [];
       Menu.setApplicationMenu(Menu.buildFromTemplate([
+        ...macMenus,
         { label: 'Tasks', submenu: [ { label: 'Add new download…', accelerator: 'CmdOrCtrl+N', click: command('add') }, { label: 'Add batch download…', click: command('add') }, { label: 'Add batch download from clipboard', click: command('paste') }, { type: 'separator' },
           { label: 'Export', submenu: [{ label: 'To text file…', click: async () => {
             const result = await dialog.showSaveDialog(window, { defaultPath: 'downloads.txt', filters: [{ name: 'URL list', extensions: ['txt'] }] });
@@ -164,7 +174,7 @@ if (process.argv.includes('--native-host')) {
         { label: 'File', submenu: [ { label: 'Download properties…', click: command('details') }, { label: 'Remove selected', accelerator: 'Delete', click: command('remove') }, { label: 'Remove completed downloads', click: command('removeCompleted') } ] },
         { label: 'Downloads', submenu: [ { label: 'Pause all', click: command('pauseAll') }, { label: 'Stop all', click: command('pauseAll') }, { type: 'separator' }, { label: 'Delete all completed', click: command('removeCompleted') }, { type: 'separator' }, { label: 'Find', accelerator: 'CmdOrCtrl+F', click: command('find') }, { type: 'separator' }, { label: 'Scheduler…', click: command('scheduler') }, { label: 'Start queue', click: command('resumeAll') }, { label: 'Stop queue', click: command('pauseAll') }, { label: 'Speed limiter…', click: command('settings') }, { type: 'separator' }, { label: 'Options…', click: command('settings') } ] },
         { label: 'View', submenu: [ { label: 'All downloads', click: command('all') }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' } ] },
-        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Windows download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
+        { label: 'Help', submenu: [ { label: 'Browser integration…', click: command('integration') }, { label: 'About Awesome Downloader', click: () => dialog.showMessageBox(window, { title: 'About Awesome Downloader', message: 'Awesome Downloader 0.1.0', detail: 'Download manager with browser integration. Original implementation inspired by IDM. Full IDM feature parity is in development.' }) } ] }
       ]));
       engine.on('change', () => {
         const data=snapshot();
