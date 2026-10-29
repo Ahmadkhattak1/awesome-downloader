@@ -50,14 +50,21 @@ either. Current builds are unsigned and have no auto-updater.
 
 ### macOS (from source)
 
-macOS support is preview-only and there is no macOS build yet. It has been run
-from source on Apple Silicon only; packaging, signing and Intel Macs are tracked
-in [#25](https://github.com/Ahmadkhattak1/awesome-downloader/issues/25). On macOS with Node.js 22+, run from source:
+macOS support is preview-only and there is no published macOS build yet. It has
+been tested on Apple Silicon only; Intel Macs are not supported until tested on
+Intel hardware ([#7](https://github.com/Ahmadkhattak1/awesome-downloader/issues/7)).
+On macOS with Node.js 22+, run from source:
 
 ```sh
 npm ci
 npm start
 ```
+
+`npm run dist:mac` builds `release/Awesome-Downloader-<version>-macOS-<arch>.dmg`
+for this Mac's architecture (`dist:mac:arm64` and `dist:mac:x64` pick one). Local
+builds are ad-hoc signed and not notarized, so Gatekeeper rejects a copy
+downloaded from elsewhere. Signing, notarization and architectures are described
+in [release requirements](docs/RELEASING.md#macos).
 
 Browser integration works as on Windows: load the unpacked extension shown in
 Browser Integration into your browser. Downloads history, settings and the

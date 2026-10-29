@@ -1,4 +1,4 @@
-name: Build Windows release candidate
+name: Build release candidates
 on:
   workflow_dispatch:
 permissions:
@@ -25,5 +25,65 @@ jobs:
           path: |
             release/Awesome-Downloader-Setup.exe
             release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # One job per architecture, each on a runner of that architecture, so npm ci
+  # installs the matching FFmpeg and electron-builder bundles the matching Electron.
+  # Signing secrets are read only here. This workflow runs only on manual dispatch
+  # by someone with write access, never for pull requests; in a fork, or without
+  # the secrets, the build is ad-hoc signed and not notarized (docs/RELEASING.md).
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      npm_config_arch: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build DMG
+        id: dist
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CSC_LINK" ]; then echo "kind=signed" >> "$GITHUB_OUTPUT"; else echo "kind=unsigned" >> "$GITHUB_OUTPUT"; fi
+          npm run dist:mac:${{ matrix.arch }}
+      - name: Verify signature
+        run: |
+          app="release/${{ matrix.arch == 'arm64' && 'mac-arm64' || 'mac' }}/Awesome Downloader.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -E 'Authority|TeamIdentifier|flags'
+          if [ "${{ steps.dist.outputs.kind }}" = signed ]; then
+            spctl --assess --type execute --verbose "$app"
+            xcrun stapler validate "$app"
+          fi
+      - name: Launch smoke test
+        run: sh scripts/smoke-mac-app.sh "release/${{ matrix.arch == 'arm64' && 'mac-arm64' || 'mac' }}/Awesome Downloader.app" ${{ matrix.arch }}
+      - name: Create SHA-256 file
+        working-directory: release
+        run: shasum -a 256 Awesome-Downloader-*-macOS-${{ matrix.arch }}.dmg | tee SHA256SUMS-macOS-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dist.outputs.kind }}-macos-${{ matrix.arch }}-release-candidate
+          path: |
+            release/Awesome-Downloader-*-macOS-${{ matrix.arch }}.dmg
+            release/SHA256SUMS-macOS-${{ matrix.arch }}.txt
           if-no-files-found: error
           retention-days: 7

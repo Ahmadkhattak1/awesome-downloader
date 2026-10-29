@@ -23,3 +23,6 @@ coverage/
 test-results/
 integration/native-host
 vendor/yt-dlp
+*.p12
+*.cer
+*.provisionprofile
