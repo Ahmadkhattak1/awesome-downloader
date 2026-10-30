@@ -40,10 +40,14 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
   await run(ffmpeg,['-v','error','-f','lavfi','-i','color=c=blue:s=160x90:r=10','-t','1','-an','-c:v','libx264','-f','mpegts',path.join(root,'video.ts')],{windowsHide:true});
   await run(ffmpeg,['-v','error','-f','lavfi','-i','sine=frequency=440','-t','1','-c:a','aac','-f','adts',path.join(root,'audio.aac')],{windowsHide:true});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
-  await engine.add({url:`http://127.0.0.1:${server.address().port}/master.m3u8`});
+  let convertCalls=0;
+  const origAssemble=engine.assemble.bind(engine);
+  engine.assemble=function(download,dir,signal,files,converted){if(download.outputFormat&&!converted)convertCalls++;return origAssemble(download,dir,signal,files,converted);};
+  await engine.add({url:`http://127.0.0.1:${server.address().port}/master.m3u8`,outputFormat:'mp4'});
   const d=engine.downloads[0]; const end=Date.now()+15000;
   while(!['complete','error'].includes(d.status)&&Date.now()<end)await delay(25);
   assert.equal(d.status,'complete',d.error);assert.match(d.filename,/\.mp4$/);
+  assert.equal(convertCalls,0,'paired HLS mux output should not run through convertMedia a second time');
   await run(ffmpeg,['-v','error','-i',d.path,'-map','0:v:0','-map','0:a:0','-f','null','-'],{windowsHide:true});
   await engine.add({url:`http://127.0.0.1:${server.address().port}/audio.m3u8`,outputFormat:'mp3'});
   const audio=engine.downloads[1];const audioEnd=Date.now()+10000;
