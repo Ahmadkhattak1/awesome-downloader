@@ -286,7 +286,7 @@ export class DownloadEngine extends EventEmitter {
               if (index !== i && index !== fallbackIndex) controller.abort();
             });
           } else {
-            // A one-time URL may still have one valid response in the first worker.
+            // Keep the first request alive in case it returns a full 200 fallback.
             const preserveFirst = i > 0 && !retryWithoutRange;
             workerControllers.forEach((controller, index) => {
               if (index !== i && !(preserveFirst && index === 0)) controller.abort();
@@ -324,7 +324,6 @@ export class DownloadEngine extends EventEmitter {
     await fs.rm(dir, { recursive: true, force: true });
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, '0.part');
-    const out = await fs.open(file, 'w');
     const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
     d.segments = [segment];
     d.connections = 1;
@@ -333,11 +332,12 @@ export class DownloadEngine extends EventEmitter {
     d.validator = null;
     d.resumable = false;
     d.status = 'downloading';
-    await this.persist();
-    this.changed();
 
-    let received = 0;
+    let received = 0, out;
     try {
+      out = await fs.open(file, 'w');
+      await this.persist();
+      this.changed();
       for await (const chunk of response) {
         signal.throwIfAborted();
         if (expected !== null && received + chunk.length > expected) {
@@ -354,8 +354,7 @@ export class DownloadEngine extends EventEmitter {
       }
       await out.sync();
     } finally {
-      await out.close();
-      response.destroy();
+      try { if (out) await out.close(); } finally { response.destroy(); }
     }
     d.total = received;
     segment.end = received > 0 ? received - 1 : null;
