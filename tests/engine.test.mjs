@@ -192,6 +192,26 @@ test('probe retries transient ranged discovery failures and honours Retry-After'
   assert.ok(Date.now() - started >= 900, 'probe must not retry before Retry-After');
 });
 
+test('probe stops after its bounded transient retry budget', async t => {
+  let headRequests = 0, rangedRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method === 'HEAD') {
+      headRequests++;
+      res.writeHead(503);
+      res.end();
+      return true;
+    }
+    if (req.method === 'GET' && req.headers.range) rangedRequests++;
+    return false;
+  } });
+  await assert.rejects(
+    probe(`${f.url}/file.bin`, {}, new AbortController().signal),
+    /HTTP 503 after 4 probe attempts/
+  );
+  assert.equal(headRequests, 4);
+  assert.equal(rangedRequests, 0);
+});
+
 test('probe stops rather than violating a long Retry-After cooldown', async t => {
   let headRequests = 0;
   const f = await fixture(t, { intercept: (req, res) => {

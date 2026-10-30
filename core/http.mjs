@@ -83,13 +83,15 @@ export function retryAfter(value, now = Date.now()) {
 async function requestWithRetry(url, options) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const response = await request(url, options);
-    if (!transientStatus(response.statusCode) || attempt === 3) return response;
+    if (!transientStatus(response.statusCode)) return response;
 
+    const status = response.statusCode;
     const wait = retryAfter(response.headers['retry-after']);
     response.destroy();
     if (wait > 60000) {
       throw new Error(`The server requested a longer cooldown. Retry after ${Math.ceil(wait / 1000)} seconds.`);
     }
+    if (attempt === 3) throw new Error(`Server returned HTTP ${status} after 4 probe attempts.`);
     await delay(wait ?? 250 * 2 ** attempt, undefined, { signal: options.signal });
   }
 }
