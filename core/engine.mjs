@@ -262,7 +262,7 @@ export class DownloadEngine extends EventEmitter {
       lastBytes = d.downloaded; lastAt = now; this.changed();
     }, this.tickMs);
     const workerControllers = d.segments.map(() => new AbortController());
-    let fallbackResponse = null, retryWithoutRange = false;
+    let fallbackResponse = null, fallbackIndex = -1, retryWithoutRange = false;
     try {
       const outcomes = await Promise.allSettled(d.segments.map(async (segment, i) => {
         try {
@@ -272,6 +272,7 @@ export class DownloadEngine extends EventEmitter {
             if (fallbackResponse) result.fallbackResponse.destroy();
             else {
               fallbackResponse = result.fallbackResponse;
+              fallbackIndex = i;
               workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
             }
           } else if (result?.retryWithoutRange) {
@@ -279,11 +280,18 @@ export class DownloadEngine extends EventEmitter {
             workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
           }
         } catch (error) {
-          // A one-time URL may still have one valid response in the first worker.
-          const preserveFirst = i > 0 && !fallbackResponse && !retryWithoutRange;
-          workerControllers.forEach((controller, index) => {
-            if (index !== i && !(preserveFirst && index === 0)) controller.abort();
-          });
+          // Do not abort the worker whose full 200 response is being consumed.
+          if (fallbackIndex >= 0) {
+            workerControllers.forEach((controller, index) => {
+              if (index !== i && index !== fallbackIndex) controller.abort();
+            });
+          } else {
+            // A one-time URL may still have one valid response in the first worker.
+            const preserveFirst = i > 0 && !retryWithoutRange;
+            workerControllers.forEach((controller, index) => {
+              if (index !== i && !(preserveFirst && index === 0)) controller.abort();
+            });
+          }
           throw error;
         }
       }));
@@ -309,7 +317,7 @@ export class DownloadEngine extends EventEmitter {
       throw failure('Server ignored identity encoding; refusing to save a potentially corrupt file.');
     }
     const rawLength = response.headers['content-length'];
-    const parsedLength = rawLength !== undefined && /^\\d+$/.test(rawLength) ? Number(rawLength) : null;
+    const parsedLength = rawLength !== undefined && /^\d+$/.test(rawLength) ? Number(rawLength) : null;
     const expected = Number.isSafeInteger(parsedLength) && parsedLength >= 0 ? parsedLength : null;
 
     // A full response replaces every partial range; never concatenate it with stale segments.
