@@ -222,11 +222,37 @@ test('restart recovers paused offsets from actual disk files', async t => {
   } finally { await restored.close(); }
 });
 
-test('server ignoring ranges fails without publishing corrupt files', async t => {
+test('server ignoring ranges falls back to its full response and preserves exact bytes', async t => {
   const f = await fixture(t);
-  await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
-  await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
-  assert.equal(d.path, null);
+  await f.engine.add({ url: `${f.url}/ignore-range` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('HTTP 416 on a ranged request retries as one plain GET', async t => {
+  let rangedRequests = 0, plainRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (req.headers.range) {
+      rangedRequests++;
+      res.writeHead(416);
+      res.end();
+      return true;
+    }
+    plainRequests++;
+    return false;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.ok(rangedRequests > 0);
+  assert.equal(plainRequests, 1);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
 
 test('permanent HTTP failures on byte ranges fail without retrying', async t => {
