@@ -16,7 +16,16 @@
   }
   async function onPlayer(event){
     if(!connected())return;
-    if(event.source!==window || event.origin!==location.origin || event.data?.type!=='awesome-player-response')return;
+    if(event.source!==window || event.origin!==location.origin)return;
+    if(event.data?.type==='awesome-sabr-request'){
+      const {url,body}=event.data;
+      if(typeof url!=='string' || url.length>16384 || !(body instanceof Uint8Array) || !body.length || body.length>262144)return;
+      let binary='';for(let i=0;i<body.length;i+=8192)binary+=String.fromCharCode(...body.subarray(i,i+8192));
+      try{await api.runtime.sendMessage({action:'sabrRequest',url,requestBody:btoa(binary)});}
+      catch(error){if(/extension context invalidated/i.test(error?.message||''))shutdown();}
+      return;
+    }
+    if(event.data?.type!=='awesome-player-response')return;
     const data=event.data.data;
     if(!data || !/^[\w-]{11}$/.test(data.videoId||'') || !Array.isArray(data.formats) || data.formats.length>150)return;
     try{
@@ -26,7 +35,9 @@
   }
   addEventListener('message',onPlayer);
   function onMessage(message,sender,respond){
-    if(!connected() || sender.id!==api.runtime.id || message.action!=='refreshPlayer')return;
+    if(!connected() || sender.id!==api.runtime.id)return;
+    if(message.action==='relaySabr'){dispatchEvent(new Event('awesome-relay-sabr'));respond({ok:true});return;}
+    if(message.action!=='refreshPlayer')return;
     let timer;const done=(ok=true)=>{clearTimeout(timer);pending.delete(done);try{respond({ok});}catch{}};
     pending.add(done);timer=setTimeout(done,1500);
     dispatchEvent(new Event('awesome-request-player'));return true;
