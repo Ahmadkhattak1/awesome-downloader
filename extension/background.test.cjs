@@ -99,11 +99,22 @@ test('duplicate browser downloads share one native handoff',async()=>{
  assert.deepEqual(h.downloadCalls.filter(([name])=>name==='pause').length,2);assert.deepEqual(h.downloadCalls.filter(([name])=>name==='cancel').length,2);
 });
 test('browser handoff waits briefly for a server-provided filename',async()=>{
- const h=harness(),item=h.createDownload({id:5,url:'https://drive.usercontent.google.com/download?id=test'});
+ const h=harness(),url='https://drive.usercontent.google.com/download?id=test',item=h.createDownload({id:5,url});
+ h.events.requestHeaders({tabId:-1,url,requestHeaders:[]});
  setTimeout(()=>h.setFilename(5,'C:\\Downloads\\Activity Diagram.jpg'),20);
  await h.events.download(item);
  assert.equal(h.nativeRequests[0].filename,'Activity Diagram.jpg');
  assert.equal(h.download(5),undefined);
+});
+test('authenticated browser handoff waits for exact request context before pausing',async()=>{
+ const h=harness(),url='https://drive.usercontent.google.com/download?id=private';
+ const handoff=h.events.download(h.createDownload({id:6,tabId:9,url,filename:'C:\\Downloads\\diagram.jpg'}));
+ await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(h.downloadCalls.length,0);
+ h.events.requestHeaders({tabId:9,url,requestHeaders:[{name:'Cookie',value:'session=test-only'}]});
+ await handoff;
+ assert.equal(h.nativeRequests[0].requestHeaders.cookie,'session=test-only');
+ assert.deepEqual(h.downloadCalls.map(([action])=>action),['pause','cancel']);
 });
 test('identical URLs from different tabs do not share a credential-bearing handoff',async()=>{
  const h=harness();

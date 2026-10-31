@@ -7,6 +7,7 @@ const SABR_KEY = 'sabrByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
+const requestWaiters = new Map();
 const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
 function rememberSabrCapture(tabId,seed){
   youtubeSabrObserved.set(tabId,seed);
@@ -48,6 +49,8 @@ function rememberRequest(details) {
     if(['cookie','authorization','user-agent','referer','origin'].includes(name)&&typeof h.value==='string'&&h.value.length<=16384&&!/[\r\n]/.test(h.value))headers[name]=h.value;
   }
   tab.set(details.url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
+  const key=`${details.tabId}\n${details.url}`,waiters=requestWaiters.get(key);
+  if(waiters){requestWaiters.delete(key);for(const resolve of waiters)resolve();}
 }
 // Chromium (which now also defines `browser`) withholds Cookie and Referer unless extraHeaders is requested; Firefox has no such option.
 api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*/*','https://*/*']},['requestHeaders',...(api.webRequest.OnBeforeSendHeadersOptions?.EXTRA_HEADERS?['extraHeaders']:[])]);
@@ -230,6 +233,14 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   return true;
 });
 const pendingHandoffs=new Map();
+async function waitForRequestContext(tabId,url){
+  if(tabId<0||requestContext.get(tabId)?.has(url))return;
+  const key=`${tabId}\n${url}`;
+  await new Promise(resolve=>{
+    const waiters=requestWaiters.get(key)||new Set();waiters.add(resolve);requestWaiters.set(key,waiters);
+    setTimeout(()=>{waiters.delete(resolve);if(!waiters.size)requestWaiters.delete(key);resolve();},250);
+  });
+}
 function sharedHandoff(url,item){
   const key=JSON.stringify([item.tabId,item.referrer||'',url]);
   let pending=pendingHandoffs.get(key);if(pending)return pending;
@@ -253,6 +264,10 @@ api.downloads.onCreated.addListener(async item => {
   let paused=false,accepted=false;
   try {
     if (!httpUrl(url) || item.state==='complete') return;
+    // onCreated can precede webRequest.onBeforeSendHeaders. Let the original
+    // request reach that exact tab-and-URL observation point before pausing it,
+    // otherwise authenticated downloads are handed off without their context.
+    await waitForRequestContext(item.tabId,url);
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id); paused=true;
     const filename=await resolvedDownloadFilename(item);
