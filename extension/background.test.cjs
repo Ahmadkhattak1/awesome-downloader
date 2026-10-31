@@ -105,10 +105,31 @@ test('another video\'s player on the page keeps the tab\'s captured session, and
  await h.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(h.nativeRequests[0].sabr.videoId,'wLdZWyLOJCI');assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
  assert.deepEqual(h.tabMessages.filter(([,action])=>action==='sabrCaptured'),[[31,'sabrCaptured']]);
+ assert.equal(h.tabMessages.some(([,action])=>action==='relaySabr'),false);
  // Once the tab itself shows the other video, its player takes over and the old session is dropped.
  const moved={...sender,tab:{...sender.tab,url:'https://www.youtube.com/watch?v=abcdefghijk'}};
  await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);
  assert.equal((await h.request({action:'listForFrame'},moved)).items.length,0);
+});
+test('a SABR body the browser hides is relayed by the page, accepted only from a tab asked for it',async()=>{
+ const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:32,url:page}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,false);
+ for(const requestId of ['hidden','again'])h.events.beforeRequest({requestId,tabId:32,url:sabrStream,requestBody:{error:'Unknown error.'}});
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='relaySabr'),[[32,'relaySabr']]);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQI'},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:'https://example.com/videoplayback?sabr=1',requestBody:'AQID'},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},{...sender,url:'https://example.com/'})).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,true);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+});
+test('a relayed SABR body is held to the same 256 KiB limit as a webRequest capture',async()=>{
+ const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:33,url:page}};
+ h.events.beforeRequest({requestId:'hidden',tabId:33,url:sabrStream,requestBody:{error:'Unknown error.'}});
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262145).toString('base64')},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262144).toString('base64')},sender)).ok,true);
 });
 test('duplicate browser downloads share one native handoff',async()=>{
  const h=harness();
