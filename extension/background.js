@@ -7,11 +7,27 @@ const SABR_KEY = 'sabrByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
-const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
+const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map(), sabrRelayTabs=new Set();
+function tabVideoId(value){
+  try{
+    const page=new URL(value);if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))return null;
+    const id=page.searchParams.get('v')||/^\/shorts\/([\w-]{11})/.exec(page.pathname)?.[1];
+    return /^[\w-]{11}$/.test(id||'')?id:null;
+  }catch{return null;}
+}
 function rememberSabrCapture(tabId,seed){
+  const fresh=!youtubeSabrObserved.has(tabId);
   youtubeSabrObserved.set(tabId,seed);
   if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
   updateSession(SABR_KEY,map=>{map[tabId]={url:seed.url,requestBody:seed.requestBody};}).catch(()=>{});
+  // A menu still waiting for this session refills without being reopened.
+  if(fresh)api.tabs.sendMessage(tabId,{action:'sabrCaptured'}).catch(()=>{});
+}
+// Only a tab whose SABR body webRequest could not read is asked to relay it from the page.
+function requestSabrRelay(tabId){
+  if(sabrRelayTabs.has(tabId))return;
+  sabrRelayTabs.add(tabId);
+  api.tabs.sendMessage(tabId,{action:'relaySabr'}).catch(()=>sabrRelayTabs.delete(tabId));
 }
 async function sabrCapture(tabId){
   const live=youtubeSabrObserved.get(tabId);
@@ -31,9 +47,10 @@ function clearSabrCapture(tabId){
 }
 function bytesBase64(bytes){let binary='';const view=new Uint8Array(bytes);for(let i=0;i<view.length;i+=8192)binary+=String.fromCharCode(...view.subarray(i,i+8192));return btoa(binary);}
 api.webRequest.onBeforeRequest?.addListener(details=>{
-  const url=globalThis.youtubeMedia?.sabrUrl(details.url), raw=details.requestBody?.raw;
-  if(!url||details.tabId<0||!Array.isArray(raw)||!raw.length)return;
-  let size=0;for(const part of raw){if(!part.bytes)return;size+=part.bytes.byteLength;}if(!size||size>262144)return;
+  const url=globalThis.youtubeMedia?.sabrUrl(details.url), body=details.requestBody, raw=body?.raw;
+  if(!url||details.tabId<0||!body)return;
+  if(body.error||!Array.isArray(raw)||!raw.length||raw.some(part=>!part.bytes)){requestSabrRelay(details.tabId);return;}
+  let size=0;for(const part of raw)size+=part.bytes.byteLength;if(!size||size>262144)return;
   const bytes=new Uint8Array(size);let offset=0;for(const part of raw){bytes.set(new Uint8Array(part.bytes),offset);offset+=part.bytes.byteLength;}
   youtubeSabrSeed.set(details.requestId,{tabId:details.tabId,url,requestBody:bytesBase64(bytes)});
   if(youtubeSabrSeed.size>100)youtubeSabrSeed.delete(youtubeSabrSeed.keys().next().value);
@@ -158,8 +175,8 @@ api.webRequest.onHeadersReceived.addListener(details => {
   }
   if(/\.m3u8(?:[?#]|$)/i.test(details.url)||/mpegurl/i.test(mime))discoverHls(details.tabId,details.url);
 }, {urls: ['http://*/*', 'https://*/*']}, ['responseHeaders']);
-api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
-api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
+api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
+api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
 api.runtime.onInstalled.addListener(async () => {
   try {
     await api.contextMenus.removeAll();
@@ -186,11 +203,23 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       const data=message.data;
       if(!data || !Array.isArray(data.formats) || data.formats.length>150)throw new Error('Invalid player data.');
       const clean=globalThis.youtubeMedia.sanitizePlayer(data);
-      if(clean){
+      // The page also loads players for other videos; those must not replace the tab's own or erase its session.
+      const shown=tabVideoId(sender.tab.url);
+      if(clean&&(!shown||clean.videoId===shown)){
         const previous=youtubePlayers.get(sender.tab.id);
         if(previous&&previous.videoId!==clean.videoId){clearSabrCapture(sender.tab.id);youtubeObserved.delete(sender.tab.id);}
         youtubePlayers.set(sender.tab.id,clean);if(youtubePlayers.size>50)youtubePlayers.delete(youtubePlayers.keys().next().value);
       }
+      return {ok:true};
+    }
+    if(message.action==='sabrRequest' && sender.tab) {
+      const page=new URL(sender.url || sender.tab.url || 'https://invalid.local');
+      if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname)||!sabrRelayTabs.has(sender.tab.id))throw new Error('Invalid SABR source.');
+      const url=globalThis.youtubeMedia.sabrUrl(message.url),requestBody=message.requestBody;
+      // Decoded size, so the limit matches the 256 KiB webRequest captures are held to.
+      const size=typeof requestBody==='string'&&requestBody.length%4===0&&/^[A-Za-z0-9+/]+={0,2}$/.test(requestBody)?requestBody.length/4*3-/=*$/.exec(requestBody)[0].length:0;
+      if(!url||!size||size>262144)throw new Error('Invalid SABR request.');
+      rememberSabrCapture(sender.tab.id,{tabId:sender.tab.id,url,requestBody});
       return {ok:true};
     }
     if (message.action === 'remember' && sender.tab) { await remember(sender.tab.id, message.items || []); return {ok: true}; }
@@ -206,8 +235,8 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.action === 'listForFrame' && sender.tab) {
       const page=new URL(sender.tab.url||'https://invalid.local');
       if(['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname)) {
-        const id=page.searchParams.get('v')||/^\/shorts\/([\w-]{11})/.exec(page.pathname)?.[1];
-        if(!/^[\w-]{11}$/.test(id||''))return {ok:true,items:[]};
+        const id=tabVideoId(page.href);
+        if(!id)return {ok:true,items:[]};
         await api.tabs.sendMessage(sender.tab.id,{action:'refreshPlayer'}).catch(()=>{});
         const player=youtubePlayers.get(sender.tab.id);
         if(player?.videoId!==id)return {ok:true,items:[]};
@@ -216,7 +245,7 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
         let items=globalThis.youtubeMedia.choices(active,youtubeObserved.get(sender.tab.id)||[]);
         if(!capture&&items.some(item=>item.sabrSelection)){
           items=items.filter(item=>!item.sabrSelection);
-          if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured, then reopen this menu.'};
+          if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured. This menu updates once it is.'};
         }
         return {ok:true,items};
       }
