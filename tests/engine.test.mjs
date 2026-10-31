@@ -18,6 +18,10 @@ async function fixture(t, options = {}) {
     if (options.intercept?.(req, res)) return;
     if (req.url === '/redirect') { res.writeHead(302, { location: '/file.bin' }); return res.end(); }
     if (req.url === '/missing') { res.writeHead(404); return res.end(); }
+    if (req.url === '/head-zero' && req.method === 'HEAD') {
+      res.writeHead(200, { 'content-length': '0', etag: '"fixture-1"' });
+      return res.end();
+    }
     const noRange = req.url === '/plain';
     res.setHeader('etag', options.etag || '"fixture-1"');
     if (options.disposition) res.setHeader('content-disposition', options.disposition);
@@ -146,6 +150,16 @@ test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET pro
   assert.equal(info.total, data.length);
   assert.equal(info.ranges, true);
   assert.equal(info.validator, '"probe-1"');
+});
+test('misleading zero-length HEAD metadata falls back to GET and downloads the real file', async t => {
+  const f = await fixture(t);
+  const [id] = await f.engine.add({ url: `${f.url}/head-zero` });
+  const d = f.engine.downloads.find(item => item.id === id);
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.total, f.data.length);
+  assert.ok(f.ranges.some(([start, end]) => start === 0 && end === 0));
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
 test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
   const server = http.createServer((req, res) => {

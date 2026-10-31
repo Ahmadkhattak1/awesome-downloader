@@ -48,8 +48,13 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 export async function probe(url, headers, signal) {
   let response = await request(url, { method: 'HEAD', headers, signal });
   const headStatus = response.statusCode;
-  const headHasMetadata = response.headers['content-length'] || response.headers['content-range'] ||
-    response.headers['accept-ranges'] === 'bytes';
+  // Some download endpoints (including Google Drive) report a misleading
+  // zero length for HEAD while returning the real file to GET. Probe those
+  // endpoints with a bounded range request before treating the file as empty.
+  const headLength = Number(response.headers['content-length']);
+  const headReportsEmpty = Number.isSafeInteger(headLength) && headLength === 0;
+  const headHasMetadata = !headReportsEmpty && (response.headers['content-length'] ||
+    response.headers['content-range'] || response.headers['accept-ranges'] === 'bytes');
   if (![200, 206].includes(response.statusCode) || !headHasMetadata) {
     response.resume();
     response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
