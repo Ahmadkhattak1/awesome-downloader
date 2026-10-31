@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import { DownloadEngine, safeFilename } from '../core/engine.mjs';
+import { DownloadEngine, safeFilename, rollingSpeed } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
 import { probe, retryAfter, transientStatus } from '../core/http.mjs';
 
@@ -49,6 +49,16 @@ async function fixture(t, options = {}) {
   t.after(async () => { await engine.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
   return { engine, data, ranges, root, url: `http://127.0.0.1:${server.address().port}` };
 }
+
+test('transfer speed remains stable across short gaps between data bursts',()=>{
+  const samples=[];
+  assert.equal(rollingSpeed(samples,0,0),0);
+  assert.equal(rollingSpeed(samples,500,1024),2048);
+  assert.equal(rollingSpeed(samples,1000,1024),1024);
+  assert.equal(rollingSpeed(samples,1500,2048),2048*1000/1500);
+  assert.ok(rollingSpeed(samples,4001,2048)>0);
+  assert.equal(rollingSpeed(samples,12001,2048),0);
+});
 
 test('repeated concurrent browser clicks reuse one active download but allow retry after cancel',async t=>{
   const f=await fixture(t);

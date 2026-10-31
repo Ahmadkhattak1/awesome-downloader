@@ -7,6 +7,10 @@ const SABR_KEY = 'sabrByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
+// Chromium may report browser-initiated downloads with tabId -1. Keep only a
+// short-lived exact-URL observation so the matching downloads API event can
+// consume it once without making credentials available to ordinary requests.
+const orphanRequestContext = new Map();
 const requestWaiters = new Map();
 const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
 function rememberSabrCapture(tabId,seed){
@@ -40,22 +44,42 @@ api.webRequest.onBeforeRequest?.addListener(details=>{
   if(youtubeSabrSeed.size>100)youtubeSabrSeed.delete(youtubeSabrSeed.keys().next().value);
 },{urls:['https://*.googlevideo.com/videoplayback*','https://googlevideo.com/videoplayback*']},['requestBody']);
 function rememberRequest(details) {
-  if(details.tabId<0 || !httpUrl(details.url))return;
-  let tab=requestContext.get(details.tabId);
-  if(!tab){tab=new Map();requestContext.set(details.tabId,tab);if(requestContext.size>50)requestContext.delete(requestContext.keys().next().value);}
+  if(!httpUrl(details.url))return;
   const headers={};
   for(const h of details.requestHeaders||[]) {
     const name=h.name.toLowerCase();
     if(['cookie','authorization','user-agent','referer','origin'].includes(name)&&typeof h.value==='string'&&h.value.length<=16384&&!/[\r\n]/.test(h.value))headers[name]=h.value;
   }
-  tab.set(details.url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
-  const key=`${details.tabId}\n${details.url}`,waiters=requestWaiters.get(key);
-  if(waiters){requestWaiters.delete(key);for(const resolve of waiters)resolve();}
+  if(details.tabId<0){
+    const now=Date.now();
+    for(const [url,entry] of orphanRequestContext)if(now-entry.capturedAt>5000)orphanRequestContext.delete(url);
+    orphanRequestContext.set(details.url,{headers,capturedAt:now});
+    if(orphanRequestContext.size>100)orphanRequestContext.delete(orphanRequestContext.keys().next().value);
+  }else{
+    let tab=requestContext.get(details.tabId);
+    if(!tab){tab=new Map();requestContext.set(details.tabId,tab);if(requestContext.size>50)requestContext.delete(requestContext.keys().next().value);}
+    tab.set(details.url,headers);if(tab.size>100)tab.delete(tab.keys().next().value);
+  }
+  for(const key of [`${details.tabId}\n${details.url}`,`url\n${details.url}`]){
+    const waiters=requestWaiters.get(key);
+    if(waiters){requestWaiters.delete(key);for(const resolve of waiters)resolve();}
+  }
 }
 // Chromium (which now also defines `browser`) withholds Cookie and Referer unless extraHeaders is requested; Firefox has no such option.
 api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*/*','https://*/*']},['requestHeaders',...(api.webRequest.OnBeforeSendHeadersOptions?.EXTRA_HEADERS?['extraHeaders']:[])]);
 function httpUrl(value) {
   try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
+}
+async function cookieHeader(url){
+  if(!api.cookies?.getAll)return;
+  try{
+    const cookies=await api.cookies.getAll({url});
+    const value=cookies
+      .filter(cookie=>typeof cookie.name==='string'&&typeof cookie.value==='string'&&!/[;\r\n]/.test(cookie.name)&&!/[\r\n]/.test(cookie.value))
+      .sort((a,b)=>(b.path||'').length-(a.path||'').length)
+      .map(cookie=>`${cookie.name}=${cookie.value}`).join('; ');
+    if(value&&value.length<=16384)return value;
+  }catch{}
 }
 function unsupported(url, mime = '') { return /\.mpd(?:[?#]|$)/i.test(url) || /dash\+xml/i.test(mime); }
 function isFragment(url) { return /\.(m4s|ts|aac)(?:[?#]|$)/i.test(url) || /\/init[^/]*\.mp4(?:[?#]|$)/i.test(url); }
@@ -106,7 +130,16 @@ async function enqueue(item, tabId) {
   const url = httpUrl(sabr?.serverAbrStreamingUrl||item.url);
   if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
-  const requestHeaders=requestContext.get(tabId)?.get(url);
+  let requestHeaders=requestContext.get(tabId)?.get(url);
+  if(!requestHeaders&&item.browserDownload){
+    const orphan=orphanRequestContext.get(url);
+    orphanRequestContext.delete(url);
+    if(orphan&&Date.now()-orphan.capturedAt<=5000)requestHeaders=orphan.headers;
+  }
+  if(item.browserDownload&&!requestHeaders?.cookie){
+    const cookie=await cookieHeader(url);
+    if(cookie)requestHeaders={...requestHeaders,cookie};
+  }
   return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
 }
 function updateSession(key,change) {
@@ -234,8 +267,10 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
 });
 const pendingHandoffs=new Map();
 async function waitForRequestContext(tabId,url){
-  if(tabId<0||requestContext.get(tabId)?.has(url))return;
-  const key=`${tabId}\n${url}`;
+  const orphan=orphanRequestContext.get(url);
+  if(requestContext.get(tabId)?.has(url)||orphan&&Date.now()-orphan.capturedAt<=5000)return;
+  if(tabId<0)return;
+  const key=`url\n${url}`;
   await new Promise(resolve=>{
     const waiters=requestWaiters.get(key)||new Set();waiters.add(resolve);requestWaiters.set(key,waiters);
     setTimeout(()=>{waiters.delete(resolve);if(!waiters.size)requestWaiters.delete(key);resolve();},250);
@@ -244,7 +279,7 @@ async function waitForRequestContext(tabId,url){
 function sharedHandoff(url,item){
   const key=JSON.stringify([item.tabId,item.referrer||'',url]);
   let pending=pendingHandoffs.get(key);if(pending)return pending;
-  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(key));
+  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer,browserDownload:true},item.tabId).finally(()=>pendingHandoffs.delete(key));
   pendingHandoffs.set(key,pending);pending.catch(()=>{});return pending;
 }
 async function resolvedDownloadFilename(item){
