@@ -4,14 +4,14 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness({initialData={},webRequest={}}={}) {
-  const events={},specs={},nativeRequests=[];
+  const events={},specs={},nativeRequests=[],tabMessages=[];
   const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data=structuredClone(initialData);
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
   const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},action:{async setBadgeText(){}}};
-  browser.tabs.sendMessage=async()=>({ok:true});
+  browser.tabs.sendMessage=async(tabId,message)=>{tabMessages.push([tabId,message.action]);return {ok:true};};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,specs,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,specs,data,nativeRequests,tabMessages,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -87,7 +87,7 @@ test('SABR choices are hidden until the browser captures a usable session',async
 });
 const sabrPlayer={videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}]};
 const sabrStream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
-test('another video\'s player on the page keeps the tab\'s captured session',async()=>{
+test('another video\'s player on the page keeps the tab\'s captured session, and the waiting menu is told once',async()=>{
  const h=harness(),sender={id:'extension-id',tab:{id:31,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
  await h.request({action:'playerResponse',data:sabrPlayer},sender);
  for(const requestId of ['first','second']){
@@ -99,6 +99,7 @@ test('another video\'s player on the page keeps the tab\'s captured session',asy
  const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
  await h.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(h.nativeRequests[0].sabr.videoId,'wLdZWyLOJCI');assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='sabrCaptured'),[[31,'sabrCaptured']]);
  // Once the tab itself shows the other video, its player takes over and the old session is dropped.
  const moved={...sender,tab:{...sender.tab,url:'https://www.youtube.com/watch?v=abcdefghijk'}};
  await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);

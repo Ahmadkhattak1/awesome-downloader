@@ -16,9 +16,12 @@ function tabVideoId(value){
   }catch{return null;}
 }
 function rememberSabrCapture(tabId,seed){
+  const fresh=!youtubeSabrObserved.has(tabId);
   youtubeSabrObserved.set(tabId,seed);
   if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
   updateSession(SABR_KEY,map=>{map[tabId]={url:seed.url,requestBody:seed.requestBody};}).catch(()=>{});
+  // A menu still waiting for this session refills without being reopened.
+  if(fresh)api.tabs.sendMessage(tabId,{action:'sabrCaptured'}).catch(()=>{});
 }
 async function sabrCapture(tabId){
   const live=youtubeSabrObserved.get(tabId);
@@ -225,7 +228,7 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
         let items=globalThis.youtubeMedia.choices(active,youtubeObserved.get(sender.tab.id)||[]);
         if(!capture&&items.some(item=>item.sabrSelection)){
           items=items.filter(item=>!item.sabrSelection);
-          if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured, then reopen this menu.'};
+          if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured. This menu updates once it is.'};
         }
         return {ok:true,items};
       }
