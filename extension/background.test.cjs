@@ -90,6 +90,25 @@ test('SABR choices are hidden until the browser captures a usable session',async
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999',ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4',height:1080,qualityLabel:'1080p',bitrate:3000000},{itag:140,mimeType:'audio/mp4',bitrate:128000}]}},sender);
  const result=await h.request({action:'listForFrame'},sender);assert.equal(result.items.length,0);assert.match(result.notice,/captured/i);
 });
+const sabrPlayer={videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}]};
+const sabrStream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+test('another video\'s player on the page keeps the tab\'s captured session',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:31,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ for(const requestId of ['first','second']){
+  h.events.beforeRequest({requestId,tabId:31,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+  h.events.response({requestId,tabId:31,url:sabrStream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
+ }
+ // A related video's player, reported by the same page while the tab still shows the first video.
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},sender);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.videoId,'wLdZWyLOJCI');assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+ // Once the tab itself shows the other video, its player takes over and the old session is dropped.
+ const moved={...sender,tab:{...sender.tab,url:'https://www.youtube.com/watch?v=abcdefghijk'}};
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);
+ assert.equal((await h.request({action:'listForFrame'},moved)).items.length,0);
+});
 test('duplicate browser downloads share one native handoff',async()=>{
  const h=harness();
  const first=h.createDownload({id:1,url:'https://example.com/file.bin',filename:'C:\\Downloads\\file.bin'}),second=h.createDownload({id:2,url:first.url,filename:first.filename});

@@ -8,6 +8,13 @@ let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
 const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map();
+function tabVideoId(value){
+  try{
+    const page=new URL(value);if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))return null;
+    const id=page.searchParams.get('v')||/^\/shorts\/([\w-]{11})/.exec(page.pathname)?.[1];
+    return /^[\w-]{11}$/.test(id||'')?id:null;
+  }catch{return null;}
+}
 function rememberSabrCapture(tabId,seed){
   youtubeSabrObserved.set(tabId,seed);
   if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
@@ -186,7 +193,9 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       const data=message.data;
       if(!data || !Array.isArray(data.formats) || data.formats.length>150)throw new Error('Invalid player data.');
       const clean=globalThis.youtubeMedia.sanitizePlayer(data);
-      if(clean){
+      // The page also loads players for other videos; those must not replace the tab's own or erase its session.
+      const shown=tabVideoId(sender.tab.url);
+      if(clean&&(!shown||clean.videoId===shown)){
         const previous=youtubePlayers.get(sender.tab.id);
         if(previous&&previous.videoId!==clean.videoId){clearSabrCapture(sender.tab.id);youtubeObserved.delete(sender.tab.id);}
         youtubePlayers.set(sender.tab.id,clean);if(youtubePlayers.size>50)youtubePlayers.delete(youtubePlayers.keys().next().value);
@@ -206,8 +215,8 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.action === 'listForFrame' && sender.tab) {
       const page=new URL(sender.tab.url||'https://invalid.local');
       if(['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname)) {
-        const id=page.searchParams.get('v')||/^\/shorts\/([\w-]{11})/.exec(page.pathname)?.[1];
-        if(!/^[\w-]{11}$/.test(id||''))return {ok:true,items:[]};
+        const id=tabVideoId(page.href);
+        if(!id)return {ok:true,items:[]};
         await api.tabs.sendMessage(sender.tab.id,{action:'refreshPlayer'}).catch(()=>{});
         const player=youtubePlayers.get(sender.tab.id);
         if(player?.videoId!==id)return {ok:true,items:[]};
