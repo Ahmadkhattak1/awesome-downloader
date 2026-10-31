@@ -3,20 +3,21 @@ const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
-function harness({initialData={},webRequest={}}={}) {
+function harness({initialData={},webRequest={},cookies=[]}={}) {
   const events={},specs={},nativeRequests=[],downloadCalls=[];
   const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data=structuredClone(initialData),downloads=new Map();
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
+  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},cookies:{async getAll(){return structuredClone(cookies);}},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
   Object.assign(browser.downloads,{
     async pause(id){downloadCalls.push(['pause',id]);downloads.get(id).state='paused';},
     async resume(id){downloadCalls.push(['resume',id]);downloads.get(id).state='in_progress';},
-    async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);}
+    async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);},
+    async search({id}){const item=downloads.get(id);return item?[structuredClone(item)]:[];}
   });
   browser.tabs.sendMessage=async()=>({ok:true});
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,setTimeout,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
+  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},setFilename(id,filename){downloads.get(id).filename=filename;},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -97,11 +98,47 @@ test('duplicate browser downloads share one native handoff',async()=>{
  assert.equal(h.nativeRequests.length,1);assert.equal(h.download(1),undefined);assert.equal(h.download(2),undefined);
  assert.deepEqual(h.downloadCalls.filter(([name])=>name==='pause').length,2);assert.deepEqual(h.downloadCalls.filter(([name])=>name==='cancel').length,2);
 });
+test('browser handoff waits briefly for a server-provided filename',async()=>{
+ const h=harness(),url='https://drive.usercontent.google.com/download?id=test',item=h.createDownload({id:5,url});
+ h.events.requestHeaders({tabId:-1,url,requestHeaders:[]});
+ setTimeout(()=>h.setFilename(5,'C:\\Downloads\\Activity Diagram.jpg'),20);
+ await h.events.download(item);
+ assert.equal(h.nativeRequests[0].filename,'Activity Diagram.jpg');
+ assert.equal(h.download(5),undefined);
+});
+test('authenticated browser handoff waits for exact request context before pausing',async()=>{
+ const h=harness(),url='https://drive.usercontent.google.com/download?id=private';
+ const handoff=h.events.download(h.createDownload({id:6,tabId:9,url,filename:'C:\\Downloads\\diagram.jpg'}));
+ await new Promise(resolve=>setTimeout(resolve,20));
+ assert.equal(h.downloadCalls.length,0);
+ h.events.requestHeaders({tabId:9,url,requestHeaders:[{name:'Cookie',value:'session=test-only'}]});
+ await handoff;
+ assert.equal(h.nativeRequests[0].requestHeaders.cookie,'session=test-only');
+ assert.deepEqual(h.downloadCalls.map(([action])=>action),['pause','cancel']);
+});
+
+test('tabless authenticated request is consumed only by its exact browser download',async()=>{
+ const h=harness(),url='https://drive.usercontent.google.com/download?id=file-1';
+ h.events.requestHeaders({tabId:-1,url,requestHeaders:[{name:'Cookie',value:'session=test-only'}]});
+ await h.events.download(h.createDownload({id:10,tabId:9,url,filename:'C:\\Downloads\\diagram.jpg'}));
+ assert.equal(h.nativeRequests[0].requestHeaders.cookie,'session=test-only');
+ const other=await h.request({action:'download',item:{url:'https://drive.usercontent.google.com/download?id=file-2'}},{id:'extension-id',tab:{id:9}});
+ assert.equal(other.ok,true);
+ assert.equal(h.nativeRequests[1].requestHeaders,undefined);
+});
+
+test('browser handoff falls back to cookies valid for the exact download URL',async()=>{
+ const h=harness({cookies:[{name:'SID',value:'test-only',path:'/'},{name:'AUTH',value:'drive-only',path:'/download'}]});
+ const url='https://drive.usercontent.google.com/download?id=file-1';
+ await h.events.download(h.createDownload({id:11,tabId:9,url,filename:'C:\\Downloads\\diagram.jpg'}));
+ assert.equal(h.nativeRequests[0].requestHeaders.cookie,'AUTH=drive-only; SID=test-only');
+ assert.equal(JSON.stringify(h.data).includes('test-only'),false);
+});
 test('identical URLs from different tabs do not share a credential-bearing handoff',async()=>{
  const h=harness();
  const url='https://example.com/file.bin';
  for(const tabId of [3,4])h.events.requestHeaders({tabId,url,requestHeaders:[{name:'Cookie',value:'session='+tabId}]});
- await Promise.all([3,4].map(tabId=>h.events.download(h.createDownload({id:tabId,tabId,url}))));
+ await Promise.all([3,4].map(tabId=>h.events.download(h.createDownload({id:tabId,tabId,url,filename:`C:\\Downloads\\file-${tabId}.bin`}))));
  assert.equal(h.nativeRequests.length,2);
  assert.deepEqual(h.nativeRequests.map(r=>r.requestHeaders.cookie).sort(),['session=3','session=4']);
 });

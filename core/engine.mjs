@@ -41,6 +41,18 @@ function suggestedName(url, disposition) {
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 // Marks a transfer failure that another attempt cannot fix, or the wait the server asked for.
 const failure = (message, retryable = false, retryDelay = null) => Object.assign(new Error(message), { retryable, retryDelay });
+export function rollingSpeed(samples,now,bytes,windowMs=10000){
+  samples.push({at:now,bytes});
+  const cutoff=now-windowMs;
+  while(samples.length>2&&samples[1].at<=cutoff)samples.shift();
+  const first=samples[0],elapsed=now-first.at,transferred=bytes-first.bytes;
+  return elapsed>0&&transferred>0?transferred*1000/elapsed:0;
+}
+function speedTimer(d,readBytes,tickMs,changed){
+  d.speed=0;
+  const samples=[{at:Date.now(),bytes:readBytes()}];
+  return setInterval(()=>{d.speed=rollingSpeed(samples,Date.now(),readBytes(),Math.max(10000,tickMs*20));changed();},tickMs);
+}
 
 export class DownloadEngine extends EventEmitter {
   constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
@@ -256,11 +268,7 @@ export class DownloadEngine extends EventEmitter {
     }
     d.downloaded = d.segments.reduce((n, s) => n + s.downloaded, 0);
     d.connections = d.segments.length; d.status = 'downloading'; await this.persist(); this.changed();
-    let lastBytes = d.downloaded, lastAt = Date.now();
-    const progress = setInterval(() => {
-      const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / (now - lastAt);
-      lastBytes = d.downloaded; lastAt = now; this.changed();
-    }, this.tickMs);
+    const progress=speedTimer(d,()=>d.downloaded,this.tickMs,()=>this.changed());
     const siblings = new AbortController();
     const transferSignal = AbortSignal.any([signal, siblings.signal]);
     try {
@@ -328,8 +336,8 @@ export class DownloadEngine extends EventEmitter {
     }));
     d.connections = Math.min(this.settings.connections, d.segments.length);
     d.status = 'downloading'; await this.persist(); this.changed();
-    let index = 0, lastBytes = d.downloaded, lastTime = Date.now();
-    const progress = setInterval(() => { const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastTime); lastBytes = d.downloaded; lastTime = now; this.changed(); }, this.tickMs);
+    let index = 0;
+    const progress=speedTimer(d,()=>d.downloaded,this.tickMs,()=>this.changed());
     const siblings = new AbortController(), groupSignal = AbortSignal.any([signal, siblings.signal]);
     const worker = async () => {
       while (index < d.segments.length) {
@@ -380,7 +388,7 @@ export class DownloadEngine extends EventEmitter {
     d.kind='paired';d.resumable=false;d.downloaded=0;d.total=infos.every(i=>i.total!==null)?infos.reduce((n,i)=>n+i.total,0):null;
     d.segments=infos.map(i=>({start:0,end:i.total===null?null:i.total-1,downloaded:0}));
     d.status='downloading';d.connections=2;this.changed();
-    let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(d.downloaded-last)*1000/Math.max(1,now-at);last=d.downloaded;at=now;this.changed();},this.tickMs);
+    const timer=speedTimer(d,()=>d.downloaded,this.tickMs,()=>this.changed());
     const siblings=new AbortController(),group=AbortSignal.any([signal,siblings.signal]);
     try {
       const outcomes=await Promise.allSettled(urls.map(async(url,i)=>{try{const file=path.join(dir,i+'.part');await fs.writeFile(file,Buffer.alloc(0));await this.transfer(d,infos[i],d.segments[i],file,trackHeaders[i],group,url);}catch(error){siblings.abort();throw error;}}));
@@ -400,7 +408,7 @@ export class DownloadEngine extends EventEmitter {
     d.total=picked.every(f=>Number(f.contentLength)>0)?picked.reduce((sum,f)=>sum+Number(f.contentLength),0):null;
     d.segments=picked.map(f=>({start:0,end:Number(f.contentLength)>0?Number(f.contentLength)-1:null,downloaded:0}));
     d.connections=picked.length;d.status='downloading';await this.persist();this.changed();
-    let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(networkDownloaded-last)*1000/Math.max(1,now-at);last=networkDownloaded;at=now;this.changed();},this.tickMs);
+    let networkDownloaded=0;const timer=speedTimer(d,()=>networkDownloaded,this.tickMs,()=>this.changed());
     let result;
     try{
       result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,onProgress:progress=>{
