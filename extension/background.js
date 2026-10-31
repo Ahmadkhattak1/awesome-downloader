@@ -236,6 +236,18 @@ function sharedHandoff(url,item){
   pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(key));
   pendingHandoffs.set(key,pending);pending.catch(()=>{});return pending;
 }
+async function resolvedDownloadFilename(item){
+  let filename=item.filename||'';
+  // downloads.onCreated can run before Chromium has chosen the server-provided
+  // filename. Give it a short bounded window to populate DownloadItem.filename
+  // so native handoff does not fall back to a URL basename such as "download".
+  for(let attempt=0;!filename&&attempt<10;attempt++){
+    await new Promise(resolve=>setTimeout(resolve,50));
+    const [current]=await api.downloads.search({id:item.id});
+    filename=current?.filename||'';
+  }
+  return filename;
+}
 api.downloads.onCreated.addListener(async item => {
   const url=item.finalUrl||item.url;
   let paused=false,accepted=false;
@@ -243,7 +255,8 @@ api.downloads.onCreated.addListener(async item => {
     if (!httpUrl(url) || item.state==='complete') return;
     // IDM's observed ownership model: pause during handoff, resume on failure.
     await api.downloads.pause(item.id); paused=true;
-    await sharedHandoff(url,item);accepted=true;
+    const filename=await resolvedDownloadFilename(item);
+    await sharedHandoff(url,{...item,filename});accepted=true;
     await api.downloads.cancel(item.id);
   } catch (e) {
     if(paused&&!accepted)await api.downloads.resume(item.id).catch(()=>{});
