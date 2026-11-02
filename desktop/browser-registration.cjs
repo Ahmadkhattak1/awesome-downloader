@@ -61,7 +61,7 @@ async function registerBrowser({ browser, extensionId }, { dataDirectory, integr
   return { ok: true, manifestPath, extensionPath };
 }
 // Read only extension registrations, never browser history, cookies, or page data.
-async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, roamingAppData = process.env.APPDATA }, { register = registerBrowser } = {}) {
+async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localAppData = process.env.LOCALAPPDATA, roamingAppData = process.env.APPDATA }, { register = registerBrowser, includeSetupState = false } = {}) {
   const results = [];
   const expected = await fs.realpath(path.join(integrationRoot, 'extension'));
   for (const [browser, spec] of Object.entries(BROWSERS).filter(([,value])=>!value.firefox)) {
@@ -71,12 +71,20 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
     let profiles;
     try { profiles = await fs.readdir(root, { withFileTypes: true }); } catch { continue; }
     if(spec.rootProfile)profiles=[{name:'.',isDirectory:()=>true},...profiles];
-    const ids = new Set(), matchedProfiles = new Set();
+    const ids = new Set(), matchedProfiles = new Set(), setupStates = [];
     for (const profile of profiles.filter(p => p.isDirectory() && (p.name==='.'||/^(Default|Profile \d+)$/.test(p.name)))) {
-      for (const file of ['Preferences', 'Secure Preferences']) {
+      const inspected = await require('./browser-extension-state.cjs').readProfile(path.join(root, profile.name));
+      setupStates.push(inspected.state);
         try {
-          const settings = JSON.parse(await fs.readFile(path.join(root, profile.name, file), 'utf8')).extensions?.settings || {};
+          const settings = inspected.settings;
           for (const [id, entry] of Object.entries(settings)) {
+            if (id === require('./extension-store.cjs').EXTENSION_ID) {
+              if (inspected.state === 'connected') {
+                ids.add(id); matchedProfiles.add(profile.name);
+              }
+              continue;
+            }
+            if (require('./browser-extension-state.cjs').disabled(entry)) continue;
             if (!/^[a-p]{32}$/.test(id) || !entry.path || !path.isAbsolute(entry.path)) continue;
             const installed = await fs.realpath(entry.path).catch(() => null);
             let ownExtension=installed?.toLowerCase()===expected.toLowerCase();
@@ -88,12 +96,14 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
             if (ownExtension) { ids.add(id); matchedProfiles.add(profile.name); }
           }
         } catch { /* A running browser can temporarily replace a preference file. */ }
-      }
     }
     if (ids.size) {
       let result;
       for(const extensionId of ids)result=await register({ browser, extensionId }, { dataDirectory, integrationRoot });
       results.push({ browser, connected: true, profiles: matchedProfiles.size });
+    } else if (includeSetupState) {
+      const setupState = ['approval', 'disabled', 'removed'].find(value => setupStates.includes(value)) || 'missing';
+      results.push({ browser, connected: false, profiles: 0, setupState });
     }
   }
   const firefoxRoot = roamingAppData && path.join(roamingAppData, BROWSERS.Firefox.data);
