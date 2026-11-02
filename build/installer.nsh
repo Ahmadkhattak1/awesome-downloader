@@ -2,6 +2,7 @@
 !include LogicLib.nsh
 !include FileFunc.nsh
 !include MUI2.nsh
+!include "${BUILD_RESOURCES_DIR}\shell-exec-result.nsh"
 !system '"${NSISDIR}\makensis.exe" /V2 "/DOUTPUT_FILE=${BUILD_RESOURCES_DIR}\browser-setup-helper.exe" "${BUILD_RESOURCES_DIR}\browser-setup-helper.nsi"' = 0
 
 !ifndef BUILD_UNINSTALLER
@@ -42,9 +43,8 @@ FunctionEnd
   ${AndIf} $browserSetupSelected == ${BST_CHECKED}
     InitPluginsDir
     File /oname=$PLUGINSDIR\AwesomeBrowserSetup.exe "${BUILD_RESOURCES_DIR}\browser-setup-helper.exe"
-    ClearErrors
-    ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/owner=$\"$INSTDIR$\"' SW_HIDE $0
-    ${If} ${Errors}
+    !insertmacro AwesomeShellExecResult "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/owner=$\"$INSTDIR$\"' $0 $1
+    ${If} $1 != 0
       MessageBox MB_OK "The app is installed. Automatic browser setup was not completed. You can install the extension later from Browser integration."
     ${ElseIf} $0 != 0
       WriteRegDWORD SHCTX "${INSTALL_REGISTRY_KEY}" "AutomaticBrowserSetup" 1
@@ -68,9 +68,9 @@ FunctionEnd
     ${If} $0 == 1
       InitPluginsDir
       File /oname=$PLUGINSDIR\AwesomeBrowserSetup.exe "${BUILD_RESOURCES_DIR}\browser-setup-helper.exe"
-      ClearErrors
-      ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/remove /owner=$\"$INSTDIR$\"' SW_HIDE $0
-      ${If} ${Errors}
+      !insertmacro AwesomeShellExecResult "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/remove /owner=$\"$INSTDIR$\"' $0 $1
+      ${If} $1 != 0
+      ${OrIf} $0 != 0
         ${IfNot} ${Silent}
           MessageBox MB_OK "Automatic browser registration could not be removed. Approve the Windows permission prompt when uninstalling to clean it up."
         ${EndIf}
