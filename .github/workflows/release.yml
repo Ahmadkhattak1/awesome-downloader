@@ -19,7 +19,7 @@ jobs:
       - name: Create SHA-256 file
         shell: powershell
         run: (Get-FileHash release/Awesome-Downloader-Setup.exe -Algorithm SHA256).Hash.ToLower() + '  Awesome-Downloader-Setup.exe' | Set-Content release/SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: unsigned-windows-release-candidate
           path: |
