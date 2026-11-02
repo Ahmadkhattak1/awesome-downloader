@@ -348,13 +348,6 @@ if (process.argv.includes('--native-host')) {
         }
       });
       updateController.start();
-      require('./extension-store.cjs').offerStoreSetup({
-        packaged: app.isPackaged,
-        background: process.argv.includes('--background') || process.argv.includes('--browser-download'),
-        connected: connectedBrowsers.length > 0,
-        browsers, directory: app.getPath('userData'),
-        open: browser => handlers.browserSetup({action:'store',browser})
-      }).catch(error => { connectionError = `Chrome extension setup: ${error.message}`; });
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {
       if (quitting) return;

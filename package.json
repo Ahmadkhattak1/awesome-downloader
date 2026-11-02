@@ -115,6 +115,7 @@
       "artifactName": "Awesome-Downloader-${version}-Windows.exe"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

@@ -22,3 +22,4 @@ coverage/
 *.log
 test-results/
 output/
+build/browser-setup-helper.exe

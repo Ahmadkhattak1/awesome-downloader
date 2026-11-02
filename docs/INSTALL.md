@@ -20,14 +20,23 @@ can find it.
 
 ## Install the published extension (Chrome / Edge / Brave)
 
-After installation, launch Awesome Downloader. On the first interactive launch,
-if Chrome is installed and no browser is connected, the app prepares its desktop
-connector and opens the [official extension listing](https://chromewebstore.google.com/detail/dnolinbkicmedadaigcedkmndcpahmml)
-in Chrome once. Click **Add to Chrome**, then confirm the browser's prompt.
-Chrome requires your confirmation; the app does not silently enable extensions.
-Startup in the system tray and download handoffs never open setup tabs.
+In the installer, leave **Set up Chrome and Edge download buttons** checked to
+request the published extension automatically. Approve Windows' administrator
+permission prompt for browser setup. Declining it still installs the app normally.
+Close and reopen your browser after installation, then accept its extension
+confirmation. The browser decides when to show that confirmation; managed-browser
+policies or an earlier removal of the extension may prevent automatic setup.
+Awesome Downloader never opens a store page automatically on startup.
 
-For Edge or Brave, or to retry Chrome setup, open **Browser integration**, choose
+This requests installation through the browser's external-extension registration,
+not through a force-install policy. You can still disable or remove the extension.
+Chrome and Edge have documented support for this mechanism. Brave currently shares
+Chrome's registration mechanism, but its actual prompt must be verified separately.
+The final app uninstall removes registrations created by these installers once no
+other registered Awesome Downloader installation needs them; Windows requests
+administrator permission for that cleanup too.
+
+To install manually or retry setup, open **Browser integration**, choose
 your browser, and click **Install browser extension**. Confirm the installation
 in that browser. Keep Awesome Downloader running, click **Refresh** in browser
 integration, and refresh the video page. No Developer mode, folder picker, or
