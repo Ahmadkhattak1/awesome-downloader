@@ -147,6 +147,87 @@ test('direct files whose CDN rejects or omits HEAD metadata use a ranged GET pro
   assert.equal(info.ranges, true);
   assert.equal(info.validator, '"probe-1"');
 });
+test('probe retries transient HEAD failures and honours Retry-After', async t => {
+  let headRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'HEAD') return false;
+    headRequests++;
+    if (headRequests === 1) {
+      res.writeHead(503, { 'retry-after': '1' });
+      res.end();
+      return true;
+    }
+    return false;
+  } });
+  const started = Date.now();
+  const info = await probe(`${f.url}/file.bin`, {}, new AbortController().signal);
+  assert.equal(info.total, f.data.length);
+  assert.equal(headRequests, 2);
+  assert.ok(Date.now() - started >= 900, 'probe must not retry before Retry-After');
+});
+
+test('probe retries transient ranged discovery failures and honours Retry-After', async t => {
+  let rangedRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method === 'HEAD') {
+      res.writeHead(405);
+      res.end();
+      return true;
+    }
+    if (req.method === 'GET' && req.headers.range) {
+      rangedRequests++;
+      if (rangedRequests === 1) {
+        res.writeHead(503, { 'retry-after': '1' });
+        res.end();
+        return true;
+      }
+    }
+    return false;
+  } });
+  const started = Date.now();
+  const info = await probe(`${f.url}/file.bin`, {}, new AbortController().signal);
+  assert.equal(info.total, f.data.length);
+  assert.equal(info.ranges, true);
+  assert.equal(rangedRequests, 2);
+  assert.ok(Date.now() - started >= 900, 'probe must not retry before Retry-After');
+});
+
+test('probe stops after its bounded transient retry budget', async t => {
+  let headRequests = 0, rangedRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method === 'HEAD') {
+      headRequests++;
+      res.writeHead(503);
+      res.end();
+      return true;
+    }
+    if (req.method === 'GET' && req.headers.range) rangedRequests++;
+    return false;
+  } });
+  await assert.rejects(
+    probe(`${f.url}/file.bin`, {}, new AbortController().signal),
+    /HTTP 503 after 4 probe attempts/
+  );
+  assert.equal(headRequests, 4);
+  assert.equal(rangedRequests, 0);
+});
+
+test('probe stops rather than violating a long Retry-After cooldown', async t => {
+  let headRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'HEAD') return false;
+    headRequests++;
+    res.writeHead(429, { 'retry-after': '3600' });
+    res.end();
+    return true;
+  } });
+  await assert.rejects(
+    probe(`${f.url}/file.bin`, {}, new AbortController().signal),
+    /longer cooldown.*3600 seconds/
+  );
+  assert.equal(headRequests, 1);
+});
+
 test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
   const server = http.createServer((req, res) => {
     if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }

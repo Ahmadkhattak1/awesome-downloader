@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export function validUrl(value) {
   if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
@@ -46,13 +47,13 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 }
 
 export async function probe(url, headers, signal) {
-  let response = await request(url, { method: 'HEAD', headers, signal });
+  let response = await requestWithRetry(url, { method: 'HEAD', headers, signal });
   const headStatus = response.statusCode;
   const headHasMetadata = response.headers['content-length'] || response.headers['content-range'] ||
     response.headers['accept-ranges'] === 'bytes';
   if (![200, 206].includes(response.statusCode) || !headHasMetadata) {
     response.resume();
-    response = await request(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
+    response = await requestWithRetry(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
       response.destroy();
       const status = headStatus >= 400 ? headStatus : response.statusCode;
@@ -78,3 +79,20 @@ export function retryAfter(value, now = Date.now()) {
   const ms = /^\d+$/.test(value.trim()) ? Number(value.trim()) * 1000 : Date.parse(value) - now;
   return Number.isFinite(ms) ? Math.max(0, ms) : null;
 }
+
+async function requestWithRetry(url, options) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const response = await request(url, options);
+    if (!transientStatus(response.statusCode)) return response;
+
+    const status = response.statusCode;
+    const wait = retryAfter(response.headers['retry-after']);
+    response.destroy();
+    if (wait > 60000) {
+      throw new Error(`The server requested a longer cooldown. Retry after ${Math.ceil(wait / 1000)} seconds.`);
+    }
+    if (attempt === 3) throw new Error(`Server returned HTTP ${status} after 4 probe attempts.`);
+    await delay(wait ?? 250 * 2 ** attempt, undefined, { signal: options.signal });
+  }
+}
+
