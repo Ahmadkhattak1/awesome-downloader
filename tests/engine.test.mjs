@@ -76,6 +76,33 @@ test('canceling an unstarted browser review never requests media', async t => {
   assert.equal(f.engine.downloads.find(d => d.id === id).status, 'cancelled');
 });
 
+test('canceling discovery during Retry-After prevents every later retry', async t => {
+  const controller = new AbortController();
+  let requests = 0;
+  const f = await fixture(t, { intercept(req, res) {
+    requests++;
+    res.writeHead(503, { 'retry-after': '1' });
+    res.end();
+    setTimeout(() => controller.abort(), 20);
+    return true;
+  } });
+  await assert.rejects(probe(f.url + '/file.bin', {}, controller.signal), { name: 'AbortError' });
+  await delay(1100);
+  assert.equal(requests, 1);
+});
+
+test('permanent discovery rejection does not consume transient retry budget', async t => {
+  let requests = 0;
+  const f = await fixture(t, { intercept(req, res) {
+    requests++;
+    res.writeHead(403);
+    res.end();
+    return true;
+  } });
+  await assert.rejects(probe(f.url + '/file.bin', {}, new AbortController().signal), /HTTP 403/);
+  assert.equal(requests, 2, 'one HEAD and one compatibility GET, with no retries');
+});
+
 test('repeated concurrent browser clicks reuse one active download but allow retry after cancel',async t=>{
   const f=await fixture(t);
   const request={url:f.url+'/file.bin',queueOnly:true,reuseActive:true};
