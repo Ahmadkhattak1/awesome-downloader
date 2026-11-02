@@ -104,6 +104,38 @@ release decision.
 - Contributor code must not receive release secrets. Stronger automated checks
   are tracked in #13; do not assume a label enforces them today.
 
+
+## Run and report tests
+
+Use the repository's documented Windows x64 development environment with Node.js 22 or newer and npm. From the repository root, run:
+
+```powershell
+npm ci
+npm test
+```
+
+The test command uses Node's built-in test runner and discovers test files under `tests/`, `integration/`, and `extension/`. The current suite includes regression coverage for transfer integrity and recovery, HLS/SABR handling, HTTP redirects, browser media selection and lifecycle, native-host validation, and resource handling.
+
+The manifest/reference regression test added in [#55](https://github.com/Ahmadkhattak1/awesome-downloader/pull/55) already checks local files referenced by the extension manifests and renderer/extension HTML, and syntax-checks the renderer and browser entry scripts. Do not add a duplicate renderer syntax-only check; extend the existing test when a genuinely uncovered reference or entry point is introduced.
+
+For a focused check, run the relevant file directly, for example:
+
+```powershell
+node --test tests/manifest-references.test.mjs
+node --test tests/engine.test.mjs
+node --test integration/native-host.test.cjs
+node --test extension/background.test.cjs
+```
+
+In every PR, state the exact commands, operating system, runtime version, and commit tested. Separate evidence into these categories:
+
+- **Fixture tests:** automated tests using synthetic inputs, local servers, and controlled files. These demonstrate the behavior covered by those fixtures; they do not prove compatibility with a live website or browser.
+- **Live-browser tests:** identify the browser and version, operating system, extension installation method, and the real workflow exercised. Mark them not run when they were not performed.
+- **Packaged Windows tests:** identify the artifact and checksum, Windows environment, and whether clean install, launch, native-host handoff, upgrade, and uninstall were actually verified. A successful build is not an install test.
+- **Other platforms/devices:** claim support only after testing the actual operating system and architecture. Do not infer support from shared code or fixture tests.
+
+The pull-request test workflow runs on Windows with Node.js 22. The manual release-candidate workflow builds an unsigned artifact after running the tests; it is not evidence of live-browser compatibility or clean-machine installation. Report failed, blocked, and not-run checks explicitly. Never describe a check as passing unless its result is available for the exact candidate commit.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for development commands,
 [SECURITY.md](../SECURITY.md) for private vulnerability reports, and
 [release requirements](RELEASING.md) for distribution checks.
