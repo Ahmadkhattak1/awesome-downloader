@@ -21,7 +21,7 @@
     "dist:portable": "electron-builder --win portable --x64 --publish never"
   },
   "devDependencies": {
-    "electron": "44.9.1",
+    "electron": "45.2.0",
     "electron-builder": "26.18.1",
     "playwright": "^1.58.2"
   },
