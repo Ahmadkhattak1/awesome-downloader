@@ -46,6 +46,36 @@ async function fixture(t, options = {}) {
   return { engine, data, ranges, root, url: `http://127.0.0.1:${server.address().port}` };
 }
 
+test('truncated sequential response never publishes a completed file', async t => {
+  const f = await fixture(t, { intercept(req, res) {
+    res.setHeader('content-length', '100000');
+    if (req.method === 'HEAD') { res.end(); return true; }
+    res.write(Buffer.alloc(100));
+    setTimeout(() => res.destroy(), 5);
+    return true;
+  } });
+  await f.engine.add({ url: f.url + '/truncated' });
+  const d = f.engine.downloads[0];
+  await until(() => d.status === 'error');
+  assert.equal(d.path, null);
+  assert.notEqual(d.status, 'complete');
+  const files = await fs.readdir(path.join(f.root, 'downloads')).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  assert.deepEqual(files, []);
+});
+
+test('canceling an unstarted browser review never requests media', async t => {
+  let requests = 0;
+  const f = await fixture(t, { intercept() { requests++; return false; } });
+  const [id] = await f.engine.add({ url: f.url + '/file.bin', reviewOnly: true, reuseActive: true });
+  await f.engine.action(id, 'cancel');
+  await delay(80);
+  assert.equal(requests, 0);
+  assert.equal(f.engine.downloads.find(d => d.id === id).status, 'cancelled');
+});
+
 test('repeated concurrent browser clicks reuse one active download but allow retry after cancel',async t=>{
   const f=await fixture(t);
   const request={url:f.url+'/file.bin',queueOnly:true,reuseActive:true};
