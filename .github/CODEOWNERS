@@ -1,0 +1,10 @@
+# Security-sensitive changes require the repository owner's review.
+/.github/ @Ahmadkhattak1
+/package.json @Ahmadkhattak1
+/package-lock.json @Ahmadkhattak1
+/tests/ @Ahmadkhattak1
+/integration/ @Ahmadkhattak1
+/desktop/ @Ahmadkhattak1
+/core/ @Ahmadkhattak1
+/extension/ @Ahmadkhattak1
+/build/ @Ahmadkhattak1
