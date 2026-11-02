@@ -1,6 +1,6 @@
 {
   "name": "awesome-downloader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A Windows download manager with segmented transfers and browser video capture",
   "main": "desktop/main.cjs",
   "private": true,
