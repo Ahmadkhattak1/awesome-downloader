@@ -96,6 +96,7 @@ if (process.argv.includes('--native-host')) {
               profiles: connection?.profiles || 0,
               icon,
               extensionPage: browserSetup.definitionFor(name).url,
+              storeUrl: require('./extension-store.cjs').storeBrowser(name) ? require('./extension-store.cjs').STORE_URL : null,
               extensionPath: name === 'Firefox' ? path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension') : path.join(integrationRoot, 'extension'),
               support: 'supported'
             };
@@ -232,6 +233,12 @@ if (process.argv.includes('--native-host')) {
       };
       handlers.registerBrowser = data => require('./browser-registration.cjs').registerBrowser(data, { dataDirectory: app.getPath('userData'), integrationRoot });
       handlers.browserSetup = async ({ action, browser } = {}) => {
+        if (action === 'store') {
+          const { EXTENSION_ID, storeBrowser } = require('./extension-store.cjs');
+          if (!storeBrowser(browser)) throw new Error('Store setup is unavailable for this browser.');
+          await require('./browser-registration.cjs').registerBrowser({browser, extensionId:EXTENSION_ID}, {dataDirectory:app.getPath('userData'),integrationRoot});
+          return browserSetup.openExtensionStore(browser);
+        }
         const firefoxPath = path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension');
         const extensionPath = browser === 'Firefox' ? firefoxPath : path.join(integrationRoot, 'extension');
         if (action === 'open') return browserSetup.openBrowser(browser);
@@ -341,6 +348,13 @@ if (process.argv.includes('--native-host')) {
         }
       });
       updateController.start();
+      require('./extension-store.cjs').offerStoreSetup({
+        packaged: app.isPackaged,
+        background: process.argv.includes('--background') || process.argv.includes('--browser-download'),
+        connected: connectedBrowsers.length > 0,
+        browsers, directory: app.getPath('userData'),
+        open: browser => handlers.browserSetup({action:'store',browser})
+      }).catch(error => { connectionError = `Chrome extension setup: ${error.message}`; });
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {
       if (quitting) return;

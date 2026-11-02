@@ -33,6 +33,25 @@ test('automatic discovery connects every installed Chromium browser and profile'
   assert.deepEqual(Object.fromEntries(calls.map(value=>[value.browser,value.extensionId])),ids);
 });
 
+test('published extension is discovered with relative Chrome paths but disabled entries are excluded',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'awesome-store-profile-'));
+  t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const integrationRoot=path.join(root,'app'),local=path.join(root,'local');
+  await fs.mkdir(path.join(integrationRoot,'extension'),{recursive:true});
+  const profile=path.join(local,BROWSERS.Chrome.data,'Default');
+  await fs.mkdir(profile,{recursive:true});
+  const {EXTENSION_ID}=require('../desktop/extension-store.cjs');
+  const calls=[];
+  const scan=()=>connectInstalledBrowsers({dataDirectory:path.join(root,'data'),integrationRoot,localAppData:local},{register:async input=>calls.push(input)});
+  const write=entry=>fs.writeFile(path.join(profile,'Preferences'),JSON.stringify({extensions:{settings:{[EXTENSION_ID]:entry}}}));
+  await write({path:EXTENSION_ID+'/0.1.1_0',state:1});
+  assert.deepEqual(await scan(),[{browser:'Chrome',connected:true,profiles:1}]);
+  assert.deepEqual(calls,[{browser:'Chrome',extensionId:EXTENSION_ID}]);
+  for(const entry of [{path:EXTENSION_ID+'/0.1.1_0',state:0},{path:EXTENSION_ID+'/0.1.1_0',state:1,disable_reasons:[1]},{path:path.join(integrationRoot,'extension'),state:0},{path:EXTENSION_ID+'/0.1.1_0',state:1,disable_reasons:1}]){
+    await write(entry);assert.deepEqual(await scan(),[]);
+  }
+});
+
 test('Firefox add-on discovery registers its fixed native messaging identity',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'awesome-firefox-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));

@@ -72,10 +72,14 @@ function showBrowserDetail(name) {
   const [label,tone] = browserStatus(browser); $('#browser-detail-status').textContent = label; $('#browser-detail-status').className = `browser-detail-status ${tone}`;
   $('#extension-path').value = browser.extensionPath || '';
   const primary = $('#browser-primary-action'); primary.disabled = !browser.installed; primary.dataset.browser = browser.name;
-  primary.textContent = `Open ${browser.name}`;
+  primary.textContent = browser.storeUrl ? 'Install browser extension' : `Open ${browser.name}`;
   $('#browser-detail-summary').textContent = browser.connected ? 'The extension and desktop connector are ready. Refresh an existing video tab if its download button is missing.' : 'Complete this one-time setup for this browser.';
   const steps = $('#browser-steps'); steps.replaceChildren();
-  const texts = browser.name === 'Firefox' ? [
+  const texts = browser.storeUrl ? [
+    'Click Install browser extension to open the official Chrome Web Store listing in this browser.',
+    'Click Add to Chrome (or the equivalent button in your browser), then confirm the installation.',
+    'The desktop connector is prepared automatically. Return here and click Refresh, then reload your video page.'
+  ] : browser.name === 'Firefox' ? [
     'Click Open Firefox. Awesome Downloader prepares the Firefox extension, registers its local connector, and opens Firefox.',
     `Enter ${browser.extensionPage} in Firefox's address bar.`,
     'On the Firefox page, select This Firefox, then Load Temporary Add-on.',
@@ -90,7 +94,9 @@ function showBrowserDetail(name) {
     'Reload your video page. The Download this video button should appear when playable media is detected.'
   ];
   for (const text of texts) steps.append(element('li','',text));
-  $('#automatic-setup-copy').textContent = browser.name === 'Firefox' ? 'Firefox requires a signed add-on for permanent installation. Until the add-on is published, Firefox asks you to load the included extension again after restarting the browser.' : 'Windows browsers do not allow this app to silently install an unpacked consumer extension. After our store listing is approved, setup can be reduced to the browser’s own enable confirmation.';
+  document.querySelector('.extension-path-label').hidden = Boolean(browser.storeUrl);
+  document.querySelector('.extension-path-row').hidden = Boolean(browser.storeUrl);
+  $('#automatic-setup-copy').textContent = browser.storeUrl ? 'Awesome Downloader prepares its connector automatically. Your browser asks you to confirm adding the published extension.' : browser.name === 'Firefox' ? 'Firefox requires a signed add-on for permanent installation. Until the add-on is published, Firefox asks you to load the included extension again after restarting the browser.' : 'Use the included extension folder for this browser.';
 }
 async function runBrowserSetup(action, browserName = selectedBrowserName) {
   const error = $('#browser-setup-error'); error.hidden = true;
@@ -106,7 +112,7 @@ async function runBrowserSetup(action, browserName = selectedBrowserName) {
 }
 $('#browser-back').addEventListener('click',()=>{selectedBrowserName=null;$('#browser-detail').hidden=true;$('#browser-grid').hidden=false;});
 $('#browser-refresh').addEventListener('click',()=>refreshIntegrationInfo(true));
-$('#browser-primary-action').addEventListener('click',event=>runBrowserSetup(event.currentTarget.dataset.browser === 'Firefox' ? 'prepare' : 'open',event.currentTarget.dataset.browser));
+$('#browser-primary-action').addEventListener('click',event=>{const name=event.currentTarget.dataset.browser;runBrowserSetup(integrationBrowsers.find(browser=>browser.name===name)?.storeUrl ? 'store' : name === 'Firefox' ? 'prepare' : 'open',name);});
 $('#copy-extension-path').addEventListener('click',()=>runBrowserSetup('copy'));
 $('#show-extension-folder').addEventListener('click',()=>runBrowserSetup('folder'));
 async function refreshIntegrationInfo(showErrors = false) {

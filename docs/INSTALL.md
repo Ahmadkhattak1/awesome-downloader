@@ -3,9 +3,9 @@
 ## Download
 
 Windows 10/11, 64-bit Intel/AMD PCs are the intended target. Native ARM builds
-are not provided. This is preview software; YouTube speed and compatibility vary.
+are not provided. YouTube speed and compatibility vary.
 
-Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.5)
+Open the project's [latest release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/latest)
 and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
 account, Git, Node.js, or a terminal to install the application. Do not download
 the automatically generated "Source code" archives to install it.
@@ -18,12 +18,27 @@ Run the installer and follow the wizard. Launch **Awesome Downloader** from the
 Start menu. Keep the app installed at its chosen location so browser integration
 can find it.
 
-## Enable video buttons (Chrome / Edge / Brave / Opera)
+## Install the published extension (Chrome / Edge / Brave)
+
+After installation, launch Awesome Downloader. On the first interactive launch,
+if Chrome is installed and no browser is connected, the app prepares its desktop
+connector and opens the [official extension listing](https://chromewebstore.google.com/detail/dnolinbkicmedadaigcedkmndcpahmml)
+in Chrome once. Click **Add to Chrome**, then confirm the browser's prompt.
+Chrome requires your confirmation; the app does not silently enable extensions.
+Startup in the system tray and download handoffs never open setup tabs.
+
+For Edge or Brave, or to retry Chrome setup, open **Browser integration**, choose
+your browser, and click **Install browser extension**. Confirm the installation
+in that browser. Keep Awesome Downloader running, click **Refresh** in browser
+integration, and refresh the video page. No Developer mode, folder picker, or
+extension ID is needed for this published extension.
+
+## Manual extension setup (Opera / development builds)
 
 The browser extension adds **Download this video** buttons to supported web
 videos. It is included with the installed application; you do not need to download
-a separate ZIP or visit GitHub again. Until our browser-store listing is published,
-add it once to each browser you use:
+a separate ZIP or visit GitHub again. This fallback is for Opera or development
+builds; Chrome, Edge and Brave users should use the published extension above:
 
 1. The app shows **Browser integration** on first launch. You can also open it
    from the toolbar later.

@@ -77,6 +77,12 @@ async function connectInstalledBrowsers({ dataDirectory, integrationRoot, localA
         try {
           const settings = JSON.parse(await fs.readFile(path.join(root, profile.name, file), 'utf8')).extensions?.settings || {};
           for (const [id, entry] of Object.entries(settings)) {
+            if (id === require('./extension-store.cjs').EXTENSION_ID) {
+              if (entry.state === 1 && !entry.disable_reasons?.length && !(typeof entry.disable_reasons === 'number' && entry.disable_reasons !== 0)) {
+                ids.add(id); matchedProfiles.add(profile.name);
+              }
+              continue;
+            }
             if (!/^[a-p]{32}$/.test(id) || !entry.path || !path.isAbsolute(entry.path)) continue;
             const installed = await fs.realpath(entry.path).catch(() => null);
             let ownExtension=installed?.toLowerCase()===expected.toLowerCase();
