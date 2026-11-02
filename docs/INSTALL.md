@@ -27,6 +27,16 @@ Close and reopen your browser after installation, then accept its extension
 confirmation. The browser decides when to show that confirmation; managed-browser
 policies or an earlier removal of the extension may prevent automatic setup.
 Awesome Downloader never opens a store page automatically on startup.
+When you finish an installation with browser setup selected, the app opens its
+Browser integration window so you can see what still needs your approval.
+
+If a browser says **Enable extension**, it has downloaded the extension but needs
+your approval. Open that browser's **Action required** menu and enable **Awesome
+Downloader Integration**. If the prompt is missing, open its Extensions page and
+enable the extension there. A **Reinstall needed** status means the extension was
+previously removed in that browser profile: click **Reinstall extension** in the
+app, then **Add to Chrome** (or the equivalent button) in the store. Browser
+security prevents the installer from undoing a previous removal automatically.
 
 This requests installation through the browser's external-extension registration,
 not through a force-install policy. You can still disable or remove the extension.

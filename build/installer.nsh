@@ -38,6 +38,23 @@ Function browserSetupLeave
   ${NSD_GetState} $browserSetupCheckbox $browserSetupSelected
 FunctionEnd
 
+!macro customFinishPage
+  Function StartApp
+    ${If} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${ElseIf} $browserSetupSelected == ${BST_CHECKED}
+      StrCpy $1 "--browser-setup"
+    ${Else}
+      StrCpy $1 ""
+    ${EndIf}
+    ; Launch the executable installed by THIS wizard, not an older shortcut.
+    ${StdUtils.ExecShellAsUser} $0 "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "open" "$1"
+  FunctionEnd
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+  !insertmacro MUI_PAGE_FINISH
+!macroend
+
 !macro customInstall
   ${IfNot} ${Silent}
   ${AndIf} $browserSetupSelected == ${BST_CHECKED}

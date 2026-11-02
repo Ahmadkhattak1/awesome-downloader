@@ -40,7 +40,10 @@ function element(tag,className,text) { const node = document.createElement(tag);
 const rememberLabel = element('label','checkbox-label'); const rememberInput = element('input'); rememberInput.type = 'checkbox'; rememberInput.id = 'remember-category-path'; rememberInput.disabled = true; rememberLabel.append(rememberInput,document.createTextNode('Remember this folder for the selected category'));
 $('#add-directory').closest('.form-line').after(rememberLabel);
 let integrationBrowsers = [], selectedBrowserName = null, setupPolling = false;
-const browserStatus = browser => browser.connected ? ['Connected','connected'] : browser.installed ? ['Setup needed','setup'] : ['Not installed','missing'];
+const browserStatus = browser => browser.connected ? ['Connected','connected'] : !browser.installed ? ['Not installed','missing'] : browser.setupState === 'approval' ? ['Enable extension','setup'] : browser.setupState === 'disabled' ? ['Disabled','setup'] : browser.setupState === 'removed' ? ['Reinstall needed','setup'] : ['Setup needed','setup'];
+const storeFallback = element('button','button','Install from Web Store'); storeFallback.type = 'button'; storeFallback.id = 'browser-store-action';
+$('#browser-primary-action').after(storeFallback);
+storeFallback.addEventListener('click',()=>runBrowserSetup('store'));
 function browserIcon(browser, className = '') {
   const frame = element('span',`browser-icon-frame ${className}`.trim());
   if (browser.icon) { const image = element('img'); image.src = browser.icon; image.alt = ''; frame.append(image); }
@@ -54,7 +57,8 @@ function renderBrowserGrid(info) {
     const [label,tone] = browserStatus(browser), card = element('button','browser-card');
     card.type = 'button'; card.setAttribute('role','listitem'); card.dataset.browser = browser.name;
     const copy = element('span','browser-card-copy');
-    copy.append(element('strong','',browser.name),element('span','browser-card-subtitle',browser.connected ? `Connected in ${browser.profiles || 1} profile${browser.profiles === 1 ? '' : 's'}` : 'Extension not detected'));
+    const subtitle = browser.connected ? `Connected in ${browser.profiles || 1} profile${browser.profiles === 1 ? '' : 's'}` : browser.setupState === 'approval' ? 'Downloaded; waiting for your approval' : browser.setupState === 'disabled' ? 'Enable it in your browser' : browser.setupState === 'removed' ? 'Previously removed from this browser' : 'Extension not detected';
+    copy.append(element('strong','',browser.name),element('span','browser-card-subtitle',subtitle));
     const status = element('span',`browser-status ${tone}`,label);
     card.append(browserIcon(browser),copy,status);
     card.addEventListener('click',()=>showBrowserDetail(browser.name));
@@ -72,11 +76,18 @@ function showBrowserDetail(name) {
   const [label,tone] = browserStatus(browser); $('#browser-detail-status').textContent = label; $('#browser-detail-status').className = `browser-detail-status ${tone}`;
   $('#extension-path').value = browser.extensionPath || '';
   const primary = $('#browser-primary-action'); primary.disabled = !browser.installed; primary.dataset.browser = browser.name;
-  primary.textContent = browser.storeUrl ? 'Install browser extension' : `Open ${browser.name}`;
-  $('#browser-detail-summary').textContent = browser.connected ? 'The extension and desktop connector are ready. Refresh an existing video tab if its download button is missing.' : 'Complete this one-time setup for this browser.';
+  const enableExisting = ['approval','disabled'].includes(browser.setupState);
+  primary.dataset.action = browser.storeUrl && !enableExisting && !browser.connected ? 'store' : browser.name === 'Firefox' ? 'prepare' : 'open';
+  primary.textContent = primary.dataset.action === 'store' ? (browser.setupState === 'removed' ? 'Reinstall extension' : 'Install browser extension') : `Open ${browser.name}`;
+  storeFallback.hidden = !browser.storeUrl || primary.dataset.action === 'store';
+  $('#browser-detail-summary').textContent = browser.connected ? 'The extension and desktop connector are ready. Refresh an existing video tab if its download button is missing.' : browser.setupState === 'removed' ? `${browser.name} remembers an earlier removal and will not add this extension automatically. Reinstall it from the official store to reconnect.` : browser.setupState === 'approval' ? `${browser.name} has downloaded the extension. Enable it in the browser to finish setup.` : browser.setupState === 'disabled' ? `The extension is installed but disabled. Enable it in ${browser.name} to reconnect.` : 'Complete this one-time setup for this browser. If you just installed the app, fully close and reopen this browser to see its extension approval prompt.';
   const steps = $('#browser-steps'); steps.replaceChildren();
-  const texts = browser.storeUrl ? [
-    'Click Install browser extension to open the official Chrome Web Store listing in this browser.',
+  const texts = browser.storeUrl && (enableExisting || browser.connected) ? [
+    `Click Open ${browser.name}. Use the browser's Action required menu to enable Awesome Downloader Integration if that prompt is shown.`,
+    `Otherwise, enter ${browser.extensionPage} in the address bar and enable Awesome Downloader Integration.`,
+    'Return here and click Refresh, then reload your video page. If the extension is missing, use Install from Web Store.'
+  ] : browser.storeUrl ? [
+    `Click ${browser.setupState === 'removed' ? 'Reinstall extension' : 'Install browser extension'} to open the official Chrome Web Store listing in this browser.`,
     'Click Add to Chrome (or the equivalent button in your browser), then confirm the installation.',
     'The desktop connector is prepared automatically. Return here and click Refresh, then reload your video page.'
   ] : browser.name === 'Firefox' ? [
@@ -112,7 +123,7 @@ async function runBrowserSetup(action, browserName = selectedBrowserName) {
 }
 $('#browser-back').addEventListener('click',()=>{selectedBrowserName=null;$('#browser-detail').hidden=true;$('#browser-grid').hidden=false;});
 $('#browser-refresh').addEventListener('click',()=>refreshIntegrationInfo(true));
-$('#browser-primary-action').addEventListener('click',event=>{const name=event.currentTarget.dataset.browser;runBrowserSetup(integrationBrowsers.find(browser=>browser.name===name)?.storeUrl ? 'store' : name === 'Firefox' ? 'prepare' : 'open',name);});
+$('#browser-primary-action').addEventListener('click',event=>runBrowserSetup(event.currentTarget.dataset.action,event.currentTarget.dataset.browser));
 $('#copy-extension-path').addEventListener('click',()=>runBrowserSetup('copy'));
 $('#show-extension-folder').addEventListener('click',()=>runBrowserSetup('folder'));
 async function refreshIntegrationInfo(showErrors = false) {
