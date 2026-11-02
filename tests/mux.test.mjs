@@ -50,4 +50,14 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
   while(!['complete','error'].includes(audio.status)&&Date.now()<audioEnd)await delay(25);
   assert.equal(audio.status,'complete',audio.error);assert.match(audio.filename,/\.mp3$/);
   await run(ffmpeg,['-v','error','-i',audio.path,'-map','0:a:0','-f','null','-'],{windowsHide:true});
+  // Request audio from the paired master too: an already muxed MP4 must
+  // still be converted when the user's requested format is MP3.
+  await engine.add({url:`http://127.0.0.1:${server.address().port}/master.m3u8`,outputFormat:'mp3'});
+  const extracted=engine.downloads[2],deadline=Date.now()+15000;
+  while(!['complete','error'].includes(extracted.status)&&Date.now()<deadline)await delay(25);
+  assert.equal(extracted.status,'complete',extracted.error);
+  assert.match(extracted.filename,/\.mp3$/);
+  const metadata=await run(ffmpeg,['-hide_banner','-i',extracted.path,'-map','0:a:0','-f','null','-'],{windowsHide:true});
+  assert.match(metadata.stderr,/Audio: mp3/);
+  assert.doesNotMatch(metadata.stderr,/Video:/);
 });
