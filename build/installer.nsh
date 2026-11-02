@@ -43,12 +43,18 @@ FunctionEnd
     InitPluginsDir
     File /oname=$PLUGINSDIR\AwesomeBrowserSetup.exe "${BUILD_RESOURCES_DIR}\browser-setup-helper.exe"
     ClearErrors
-    ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '$\"/owner=$INSTDIR$\"' SW_HIDE $0
+    ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/owner=$\"$INSTDIR$\"' SW_HIDE $0
     ${If} ${Errors}
       MessageBox MB_OK "The app is installed. Automatic browser setup was not completed. You can install the extension later from Browser integration."
     ${ElseIf} $0 != 0
       WriteRegDWORD SHCTX "${INSTALL_REGISTRY_KEY}" "AutomaticBrowserSetup" 1
-      MessageBox MB_OK "The app is installed, but automatic browser setup could not finish. You can use Browser integration to install the extension later."
+      ${If} $0 == 2
+        MessageBox MB_OK "The app is installed, but the browser setup helper received an invalid installation path (error 2). Please report this installer error. Manual extension setup is available in Browser integration."
+      ${ElseIf} $0 == 1
+        MessageBox MB_OK "The app is installed, but Windows denied a browser setup registry operation (error 1). Check your Windows administrator permissions. Manual extension setup is available in Browser integration."
+      ${Else}
+        MessageBox MB_OK "The app is installed, but browser setup returned error $0. Please report this code. Manual extension setup is available in Browser integration."
+      ${EndIf}
     ${Else}
       WriteRegDWORD SHCTX "${INSTALL_REGISTRY_KEY}" "AutomaticBrowserSetup" 1
     ${EndIf}
@@ -63,7 +69,7 @@ FunctionEnd
       InitPluginsDir
       File /oname=$PLUGINSDIR\AwesomeBrowserSetup.exe "${BUILD_RESOURCES_DIR}\browser-setup-helper.exe"
       ClearErrors
-      ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/remove $\"/owner=$INSTDIR$\"' SW_HIDE $0
+      ExecShellWait "runas" "$PLUGINSDIR\AwesomeBrowserSetup.exe" '/remove /owner=$\"$INSTDIR$\"' SW_HIDE $0
       ${If} ${Errors}
         ${IfNot} ${Silent}
           MessageBox MB_OK "Automatic browser registration could not be removed. Approve the Windows permission prompt when uninstalling to clean it up."
