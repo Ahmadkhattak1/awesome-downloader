@@ -261,14 +261,105 @@ export class DownloadEngine extends EventEmitter {
       const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / (now - lastAt);
       lastBytes = d.downloaded; lastAt = now; this.changed();
     }, this.tickMs);
-    const siblings = new AbortController();
-    const transferSignal = AbortSignal.any([signal, siblings.signal]);
+    const workerControllers = d.segments.map(() => new AbortController());
+    let fallbackResponse = null, fallbackIndex = -1, retryWithoutRange = false;
     try {
-      const outcomes = await Promise.allSettled(d.segments.map((segment, i) => this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers, transferSignal).catch(error => { siblings.abort(); throw error; })));
-      const failure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
-      if (failure) throw failure.reason;
+      const outcomes = await Promise.allSettled(d.segments.map(async (segment, i) => {
+        try {
+          const result = await this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers,
+            AbortSignal.any([signal, workerControllers[i].signal]));
+          if (result?.fallbackResponse) {
+            if (fallbackResponse) result.fallbackResponse.destroy();
+            else {
+              fallbackResponse = result.fallbackResponse;
+              fallbackIndex = i;
+              workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
+            }
+          } else if (result?.retryWithoutRange) {
+            retryWithoutRange = true;
+            workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
+          }
+        } catch (error) {
+          // Do not abort the worker whose full 200 response is being consumed.
+          if (fallbackIndex >= 0) {
+            workerControllers.forEach((controller, index) => {
+              if (index !== i && index !== fallbackIndex) controller.abort();
+            });
+          } else {
+            // Keep the first request alive in case it returns a full 200 fallback.
+            const preserveFirst = i > 0 && !retryWithoutRange;
+            workerControllers.forEach((controller, index) => {
+              if (index !== i && !(preserveFirst && index === 0)) controller.abort();
+            });
+          }
+          throw error;
+        }
+      }));
+      if (fallbackResponse || retryWithoutRange) {
+        await this.downloadUnranged(d, dir, headers, signal, fallbackResponse, info.url);
+      } else {
+        const transferFailure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
+        if (transferFailure) throw transferFailure.reason;
+      }
     } finally { clearInterval(progress); }
     await this.assemble(d, dir, signal);
+  }
+  async downloadUnranged(d, dir, headers, signal, response, url) {
+    if (!response) response = await request(url, { headers, signal });
+    if (response.statusCode !== 200) {
+      const status = response.statusCode;
+      response.destroy();
+      throw failure(`Server returned HTTP ${status} when retrying without byte ranges.`);
+    }
+    const encoding = response.headers['content-encoding'];
+    if (encoding && encoding !== 'identity') {
+      response.destroy();
+      throw failure('Server ignored identity encoding; refusing to save a potentially corrupt file.');
+    }
+    const rawLength = response.headers['content-length'];
+    const parsedLength = rawLength !== undefined && /^\d+$/.test(rawLength) ? Number(rawLength) : null;
+    const expected = Number.isSafeInteger(parsedLength) && parsedLength >= 0 ? parsedLength : null;
+
+    // A full response replaces every partial range; never concatenate it with stale segments.
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.mkdir(dir, { recursive: true });
+    const file = path.join(dir, '0.part');
+    const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
+    d.segments = [segment];
+    d.connections = 1;
+    d.total = expected;
+    d.downloaded = 0;
+    d.validator = null;
+    d.resumable = false;
+    d.status = 'downloading';
+
+    let received = 0, out;
+    try {
+      out = await fs.open(file, 'w');
+      await this.persist();
+      this.changed();
+      for await (const chunk of response) {
+        signal.throwIfAborted();
+        if (expected !== null && received + chunk.length > expected) {
+          throw failure('Server sent more bytes than advertised.');
+        }
+        await this.throttle(chunk.length, signal);
+        await out.writeFile(chunk);
+        received += chunk.length;
+        segment.downloaded = received;
+        d.downloaded = received;
+      }
+      if (expected !== null && received !== expected) {
+        throw failure('Connection ended before the full file finished.');
+      }
+      await out.sync();
+    } finally {
+      try { if (out) await out.close(); } finally { response.destroy(); }
+    }
+    d.total = received;
+    segment.end = received > 0 ? received - 1 : null;
+    await this.persist();
+    this.changed();
   }
   async assemble(d, dir, signal, files = d.segments.map((_,i) => path.join(dir, `${i}.part`)), converted = false) {
     signal.throwIfAborted();
@@ -428,6 +519,15 @@ export class DownloadEngine extends EventEmitter {
         const h = { ...headers };
         if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
+        if (ranged && response.statusCode === 200) {
+          // If-Range can legitimately turn a range request into a full 200 response.
+          // Keep this response body and restart as one non-range transfer.
+          return { fallbackResponse: response };
+        }
+        if (ranged && response.statusCode === 416) {
+          response.destroy();
+          return { retryWithoutRange: true };
+        }
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           const status = response.statusCode; response.destroy();
           throw failure(`Server returned HTTP ${status}${ranged ? ' instead of a byte range' : ''}.`, transientStatus(status),
