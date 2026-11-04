@@ -68,6 +68,8 @@
           const chooser=document.createElement('div'); chooser.className='chooser';
           const hint=document.createElement('p'); hint.textContent='Checking available video formats…';
           chooser.append(hint); shadow.append(chooser); position();
+          const load=async()=>{
+          record.refill=null;
           try {
             const result=await send({action:'listForFrame'});
             if(!result?.ok)throw new Error(result?.error||'Could not list video formats.');
@@ -75,7 +77,7 @@
             const candidates=result?.items||[];
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
             if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
-            if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
+            if (!candidates.length) { if(youtube)record.refill=load; hint.textContent=result.notice || (youtube?'Play the video briefly. No complete video with audio has been captured yet; this menu updates once it is.':'No direct media links detected. Play the video and try again.'); return; }
             const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
             if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
             choices.forEach((item,index)=>{
@@ -98,6 +100,8 @@
               };chooser.append(row);
             }); position();
           } catch(error) {hint.textContent=error.message;}
+          };
+          await load();
           return;
         }
       });
@@ -153,7 +157,10 @@
   }
   addEventListener('scroll', onScroll, {capture:true,signal:listeners.signal}); addEventListener('resize', position, {signal:listeners.signal}); document.addEventListener('fullscreenchange',position,{signal:listeners.signal});
   function onMessage(message, sender, respond) {
-    if (!connected() || sender.id !== api.runtime.id || message.action !== 'collectLinks') return;
+    if (!connected() || sender.id !== api.runtime.id) return;
+    // The worker now holds the YouTube session that an open, waiting menu needs.
+    if (message.action === 'sabrCaptured') { for (const record of records) if (record.refill && record.shadow.querySelector('.chooser')) record.refill(); return; }
+    if (message.action !== 'collectLinks') return;
     const items = Array.from(document.querySelectorAll('a[href]')).slice(0, 1000).map(a => ({url:direct(a.href), title:a.textContent.trim()})).filter(item => item.url);
     send({action:'remember', items:items.slice(0, 100)}).then(respond,error=>{try{respond({ok:false,error:error.message});}catch{}}).catch(()=>{});
     return true;

@@ -4,7 +4,7 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness({initialData={},webRequest={}}={}) {
-  const events={},specs={},nativeRequests=[],downloadCalls=[];
+  const events={},specs={},nativeRequests=[],downloadCalls=[],tabMessages=[];
   const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data=structuredClone(initialData),downloads=new Map();
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
@@ -14,9 +14,9 @@ function harness({initialData={},webRequest={}}={}) {
     async resume(id){downloadCalls.push(['resume',id]);downloads.get(id).state='in_progress';},
     async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);}
   });
-  browser.tabs.sendMessage=async()=>({ok:true});
+  browser.tabs.sendMessage=async(tabId,message)=>{tabMessages.push([tabId,message.action]);return {ok:true};};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,specs,data,nativeRequests,downloadCalls,tabMessages,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -89,6 +89,47 @@ test('SABR choices are hidden until the browser captures a usable session',async
  const h=harness(),sender={id:'extension-id',tab:{id:29,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999',ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4',height:1080,qualityLabel:'1080p',bitrate:3000000},{itag:140,mimeType:'audio/mp4',bitrate:128000}]}},sender);
  const result=await h.request({action:'listForFrame'},sender);assert.equal(result.items.length,0);assert.match(result.notice,/captured/i);
+});
+const sabrPlayer={videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}]};
+const sabrStream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+test('another video\'s player on the page keeps the tab\'s captured session, and the waiting menu is told once',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:31,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ for(const requestId of ['first','second']){
+  h.events.beforeRequest({requestId,tabId:31,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+  h.events.response({requestId,tabId:31,url:sabrStream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
+ }
+ // A related video's player, reported by the same page while the tab still shows the first video.
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},sender);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.videoId,'wLdZWyLOJCI');assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='sabrCaptured'),[[31,'sabrCaptured']]);
+ assert.equal(h.tabMessages.some(([,action])=>action==='relaySabr'),false);
+ // Once the tab itself shows the other video, its player takes over and the old session is dropped.
+ const moved={...sender,tab:{...sender.tab,url:'https://www.youtube.com/watch?v=abcdefghijk'}};
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);
+ assert.equal((await h.request({action:'listForFrame'},moved)).items.length,0);
+});
+test('a SABR body the browser hides is relayed by the page, accepted only from a tab asked for it',async()=>{
+ const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:32,url:page}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,false);
+ for(const requestId of ['hidden','again'])h.events.beforeRequest({requestId,tabId:32,url:sabrStream,requestBody:{error:'Unknown error.'}});
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='relaySabr'),[[32,'relaySabr']]);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQI'},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:'https://example.com/videoplayback?sabr=1',requestBody:'AQID'},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},{...sender,url:'https://example.com/'})).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,true);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+});
+test('a relayed SABR body is held to the same 256 KiB limit as a webRequest capture',async()=>{
+ const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:33,url:page}};
+ h.events.beforeRequest({requestId:'hidden',tabId:33,url:sabrStream,requestBody:{error:'Unknown error.'}});
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262145).toString('base64')},sender)).ok,false);
+ assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262144).toString('base64')},sender)).ok,true);
 });
 test('duplicate browser downloads share one native handoff',async()=>{
  const h=harness();
