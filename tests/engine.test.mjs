@@ -156,6 +156,22 @@ async function until(check, timeout = 8000) {
 }
 const digest = b => createHash('sha256').update(b).digest('hex');
 
+test('paired tracks disable ranged transfer fallback before muxing', async t => {
+  const f = await fixture(t);
+  const [id] = await f.engine.add({ url: `${f.url}/video.bin`, audioUrl: `${f.url}/audio.bin`, queueOnly: true });
+  const d = f.engine.downloads.find(item => item.id === id);
+  const rangedFlags = [];
+  f.engine.transfer = async (_download, info) => {
+    rangedFlags.push(info.ranges);
+    throw new Error('stop after inspecting paired-track transfer mode');
+  };
+  await assert.rejects(
+    f.engine.runPairedTracks(d, {}, new AbortController().signal),
+    /stop after inspecting paired-track transfer mode/
+  );
+  assert.deepEqual(rangedFlags, [false, false]);
+});
+
 test('parallel ranged transfers reconstruct exact bytes and preserve existing filenames', async t => {
   const f = await fixture(t);
   await fs.mkdir(path.join(f.root, 'downloads')); await fs.writeFile(path.join(f.root, 'downloads', 'file.bin'), 'existing');
