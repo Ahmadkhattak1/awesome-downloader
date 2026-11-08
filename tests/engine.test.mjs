@@ -857,7 +857,8 @@ test('paired tracks mux real media from a range-only server', async t => {
   // Range-only tracks: a valid 206 for the requested range, HTTP 403 without one.
   const serve = (body, tag, counter) => (req, res) => {
     res.setHeader('etag', tag);
-    res.setHeader('accept-ranges', 'bytes'); => (req, res) => {    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
+    res.setHeader('accept-ranges', 'bytes');
+    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
     const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
     if (!match) { res.statusCode = 403; return res.end('Range header required'); }
     const start = Number(match[1]), end = Number(match[2]);
@@ -865,7 +866,7 @@ test('paired tracks mux real media from a range-only server', async t => {
     res.statusCode = 206;
     res.setHeader('content-range', `bytes ${start}-${end}/${body.length}`);
     res.setHeader('content-length', end - start + 1);
-    res.end(body.subarray(start, end + 1)); => (req, res) => {
+    res.end(body.subarray(start, end + 1));
   };
   const videoServer = http.createServer(serve(video, '"pair-video-1"', () => seen.videoRanges++));
   const audioServer = http.createServer(serve(audio, '"pair-audio-1"', () => seen.audioRanges++));
