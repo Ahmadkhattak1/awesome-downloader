@@ -320,14 +320,14 @@ export class DownloadEngine extends EventEmitter {
     const parsedLength = rawLength !== undefined && /^\d+$/.test(rawLength) ? Number(rawLength) : null;
     const expected = Number.isSafeInteger(parsedLength) && parsedLength >= 0 ? parsedLength : null;
 
+    const file = path.join(dir, '0.part');
+    const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
     let received = 0, out;
     try {
       // Keep response cleanup active even if directory reset/open fails (for example EPERM).
       // A full response replaces every partial range; never concatenate stale segments.
       await fs.rm(dir, { recursive: true, force: true });
       await fs.mkdir(dir, { recursive: true });
-      const file = path.join(dir, '0.part');
-      const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
       d.segments = [segment];
       d.connections = 1;
       d.total = expected;

@@ -7,6 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpegPath from 'ffmpeg-static';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
 import { probe, retryAfter, transientStatus } from '../core/http.mjs';
@@ -835,4 +838,47 @@ test('restarting mid-fallback discards the partial body and resumes to exact byt
     assert.match(d.notice, /changed on the server; restarted from the beginning/);
     assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
   } finally { await restored.close(); }
+});
+
+const execFileAsync = promisify(execFile);
+// Tiny valid tracks generated with the bundled ffmpeg, so the paired-download
+// fixture muxes real media instead of empty or synthetic byte strings.
+test('paired tracks mux real media from a range-advertising server', async t => {
+  const mediaDir = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-media-'));
+  const videoPath = path.join(mediaDir, 'video.mp4'), audioPath = path.join(mediaDir, 'audio.m4a');
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=128x96:rate=5', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', videoPath]);
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioPath]);
+  const video = await fs.readFile(videoPath), audio = await fs.readFile(audioPath);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-paired-test-'));
+  const seen = { videoRanges: 0, audioRanges: 0 };
+  const serve = (body, tag, counter) => (req, res) => {
+    res.setHeader('etag', tag);
+    res.setHeader('accept-ranges', 'bytes');
+    if (req.headers.range) counter();
+    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
+    res.setHeader('content-length', body.length);
+    res.end(body);
+  };
+  const videoServer = http.createServer(serve(video, '"pair-video-1"', () => seen.videoRanges++));
+  const audioServer = http.createServer(serve(audio, '"pair-audio-1"', () => seen.audioRanges++));
+  for (const server of [videoServer, audioServer]) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const engine = await new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads'), tickMs: 30 }).init();
+  t.after(async () => {
+    await engine.close();
+    for (const server of [videoServer, audioServer]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(mediaDir, { recursive: true, force: true });
+  });
+  await engine.add({ url: `http://127.0.0.1:${videoServer.address().port}/video.mp4`, audioUrl: `http://127.0.0.1:${audioServer.address().port}/audio.m4a` });
+  const d = engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  // Paired tracks must not enter the ranged fallback path at all.
+  assert.equal(seen.videoRanges, 0);
+  assert.equal(seen.audioRanges, 0);
+  // Both tracks must be fully consumed; a zero-byte part used to reach FFmpeg.
+  assert.equal(d.segments[0].downloaded, video.length);
+  assert.equal(d.segments[1].downloaded, audio.length);
+  // The muxed output must decode: an empty video part used to fail this step.
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-i', d.path, '-f', 'null', '-']);
 });
