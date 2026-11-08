@@ -48,4 +48,16 @@ async function openBrowser(browser, environment = process.env) {
   });
   return { browser };
 }
-module.exports = { DEFINITIONS, definitionFor, findBrowserExecutable, openBrowser };
+async function openExtensionStore(browser, environment = process.env) {
+  const { STORE_URL, storeBrowser } = require('./extension-store.cjs');
+  if (!storeBrowser(browser)) throw new Error('No published store extension is configured for this browser.');
+  const executable = await findBrowserExecutable(browser, environment);
+  if (!executable) throw new Error(`${browser} was not found.`);
+  await new Promise((resolve, reject) => {
+    const child = spawn(executable, [STORE_URL], { detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
+  });
+  return { browser };
+}
+module.exports = { DEFINITIONS, definitionFor, findBrowserExecutable, openBrowser, openExtensionStore };

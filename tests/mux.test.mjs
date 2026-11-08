@@ -27,7 +27,7 @@ test('direct adaptive tracks download separately and complete as audible MP4',as
   await run(ffmpeg,['-v','error','-i',d.path,'-map','0:v:0','-map','0:a:0','-f','null','-'],{windowsHide:true});
 });
 
-test('separate HLS video and audio produce an MP4 with both decodable tracks', async t => {
+test('paired HLS produces decodable MP4 or actual audio-only MP3 as requested', async t => {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'awesome-mux-'));
   const run=promisify(execFile);
   const engine=await new DownloadEngine({dataDirectory:path.join(root,'state'),downloadDirectory:path.join(root,'out'),tickMs:20}).init();
@@ -57,7 +57,7 @@ test('separate HLS video and audio produce an MP4 with both decodable tracks', a
   while(!['complete','error'].includes(extracted.status)&&Date.now()<deadline)await delay(25);
   assert.equal(extracted.status,'complete',extracted.error);
   assert.match(extracted.filename,/\.mp3$/);
-  const metadata=await run(ffmpeg,['-hide_banner','-i',extracted.path,'-map','0:a:0','-f','null','-'],{windowsHide:true});
+  const metadata=await run(ffmpeg,['-hide_banner','-i',extracted.path,'-map','0:a:0','-f','null','-'],{windowsHide:true,timeout:10000});
   assert.match(metadata.stderr,/Audio: mp3/);
   assert.doesNotMatch(metadata.stderr,/Video:/);
 });

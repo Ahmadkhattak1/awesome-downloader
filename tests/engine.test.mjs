@@ -47,16 +47,25 @@ async function fixture(t, options = {}) {
 }
 
 test('truncated sequential response never publishes a completed file', async t => {
+  const methods = [];
+  let bodyBytesSent = 0;
   const f = await fixture(t, { intercept(req, res) {
+    methods.push(req.method);
     res.setHeader('content-length', '100000');
     if (req.method === 'HEAD') { res.end(); return true; }
-    res.write(Buffer.alloc(100));
-    setTimeout(() => res.destroy(), 5);
+    res.write(Buffer.alloc(100), () => {
+      bodyBytesSent += 100;
+      setTimeout(() => res.destroy(), 5);
+    });
     return true;
   } });
   await f.engine.add({ url: f.url + '/truncated' });
   const d = f.engine.downloads[0];
   await until(() => d.status === 'error');
+  assert.equal(methods[0], 'HEAD', 'metadata discovery must succeed before transfer');
+  assert.ok(methods.includes('GET'), 'must exercise the transfer, not an earlier discovery failure');
+  assert.ok(bodyBytesSent >= 100, 'the fixture must actually deliver a partial response');
+  assert.equal(d.connections, 1, 'this regression must use the sequential transfer path');
   assert.equal(d.path, null);
   assert.notEqual(d.status, 'complete');
   const files = await fs.readdir(path.join(f.root, 'downloads')).catch(error => {
@@ -92,15 +101,15 @@ test('canceling discovery during Retry-After prevents every later retry', async 
 });
 
 test('permanent discovery rejection does not consume transient retry budget', async t => {
-  let requests = 0;
+  const methods = [];
   const f = await fixture(t, { intercept(req, res) {
-    requests++;
+    methods.push(req.method);
     res.writeHead(403);
     res.end();
     return true;
   } });
   await assert.rejects(probe(f.url + '/file.bin', {}, new AbortController().signal), /HTTP 403/);
-  assert.equal(requests, 2, 'one HEAD and one compatibility GET, with no retries');
+  assert.deepEqual(methods, ['HEAD', 'GET'], 'one HEAD and one compatibility GET, with no retries');
 });
 
 test('repeated concurrent browser clicks reuse one active download but allow retry after cancel',async t=>{

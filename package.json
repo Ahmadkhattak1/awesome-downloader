@@ -1,6 +1,6 @@
 {
   "name": "awesome-downloader",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A Windows download manager with segmented transfers and browser video capture",
   "main": "desktop/main.cjs",
   "private": true,
@@ -99,7 +99,6 @@
     "asarUnpack": [
       "node_modules/ffmpeg-static/ffmpeg.exe"
     ],
-    "electronDist": "node_modules/electron/dist",
     "win": {
       "target": [
         {
@@ -116,6 +115,7 @@
       "artifactName": "Awesome-Downloader-${version}-Windows.exe"
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -129,5 +129,10 @@
     "electron-updater": "6.8.12",
     "ffmpeg-static": "^5.3.0",
     "googlevideo": "^5.0.1"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "minimatch": "11.0.1"
+    }
   }
 }
