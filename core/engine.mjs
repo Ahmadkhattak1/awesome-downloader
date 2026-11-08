@@ -368,7 +368,7 @@ export class DownloadEngine extends EventEmitter {
       const { muxTracks } = await import('./mux.mjs');
       const combined = await muxTracks(dir, videoCount, plan.urls.length, signal);
       d.filename = safeFilename(d.filename.replace(/\.[^.]+$/, '') + '.mp4');
-      await this.assemble(d, dir, signal, [combined]);
+      await this.assemble(d, dir, signal, [combined], d.outputFormat === 'mp4');
     } else await this.assemble(d, dir, signal);
   }
   async runPairedTracks(d,headers,signal) {
