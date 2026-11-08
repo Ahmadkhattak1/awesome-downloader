@@ -296,7 +296,7 @@ export class DownloadEngine extends EventEmitter {
         }
       }));
       if (fallbackResponse || retryWithoutRange) {
-        await this.downloadUnranged(d, dir, headers, signal, fallbackResponse, info.url);
+        await this.downloadUnranged(d, dir, headers, signal, fallbackResponse, d.url);
       } else {
         const transferFailure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
         if (transferFailure) throw transferFailure.reason;
