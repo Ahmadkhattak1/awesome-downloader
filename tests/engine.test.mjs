@@ -603,7 +603,7 @@ test('plain fallback after a cross-origin redirect never forwards request creden
   const seenAtRedirector = [];
   const redirector = http.createServer((req, res) => {
     seenAtRedirector.push({ ...req.headers });
-    res.writeHead(302, { location: `http://127.0.0.1:\${target.address().port}/file.bin` });
+    res.writeHead(302, { location: `http://127.0.0.1:${target.address().port}/file.bin` });
     res.end();
   });
   await new Promise(resolve => redirector.listen(0, '127.0.0.1', resolve));
@@ -613,7 +613,7 @@ test('plain fallback after a cross-origin redirect never forwards request creden
     for (const server of [target, redirector]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
     await fs.rm(root, { recursive: true, force: true });
   });
-  await engine.add({ url: `http://127.0.0.1:\${redirector.address().port}/file.bin`, headers: credentials });
+  await engine.add({ url: `http://127.0.0.1:${redirector.address().port}/file.bin`, headers: credentials });
   const d = engine.downloads[0];
   await until(() => ['complete', 'error'].includes(d.status));
   assert.equal(d.status, 'complete', d.error);
@@ -622,10 +622,10 @@ test('plain fallback after a cross-origin redirect never forwards request creden
   assert.ok(seen.head && seen.ranged && seen.plain);
   assert.equal(plainRequests, 1);
   for (const phase of ['head', 'ranged', 'plain']) {
-    assert.equal(seen[phase].authorization, undefined, `\${phase} request leaked authorization to the redirected origin`);
-    assert.equal(seen[phase].cookie, undefined, `\${phase} request leaked cookie to the redirected origin`);
-    assert.equal(seen[phase].origin, undefined, `\${phase} request leaked origin to the redirected origin`);
-    assert.equal(seen[phase].referer, undefined, `\${phase} request leaked referer to the redirected origin`);
+    assert.equal(seen[phase].authorization, undefined, `${phase} request leaked authorization to the redirected origin`);
+    assert.equal(seen[phase].cookie, undefined, `${phase} request leaked cookie to the redirected origin`);
+    assert.equal(seen[phase].origin, undefined, `${phase} request leaked origin to the redirected origin`);
+    assert.equal(seen[phase].referer, undefined, `${phase} request leaked referer to the redirected origin`);
   }
   assert.equal(digest(await fs.readFile(d.path)), digest(data));
 });
@@ -673,7 +673,7 @@ test('a full-response fallback completes exact bytes when sibling range workers 
   // One worker per segment; every non-first worker must actually be served a 403.
   state.expectedSiblings = Math.min(f.engine.settings.connections, Math.ceil(f.data.length / (512 * 1024))) - 1;
   assert.ok(state.expectedSiblings > 0);
-  const [id] = await f.engine.add({ url: `\${f.url}/file.bin` });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
   const d = f.engine.downloads[0];
   await until(() => ['complete', 'error'].includes(d.status));
   assert.equal(d.status, 'complete', d.error);
@@ -706,10 +706,10 @@ test('a fallback body held for a missing sibling is destroyed on deadline, never
   // must time out and cut the response instead of hanging or completing.
   state.expectedSiblings = Math.min(f.engine.settings.connections, Math.ceil(f.data.length / (512 * 1024)));
   const started = Date.now();
-  await f.engine.add({ url: `\${f.url}/file.bin` });
+  await f.engine.add({ url: `${f.url}/file.bin` });
   const d = f.engine.downloads[0];
   await until(() => d.status === 'error');
-  assert.ok(Date.now() - started < 6000, `held fallback took \${Date.now() - started}ms to fail`);
+  assert.ok(Date.now() - started < 6000, `held fallback took ${Date.now() - started}ms to fail`);
   assert.match(d.error, /aborted/);
   assert.equal(fullResponses, 1);
   assert.equal(state.siblingsForbidden, state.expectedSiblings - 1);
@@ -734,7 +734,7 @@ test('cancelling while the full-response fallback streams leaves no completed fi
     res.on('close', () => clearInterval(interval));
     return true;
   } });
-  const [id] = await f.engine.add({ url: `\${f.url}/file.bin` });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
   const d = f.engine.downloads[0];
   await until(() => d.downloaded > 100000);
   await f.engine.action(id, 'cancel');
@@ -754,7 +754,7 @@ test('a truncated full-response fallback fails instead of saving a partial file'
     res.write(f.data.subarray(0, f.data.length >> 1), () => res.socket.destroy());
     return true;
   } });
-  await f.engine.add({ url: `\${f.url}/file.bin` });
+  await f.engine.add({ url: `${f.url}/file.bin` });
   const d = f.engine.downloads[0];
   await until(() => d.status === 'error');
   assert.match(d.error, /aborted/);
@@ -780,7 +780,7 @@ test('restarting mid-fallback discards the partial body and resumes to exact byt
     res.on('close', () => clearInterval(interval));
     return true;
   } });
-  const [id] = await f.engine.add({ url: `\${f.url}/file.bin` });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
   await until(() => f.engine.downloads[0].downloaded > 100000);
   await f.engine.action(id, 'pause');
   assert.equal(f.engine.downloads[0].status, 'paused');
@@ -799,4 +799,3 @@ test('restarting mid-fallback discards the partial body and resumes to exact byt
     assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
   } finally { await restored.close(); }
 });
-
