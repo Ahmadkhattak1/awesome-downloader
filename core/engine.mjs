@@ -320,38 +320,34 @@ export class DownloadEngine extends EventEmitter {
     const parsedLength = rawLength !== undefined && /^\d+$/.test(rawLength) ? Number(rawLength) : null;
     const expected = Number.isSafeInteger(parsedLength) && parsedLength >= 0 ? parsedLength : null;
 
-    // A full response replaces every partial range; never concatenate it with stale segments.
-    await fs.rm(dir, { recursive: true, force: true });
-    await fs.mkdir(dir, { recursive: true });
-    const file = path.join(dir, '0.part');
-    const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
-    d.segments = [segment];
-    d.connections = 1;
-    d.total = expected;
-    d.downloaded = 0;
-    d.validator = null;
-    d.resumable = false;
-    d.status = 'downloading';
-
     let received = 0, out;
     try {
+      // Keep response cleanup active even if directory reset/open fails (for example EPERM).
+      // A full response replaces every partial range; never concatenate stale segments.
+      await fs.rm(dir, { recursive: true, force: true });
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, '0.part');
+      const segment = { start: 0, end: expected !== null && expected > 0 ? expected - 1 : null, downloaded: 0 };
+      d.segments = [segment];
+      d.connections = 1;
+      d.total = expected;
+      d.downloaded = 0;
+      d.validator = null;
+      d.resumable = false;
+      d.status = 'downloading';
       out = await fs.open(file, 'w');
       await this.persist();
       this.changed();
       for await (const chunk of response) {
         signal.throwIfAborted();
-        if (expected !== null && received + chunk.length > expected) {
-          throw failure('Server sent more bytes than advertised.');
-        }
+        if (expected !== null && received + chunk.length > expected) throw failure('Server sent more bytes than advertised.');
         await this.throttle(chunk.length, signal);
         await out.writeFile(chunk);
         received += chunk.length;
         segment.downloaded = received;
         d.downloaded = received;
       }
-      if (expected !== null && received !== expected) {
-        throw failure('Connection ended before the full file finished.');
-      }
+      if (expected !== null && received !== expected) throw failure('Connection ended before the full file finished.');
       await out.sync();
     } finally {
       try { if (out) await out.close(); } finally { response.destroy(); }
@@ -474,7 +470,13 @@ export class DownloadEngine extends EventEmitter {
     let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(d.downloaded-last)*1000/Math.max(1,now-at);last=d.downloaded;at=now;this.changed();},this.tickMs);
     const siblings=new AbortController(),group=AbortSignal.any([signal,siblings.signal]);
     try {
-      const outcomes=await Promise.allSettled(urls.map(async(url,i)=>{try{const file=path.join(dir,i+'.part');await fs.writeFile(file,Buffer.alloc(0));await this.transfer(d,infos[i],d.segments[i],file,trackHeaders[i],group,url);}catch(error){siblings.abort();throw error;}}));
+      const outcomes=await Promise.allSettled(urls.map(async(url,i)=>{try{
+        const file=path.join(dir,i+'.part');
+        await fs.writeFile(file,Buffer.alloc(0));
+        // Paired video/audio tracks are independent transfers. Use plain GETs so
+        // direct-download 200/416 fallback control results cannot reach FFmpeg as media.
+        await this.transfer(d,{...infos[i],ranges:false},d.segments[i],file,trackHeaders[i],group,url);
+      }catch(error){siblings.abort();throw error;}}));
       const failed=outcomes.find(o=>o.status==='rejected'&&o.reason.name!=='AbortError')||outcomes.find(o=>o.status==='rejected');if(failed)throw failed.reason;
     } finally {clearInterval(timer);}
     signal.throwIfAborted();d.status='assembling';d.speed=0;this.changed();
