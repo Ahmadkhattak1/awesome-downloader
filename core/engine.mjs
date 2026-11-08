@@ -267,7 +267,7 @@ export class DownloadEngine extends EventEmitter {
       const outcomes = await Promise.allSettled(d.segments.map(async (segment, i) => {
         try {
           const result = await this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers,
-            AbortSignal.any([signal, workerControllers[i].signal]));
+            AbortSignal.any([signal, workerControllers[i].signal]), undefined, true);
           if (result?.fallbackResponse) {
             if (fallbackResponse) result.fallbackResponse.destroy();
             else {
@@ -473,9 +473,10 @@ export class DownloadEngine extends EventEmitter {
       const outcomes=await Promise.allSettled(urls.map(async(url,i)=>{try{
         const file=path.join(dir,i+'.part');
         await fs.writeFile(file,Buffer.alloc(0));
-        // Paired video/audio tracks are independent transfers. Use plain GETs so
-        // direct-download 200/416 fallback control results cannot reach FFmpeg as media.
-        await this.transfer(d,{...infos[i],ranges:false},d.segments[i],file,trackHeaders[i],group,url);
+        // Paired video/audio tracks keep their probed transfer mode: track servers
+        // may require Range. The unranged 200/416 fallback is scoped to direct files,
+        // so a control result here can never reach FFmpeg as media.
+        await this.transfer(d,infos[i],d.segments[i],file,trackHeaders[i],group,url);
       }catch(error){siblings.abort();throw error;}}));
       const failed=outcomes.find(o=>o.status==='rejected'&&o.reason.name!=='AbortError')||outcomes.find(o=>o.status==='rejected');if(failed)throw failed.reason;
     } finally {clearInterval(timer);}
@@ -509,7 +510,7 @@ export class DownloadEngine extends EventEmitter {
     d.total=d.downloaded=(await fs.stat(output)).size;d.segments=[{start:0,end:d.total-1,downloaded:d.total,done:true}];
     await this.assemble(d,dir,signal,[output],true);
   }
-  async transfer(d, info, segment, file, headers, signal, url=d.url) {
+  async transfer(d, info, segment, file, headers, signal, url=d.url, allowUnrangedFallback=false) {
     const expected = segment.end === null ? null : segment.end - segment.start + 1;
     if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); return; }
     for (let attempt = 0; attempt < 4; attempt++) {
@@ -521,12 +522,13 @@ export class DownloadEngine extends EventEmitter {
         const h = { ...headers };
         if (ranged) { h.Range = `bytes=${start}-${segment.end}`; if (info.validator) h['If-Range'] = info.validator; }
         const response = await request(url, { headers: h, signal });
-        if (ranged && response.statusCode === 200) {
+        if (allowUnrangedFallback && ranged && response.statusCode === 200) {
           // If-Range can legitimately turn a range request into a full 200 response.
-          // Keep this response body and restart as one non-range transfer.
+          // Keep this response body and restart as one non-range transfer. Only the
+          // direct-file caller opts in; paired tracks keep their existing failure.
           return { fallbackResponse: response };
         }
-        if (ranged && response.statusCode === 416) {
+        if (allowUnrangedFallback && ranged && response.statusCode === 416) {
           response.destroy();
           return { retryWithoutRange: true };
         }

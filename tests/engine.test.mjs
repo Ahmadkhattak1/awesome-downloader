@@ -160,20 +160,23 @@ async function until(check, timeout = 8000) {
 }
 const digest = b => createHash('sha256').update(b).digest('hex');
 
-test('paired tracks disable ranged transfer fallback before muxing', async t => {
+test('paired tracks keep ranged transfers and skip the unranged fallback', async t => {
   const f = await fixture(t);
   const [id] = await f.engine.add({ url: `${f.url}/video.bin`, audioUrl: `${f.url}/audio.bin`, queueOnly: true });
   const d = f.engine.downloads.find(item => item.id === id);
-  const rangedFlags = [];
-  f.engine.transfer = async (_download, info) => {
-    rangedFlags.push(info.ranges);
+  const modes = [];
+  f.engine.transfer = async (_download, info, _segment, _file, _headers, _signal, _url, allowUnrangedFallback) => {
+    modes.push({ ranges: info.ranges, allowUnrangedFallback: Boolean(allowUnrangedFallback) });
     throw new Error('stop after inspecting paired-track transfer mode');
   };
   await assert.rejects(
     f.engine.runPairedTracks(d, {}, new AbortController().signal),
     /stop after inspecting paired-track transfer mode/
   );
-  assert.deepEqual(rangedFlags, [false, false]);
+  assert.deepEqual(modes, [
+    { ranges: true, allowUnrangedFallback: false },
+    { ranges: true, allowUnrangedFallback: false }
+  ]);
 });
 
 test('fallback response is destroyed when resetting the parts directory fails', async t => {
@@ -843,7 +846,7 @@ test('restarting mid-fallback discards the partial body and resumes to exact byt
 const execFileAsync = promisify(execFile);
 // Tiny valid tracks generated with the bundled ffmpeg, so the paired-download
 // fixture muxes real media instead of empty or synthetic byte strings.
-test('paired tracks mux real media from a range-advertising server', async t => {
+test('paired tracks mux real media from a range-only server', async t => {
   const mediaDir = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-media-'));
   const videoPath = path.join(mediaDir, 'video.mp4'), audioPath = path.join(mediaDir, 'audio.m4a');
   await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=128x96:rate=5', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', videoPath]);
@@ -851,13 +854,18 @@ test('paired tracks mux real media from a range-advertising server', async t => 
   const video = await fs.readFile(videoPath), audio = await fs.readFile(audioPath);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-paired-test-'));
   const seen = { videoRanges: 0, audioRanges: 0 };
+  // Range-only tracks: a valid 206 for the requested range, HTTP 403 without one.
   const serve = (body, tag, counter) => (req, res) => {
     res.setHeader('etag', tag);
-    res.setHeader('accept-ranges', 'bytes');
-    if (req.headers.range) counter();
-    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
-    res.setHeader('content-length', body.length);
-    res.end(body);
+    res.setHeader('accept-ranges', 'bytes'); => (req, res) => {    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
+    const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
+    if (!match) { res.statusCode = 403; return res.end('Range header required'); }
+    const start = Number(match[1]), end = Number(match[2]);
+    counter();
+    res.statusCode = 206;
+    res.setHeader('content-range', `bytes ${start}-${end}/${body.length}`);
+    res.setHeader('content-length', end - start + 1);
+    res.end(body.subarray(start, end + 1)); => (req, res) => {
   };
   const videoServer = http.createServer(serve(video, '"pair-video-1"', () => seen.videoRanges++));
   const audioServer = http.createServer(serve(audio, '"pair-audio-1"', () => seen.audioRanges++));
@@ -873,9 +881,9 @@ test('paired tracks mux real media from a range-advertising server', async t => 
   const d = engine.downloads[0];
   await until(() => ['complete', 'error'].includes(d.status));
   assert.equal(d.status, 'complete', d.error);
-  // Paired tracks must not enter the ranged fallback path at all.
-  assert.equal(seen.videoRanges, 0);
-  assert.equal(seen.audioRanges, 0);
+  // Paired tracks must keep ranged transfers: this server rejects plain GETs.
+  assert.ok(seen.videoRanges > 0, 'video track must use a ranged request');
+  assert.ok(seen.audioRanges > 0, 'audio track must use a ranged request');
   // Both tracks must be fully consumed; a zero-byte part used to reach FFmpeg.
   assert.equal(d.segments[0].downloaded, video.length);
   assert.equal(d.segments[1].downloaded, audio.length);
