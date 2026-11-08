@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -170,6 +171,26 @@ test('paired tracks disable ranged transfer fallback before muxing', async t => 
     /stop after inspecting paired-track transfer mode/
   );
   assert.deepEqual(rangedFlags, [false, false]);
+});
+
+test('fallback response is destroyed when resetting the parts directory fails', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-cleanup-test-'));
+  const engine = new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads') });
+  const response = Readable.from([Buffer.from('payload')]);
+  response.statusCode = 200;
+  response.headers = { 'content-length': '7' };
+  const originalRm = fs.rm;
+  fs.rm = async () => { throw Object.assign(new Error('directory is locked'), { code: 'EPERM' }); };
+  try {
+    await assert.rejects(
+      engine.downloadUnranged({ segments: [] }, path.join(root, 'parts'), {}, new AbortController().signal, response, 'http://example.test/file'),
+      { code: 'EPERM' }
+    );
+    assert.equal(response.destroyed, true);
+  } finally {
+    fs.rm = originalRm;
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('parallel ranged transfers reconstruct exact bytes and preserve existing filenames', async t => {
