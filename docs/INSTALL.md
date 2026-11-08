@@ -3,9 +3,9 @@
 ## Download
 
 Windows 10/11, 64-bit Intel/AMD PCs are the intended target. Native ARM builds
-are not provided. This is preview software; YouTube speed and compatibility vary.
+are not provided. YouTube speed and compatibility vary.
 
-Open the project's [Windows preview release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/tag/v0.1.0-preview.5)
+Open the project's [latest release](https://github.com/Ahmadkhattak1/awesome-downloader/releases/latest)
 and download **Awesome-Downloader-Setup.exe** from Assets. You do not need a GitHub
 account, Git, Node.js, or a terminal to install the application. Do not download
 the automatically generated "Source code" archives to install it.
@@ -18,12 +18,46 @@ Run the installer and follow the wizard. Launch **Awesome Downloader** from the
 Start menu. Keep the app installed at its chosen location so browser integration
 can find it.
 
-## Enable video buttons (Chrome / Edge / Brave / Opera)
+## Install the published extension (Chrome / Edge / Brave)
+
+In the installer, leave **Set up Chrome and Edge download buttons** checked to
+request the published extension automatically. Approve Windows' administrator
+permission prompt for browser setup. Declining it still installs the app normally.
+Close and reopen your browser after installation, then accept its extension
+confirmation. The browser decides when to show that confirmation; managed-browser
+policies or an earlier removal of the extension may prevent automatic setup.
+Awesome Downloader never opens a store page automatically on startup.
+When you finish an installation with browser setup selected, the app opens its
+Browser integration window so you can see what still needs your approval.
+
+If a browser says **Enable extension**, it has downloaded the extension but needs
+your approval. Open that browser's **Action required** menu and enable **Awesome
+Downloader Integration**. If the prompt is missing, open its Extensions page and
+enable the extension there. A **Reinstall needed** status means the extension was
+previously removed in that browser profile: click **Reinstall extension** in the
+app, then **Add to Chrome** (or the equivalent button) in the store. Browser
+security prevents the installer from undoing a previous removal automatically.
+
+This requests installation through the browser's external-extension registration,
+not through a force-install policy. You can still disable or remove the extension.
+Chrome and Edge have documented support for this mechanism. Brave currently shares
+Chrome's registration mechanism, but its actual prompt must be verified separately.
+The final app uninstall removes registrations created by these installers once no
+other registered Awesome Downloader installation needs them; Windows requests
+administrator permission for that cleanup too.
+
+To install manually or retry setup, open **Browser integration**, choose
+your browser, and click **Install browser extension**. Confirm the installation
+in that browser. Keep Awesome Downloader running, click **Refresh** in browser
+integration, and refresh the video page. No Developer mode, folder picker, or
+extension ID is needed for this published extension.
+
+## Manual extension setup (Opera / development builds)
 
 The browser extension adds **Download this video** buttons to supported web
 videos. It is included with the installed application; you do not need to download
-a separate ZIP or visit GitHub again. Until our browser-store listing is published,
-add it once to each browser you use:
+a separate ZIP or visit GitHub again. This fallback is for Opera or development
+builds; Chrome, Edge and Brave users should use the published extension above:
 
 1. The app shows **Browser integration** on first launch. You can also open it
    from the toolbar later.

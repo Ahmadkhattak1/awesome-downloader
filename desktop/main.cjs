@@ -12,14 +12,20 @@ if (process.argv.includes('--native-host')) {
   require('node:fs').mkdirSync(sharedDataDirectory, {recursive:true});
   app.setPath('userData', sharedDataDirectory);
   const locked = app.requestSingleInstanceLock();
-  let window, integrationWindow, optionsWindow, addWindow, schedulerWindow, engine, bridge, tray, updateController, quitting = false, shutdownPromise;
+  let window, integrationWindow, optionsWindow, addWindow, schedulerWindow, engine, bridge, tray, updateController, openBrowserSetup, quitting = false, shutdownPromise;
+  let browserSetupRequested = process.argv.includes('--browser-setup');
   const progressWindows = new Map();
   const progressWindowSizes = new WeakMap();
   const progressClosing = new WeakSet();
   const progressClosePrompts = new WeakSet();
   if (!locked) app.quit();
   else {
-    app.on('second-instance', (_event, argv) => { if (!argv.includes('--browser-download') && !argv.includes('--background')) { window?.show(); window?.restore(); window?.focus(); } });
+    app.on('second-instance', (_event, argv) => {
+      if (argv.includes('--browser-setup')) {
+        browserSetupRequested = true;
+        openBrowserSetup?.().catch(error => dialog.showErrorBox('Browser setup unavailable', error.message));
+      } else if (!argv.includes('--browser-download') && !argv.includes('--background')) { window?.show(); window?.restore(); window?.focus(); }
+    });
     app.whenReady().then(async () => {
       const fs = require('node:fs/promises');
       const history = path.join(sharedDataDirectory, 'downloads.json');
@@ -82,7 +88,9 @@ if (process.argv.includes('--native-host')) {
       await require('node:fs/promises').writeFile(path.join(integrationRoot, 'integration', 'desktop-launch.json'), JSON.stringify({executable:app.getPath('exe'),args:app.isPackaged ? ['--browser-download'] : [root,'--browser-download']}));
       const connectBrowsers = async () => {
         try {
-          connectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot });
+          const inspectedBrowsers = await require('./browser-registration.cjs').connectInstalledBrowsers({ dataDirectory: app.getPath('userData'), integrationRoot }, { includeSetupState: true });
+          connectedBrowsers = inspectedBrowsers.filter(browser => browser.connected);
+          const setupStates = new Map(inspectedBrowsers.map(browser => [browser.browser, browser.setupState]));
           const connected = new Map(connectedBrowsers.map(item => [item.browser, item]));
           browsers = await Promise.all(Object.keys(browserSetup.DEFINITIONS).map(async name => {
             const executable = await browserSetup.findBrowserExecutable(name);
@@ -93,9 +101,11 @@ if (process.argv.includes('--native-host')) {
               name,
               installed: Boolean(executable),
               connected: Boolean(connection),
+              setupState: connection ? 'connected' : setupStates.get(name) || 'missing',
               profiles: connection?.profiles || 0,
               icon,
               extensionPage: browserSetup.definitionFor(name).url,
+              storeUrl: require('./extension-store.cjs').storeBrowser(name) ? require('./extension-store.cjs').STORE_URL : null,
               extensionPath: name === 'Firefox' ? path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension') : path.join(integrationRoot, 'extension'),
               support: 'supported'
             };
@@ -232,6 +242,12 @@ if (process.argv.includes('--native-host')) {
       };
       handlers.registerBrowser = data => require('./browser-registration.cjs').registerBrowser(data, { dataDirectory: app.getPath('userData'), integrationRoot });
       handlers.browserSetup = async ({ action, browser } = {}) => {
+        if (action === 'store') {
+          const { EXTENSION_ID, storeBrowser } = require('./extension-store.cjs');
+          if (!storeBrowser(browser)) throw new Error('Store setup is unavailable for this browser.');
+          await require('./browser-registration.cjs').registerBrowser({browser, extensionId:EXTENSION_ID}, {dataDirectory:app.getPath('userData'),integrationRoot});
+          return browserSetup.openExtensionStore(browser);
+        }
         const firefoxPath = path.join(app.getPath('userData'), 'NativeMessaging', 'firefox-extension');
         const extensionPath = browser === 'Firefox' ? firefoxPath : path.join(integrationRoot, 'extension');
         if (action === 'open') return browserSetup.openBrowser(browser);
@@ -258,7 +274,7 @@ if (process.argv.includes('--native-host')) {
       });
       ipcMain.handle('downloader:closeProgress',event=>{if(integrationWindow&&!integrationWindow.isDestroyed()&&event.senderFrame===integrationWindow.webContents.mainFrame){integrationWindow.close();return;}if(optionsWindow&&!optionsWindow.isDestroyed()&&event.senderFrame===optionsWindow.webContents.mainFrame){optionsWindow.close();return;}if(addWindow&&!addWindow.isDestroyed()&&event.senderFrame===addWindow.webContents.mainFrame){addWindow.close();return;}if(schedulerWindow&&!schedulerWindow.isDestroyed()&&event.senderFrame===schedulerWindow.webContents.mainFrame){schedulerWindow.close();return;}for(const progress of progressWindows.values())if(event.senderFrame===progress.webContents.mainFrame){progress.close();break;}});
       ipcMain.handle('downloader:resizeProgress',(event,{expanded}={})=>{for(const progress of progressWindows.values())if(event.senderFrame===progress.webContents.mainFrame){const remembered=progressWindowSizes.get(progress)||{expanded:{width:565,height:485}},[width,height]=progress.getSize();if(expanded){progress.setMinimumSize(540,440);progress.setSize(Math.max(540,remembered.expanded.width),Math.max(440,remembered.expanded.height),true);}else{if(height>360)remembered.expanded={width,height};progressWindowSizes.set(progress,remembered);progress.setMinimumSize(540,325);progress.setSize(Math.max(540,width),340,true);}return;}});
-      window = new BrowserWindow({ show: !process.argv.includes('--browser-download') && !process.argv.includes('--background'), width: 805, height: 465, minWidth: 760, minHeight: 450,
+      window = new BrowserWindow({ show: !browserSetupRequested && !process.argv.includes('--browser-download') && !process.argv.includes('--background'), width: 805, height: 465, minWidth: 760, minHeight: 450,
         title: 'Awesome Downloader', icon: appIconPath, backgroundColor: '#f0f0f0', autoHideMenuBar: false,
         webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -341,6 +357,8 @@ if (process.argv.includes('--native-host')) {
         }
       });
       updateController.start();
+      openBrowserSetup = openIntegrationWindow;
+      if (browserSetupRequested) await openBrowserSetup();
     }).catch(error => { dialog.showErrorBox('Awesome Downloader could not start', error.stack || error.message); quitting = true; app.quit(); });
     app.on('before-quit', event => {
       if (quitting) return;
