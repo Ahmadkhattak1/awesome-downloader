@@ -15,7 +15,7 @@ function harness({initialData={},webRequest={}}={}) {
     async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);}
   });
   browser.tabs.sendMessage=async(tabId,message)=>{tabMessages.push([tabId,message.action]);return {ok:true};};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),atob:value=>Buffer.from(value,'base64').toString('binary'),youtubeMedia:require('./youtube-media.js')});
   return {events,specs,data,nativeRequests,downloadCalls,tabMessages,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
@@ -66,7 +66,7 @@ test('large YouTube format catalogs stay below the native messaging limit',async
  const formats=Array.from({length:148},(_,index)=>({itag:2000+index,mimeType:'video/mp4; codecs="avc1"',height:144,qualityLabel:'144p',bitrate:100000,lastModified:'1',approxDurationMs:'10000',sourceUrl:'https://example.com/'+('x'.repeat(12000))+index}));
  formats.push({itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'});
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats}},sender);
- h.events.beforeRequest({requestId:'large',tabId:18,url:stream,requestBody:{raw:[{bytes:new Uint8Array(200000).buffer}]}});
+ h.events.beforeRequest({requestId:'large',tabId:18,url:stream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer},{bytes:new Uint8Array(200000).buffer}]}});
  h.events.response({requestId:'large',tabId:18,url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
  const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
  await h.request({action:'download',item:{...item,startNow:true}},sender);
@@ -123,10 +123,46 @@ test('an in-page switch to another video keeps the session it streams before its
  assert.equal(await hasSession(h,sender),false);
  h.events.beforeRequest({requestId:'next',tabId:36,url:sabrStream+'&rn=2',requestBody:{raw:[{bytes:Uint8Array.from([4,5,6]).buffer}]}});
  sabrResponse(h,{requestId:'next',tabId:36,url:sabrStream+'&rn=2'});
- await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk'}},moved);
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',ustreamerConfig:'BAUG'}},moved);
  const item=(await h.request({action:'listForFrame'},moved)).items.find(value=>value.quality==='1080p');assert.ok(item);
  await h.request({action:'download',item:{...item,startNow:true}},moved);
  assert.equal(h.nativeRequests[0].sabr.videoId,'abcdefghijk');assert.equal(h.nativeRequests[0].sabr.requestBody,'BAUG');
+});
+const capturedBody=(h,{requestId,tabId,bytes})=>{h.events.beforeRequest({requestId,tabId,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from(bytes).buffer}]}});sabrResponse(h,{requestId,tabId});};
+test('a session is offered and sent only with the player whose streaming config its request carries',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:37,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ // Another player on the page streamed under its own config (7,7,7); nothing usable yet.
+ capturedBody(h,{requestId:'stray',tabId:37,bytes:[7,7,7]});
+ assert.equal(await hasSession(h,sender),false);
+ capturedBody(h,{requestId:'own',tabId:37,bytes:[1,2,3]});
+ capturedBody(h,{requestId:'stray-later',tabId:37,bytes:[8,8,8]});
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');assert.equal(h.nativeRequests[0].sabr.videoPlaybackUstreamerConfig,'AQID');
+ assert.equal(h.tabMessages.filter(([,action])=>action==='sabrCaptured').length,2);
+});
+test('a refreshed player config for the same video keeps the session made under the earlier one',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:38,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ capturedBody(h,{requestId:'own',tabId:38,bytes:[1,2,3]});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,ustreamerConfig:'BAUG'}},sender);
+ let item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');assert.equal(h.nativeRequests[0].sabr.videoPlaybackUstreamerConfig,'AQID');
+ capturedBody(h,{requestId:'refreshed',tabId:38,bytes:[4,5,6]});
+ item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[1].sabr.requestBody,'BAUG');assert.equal(h.nativeRequests[1].sabr.videoPlaybackUstreamerConfig,'BAUG');
+});
+test('only the three newest captures are kept for a tab',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:39,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ capturedBody(h,{requestId:'own',tabId:39,bytes:[1,2,3]});
+ for(const [index,byte] of [7,8].entries())capturedBody(h,{requestId:'stray'+index,tabId:39,bytes:[byte,byte,byte]});
+ assert.equal(await hasSession(h,sender),true);
+ capturedBody(h,{requestId:'stray2',tabId:39,bytes:[9,9,9]});
+ assert.equal(await hasSession(h,sender),false);
 });
 const hiddenSabr=(h,{requestId,tabId,frameId=0,url=sabrStream})=>h.events.beforeRequest({requestId,tabId,frameId,url,requestBody:{error:'Unknown error.'}});
 const relay=(h,sender,{url=sabrStream,requestBody='AQID'}={})=>h.request({action:'sabrRequest',url,requestBody},sender);
