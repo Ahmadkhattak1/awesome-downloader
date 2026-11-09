@@ -333,6 +333,19 @@ test('a zero-length HEAD confirmed by a 416 range response remains a valid empty
   assert.equal((await fs.stat(d.path)).size, 0);
   assert.deepEqual(requests, [['HEAD', null], ['GET', 'bytes=0-0']]);
 });
+test('a failed zero-length HEAD is not converted to an empty-file success', async t => {
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') res.writeHead(403, { 'content-length': '0' });
+    else res.writeHead(416, { 'content-range': 'bytes */0' });
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  await assert.rejects(
+    probe(`http://127.0.0.1:${server.address().port}/forbidden`, {}, new AbortController().signal),
+    /Server returned HTTP 403\./
+  );
+});
 test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
   const server = http.createServer((req, res) => {
     if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }

@@ -61,7 +61,7 @@ export async function probe(url, headers, signal) {
     response.resume();
     response = await requestWithRetry(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      const confirmedEmpty = headReportsEmpty && response.statusCode === 416 &&
+      const confirmedEmpty = [200, 206].includes(headStatus) && headReportsEmpty && response.statusCode === 416 &&
         /^bytes \*\/0$/.test(response.headers['content-range'] || '');
       response.destroy();
       if (confirmedEmpty) return probeInfo(headInfo, false);
