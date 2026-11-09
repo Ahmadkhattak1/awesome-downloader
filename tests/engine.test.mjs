@@ -308,6 +308,31 @@ test('misleading zero-length HEAD metadata falls back to GET and downloads the r
   assert.ok(f.ranges.some(([start, end]) => start === 0 && end === 0));
   assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
+test('a zero-length HEAD confirmed by a 416 range response remains a valid empty file', async t => {
+  const requests = [];
+  const f = await fixture(t, { intercept(req, res) {
+    if (req.url !== '/empty') return false;
+    requests.push([req.method, req.headers.range || null]);
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { 'content-length': '0', etag: '"empty-1"' });
+      res.end();
+    } else if (req.headers.range === 'bytes=0-0') {
+      res.writeHead(416, { 'content-range': 'bytes */0' });
+      res.end();
+    } else {
+      res.writeHead(500);
+      res.end();
+    }
+    return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/empty` });
+  const d = f.engine.downloads.find(item => item.id === id);
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.total, 0);
+  assert.equal((await fs.stat(d.path)).size, 0);
+  assert.deepEqual(requests, [['HEAD', null], ['GET', 'bytes=0-0']]);
+});
 test('probe fallback to ranged GET reports actual failure status when HEAD returned 200 without metadata', async t => {
   const server = http.createServer((req, res) => {
     if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }

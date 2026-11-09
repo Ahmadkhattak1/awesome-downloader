@@ -49,6 +49,7 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
 export async function probe(url, headers, signal) {
   let response = await requestWithRetry(url, { method: 'HEAD', headers, signal });
   const headStatus = response.statusCode;
+  const headInfo = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   // Some download endpoints (including Google Drive) report a misleading
   // zero length for HEAD while returning the real file to GET. Probe those
   // endpoints with a bounded range request before treating the file as empty.
@@ -60,7 +61,10 @@ export async function probe(url, headers, signal) {
     response.resume();
     response = await requestWithRetry(url, { headers: { ...headers, Range: 'bytes=0-0' }, signal });
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      const confirmedEmpty = headReportsEmpty && response.statusCode === 416 &&
+        /^bytes \*\/0$/.test(response.headers['content-range'] || '');
       response.destroy();
+      if (confirmedEmpty) return probeInfo(headInfo, false);
       const status = headStatus >= 400 ? headStatus : response.statusCode;
       throw new Error(`Server returned HTTP ${status}.`);
     }
@@ -68,10 +72,14 @@ export async function probe(url, headers, signal) {
   const info = { status: response.statusCode, headers: response.headers, url: response.finalUrl };
   response.destroy();
   if (info.status < 200 || info.status >= 300) throw new Error(`Server returned HTTP ${info.status}.`);
+  return probeInfo(info);
+}
+
+function probeInfo(info, ranges = info.headers['accept-ranges'] === 'bytes' || info.status === 206) {
   const range = /^bytes \d+-\d+\/(\d+)$/.exec(info.headers['content-range'] || '');
   const total = range ? Number(range[1]) : Number(info.headers['content-length']);
   return { ...info, total: Number.isSafeInteger(total) && total >= 0 ? total : null,
-    ranges: info.headers['accept-ranges'] === 'bytes' || info.status === 206,
+    ranges,
     validator: info.headers.etag && !info.headers.etag.startsWith('W/') ? info.headers.etag : info.headers['last-modified'] || null };
 }
 
