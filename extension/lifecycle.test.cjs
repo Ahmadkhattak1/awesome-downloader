@@ -99,6 +99,18 @@ test('a menu closed before its listing returns is neither filled nor refilled',a
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(listings(h),1);assert.equal(closed.children[0].textContent,'Checking available video formats…');
 });
+test('a waiting menu closed by scrolling or by its button is not refilled when the session arrives',async()=>{
+  for(const close of [h=>h.events.get('scroll')({composedPath:()=>[]}),h=>h.hosts[0].shadow.download.trigger('click')]){
+    const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0];
+    const opened=host.shadow.download.trigger('click'),waiting=host.shadow.chooser;
+    list.answer([],'Play this video for a few seconds');await opened;
+    await close(h);
+    assert.equal(host.shadow.chooser,undefined);
+    capture(h);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(listings(h),1);assert.equal(waiting.children[0].textContent,'Play this video for a few seconds');
+  }
+});
 test('a late listing for a replaced menu never fills the menu that replaced it',async()=>{
   const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0],button=host.shadow.download;
   const first=button.trigger('click'),replaced=host.shadow.chooser;
