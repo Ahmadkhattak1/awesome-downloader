@@ -128,25 +128,64 @@ test('an in-page switch to another video keeps the session it streams before its
  await h.request({action:'download',item:{...item,startNow:true}},moved);
  assert.equal(h.nativeRequests[0].sabr.videoId,'abcdefghijk');assert.equal(h.nativeRequests[0].sabr.requestBody,'BAUG');
 });
-test('a SABR body the browser hides is relayed by the page, accepted only from a tab asked for it',async()=>{
- const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:32,url:page}};
+const hiddenSabr=(h,{requestId,tabId,frameId=0,url=sabrStream})=>h.events.beforeRequest({requestId,tabId,frameId,url,requestBody:{error:'Unknown error.'}});
+const relay=(h,sender,{url=sabrStream,requestBody='AQID'}={})=>h.request({action:'sabrRequest',url,requestBody},sender);
+test('a relayed SABR body is accepted only for a request this tab and frame sent, once the server accepted it',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:32,url:watchPage}},first=sabrStream+'&rn=1';
  await h.request({action:'playerResponse',data:sabrPlayer},sender);
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,false);
- for(const requestId of ['hidden','again'])h.events.beforeRequest({requestId,tabId:32,url:sabrStream,requestBody:{error:'Unknown error.'}});
+ assert.equal((await relay(h,sender,{url:first})).ok,false);
+ hiddenSabr(h,{requestId:'one',tabId:32,url:first});hiddenSabr(h,{requestId:'two',tabId:32,url:sabrStream+'&rn=2'});
  assert.deepEqual(h.tabMessages.filter(([,action])=>action==='relaySabr'),[[32,'relaySabr']]);
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQI'},sender)).ok,false);
- assert.equal((await h.request({action:'sabrRequest',url:'https://example.com/videoplayback?sabr=1',requestBody:'AQID'},sender)).ok,false);
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},{...sender,url:'https://example.com/'})).ok,false);
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:'AQID'},sender)).ok,true);
- const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=9'})).ok,false);
+ assert.equal((await relay(h,{...sender,tab:{...sender.tab,id:33}},{url:first})).ok,false);
+ assert.equal((await relay(h,{...sender,frameId:4},{url:first})).ok,false);
+ assert.equal((await relay(h,{...sender,url:'https://example.com/'},{url:first})).ok,false);
+ assert.equal((await relay(h,sender,{url:first,requestBody:'AQI'})).ok,false);
+ assert.equal((await relay(h,sender,{url:first})).ok,true);
+ // Not yet a session: only webRequest's own view of the response says the server accepted the request.
+ assert.equal(await hasSession(h,sender),false);
+ sabrResponse(h,{requestId:'one',tabId:32,url:first});
+ assert.equal(await hasSession(h,sender),true);
+ assert.equal((await relay(h,sender,{url:first,requestBody:'BAUG'})).ok,false);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
  await h.request({action:'download',item:{...item,startNow:true}},sender);
  assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
 });
+test('a relayed SABR body for a request the server rejected never becomes the session',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:35,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ hiddenSabr(h,{requestId:'early',tabId:35});
+ assert.equal((await relay(h,sender)).ok,true);
+ sabrResponse(h,{requestId:'early',tabId:35,statusCode:403});
+ hiddenSabr(h,{requestId:'late',tabId:35,url:sabrStream+'&rn=2'});
+ sabrResponse(h,{requestId:'late',tabId:35,url:sabrStream+'&rn=2',statusCode:403});
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=2'})).ok,false);
+ assert.equal(await hasSession(h,sender),false);
+ assert.equal(h.tabMessages.some(([,action])=>action==='sabrCaptured'),false);
+});
+test('navigating the tab while a relayed capture is pending voids it',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:34,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ // Reloaded before the page relayed the body.
+ hiddenSabr(h,{requestId:'reloaded',tabId:34});
+ h.events.updated(34,{status:'loading'});
+ assert.equal((await relay(h,sender)).ok,false);
+ // Switched to another video in the page after the body was relayed but before the response arrived.
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ hiddenSabr(h,{requestId:'switched',tabId:34,url:sabrStream+'&rn=2'});
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=2'})).ok,true);
+ const other='https://www.youtube.com/watch?v=abcdefghijk',moved={...sender,url:other,tab:{...sender.tab,url:other}};
+ h.events.updated(34,{url:other});
+ sabrResponse(h,{requestId:'switched',tabId:34,url:sabrStream+'&rn=2'});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk'}},moved);
+ assert.equal(await hasSession(h,moved),false);
+ assert.equal(h.tabMessages.some(([,action])=>action==='sabrCaptured'),false);
+});
 test('a relayed SABR body is held to the same 256 KiB limit as a webRequest capture',async()=>{
- const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:33,url:page}};
- h.events.beforeRequest({requestId:'hidden',tabId:33,url:sabrStream,requestBody:{error:'Unknown error.'}});
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262145).toString('base64')},sender)).ok,false);
- assert.equal((await h.request({action:'sabrRequest',url:sabrStream,requestBody:Buffer.alloc(262144).toString('base64')},sender)).ok,true);
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:33,url:watchPage}};
+ hiddenSabr(h,{requestId:'hidden',tabId:33});
+ assert.equal((await relay(h,sender,{requestBody:Buffer.alloc(262145).toString('base64')})).ok,false);
+ assert.equal((await relay(h,sender,{requestBody:Buffer.alloc(262144).toString('base64')})).ok,true);
 });
 test('duplicate browser downloads share one native handoff',async()=>{
  const h=harness();

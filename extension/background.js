@@ -7,7 +7,7 @@ const SABR_KEY = 'sabrByTab';
 let serial = Promise.resolve();
 // Credentials stay in worker memory and are used only for the selected observed URL.
 const requestContext = new Map();
-const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map(), sabrRelayTabs=new Set();
+const youtubePlayers=new Map(), youtubeObserved=new Map(), youtubeSabrObserved=new Map(), youtubeSabrSeed=new Map(), sabrRelayTabs=new Set(), sabrRelayPending=new Map(), sabrGenerations=new Map();
 function tabVideoId(value){
   try{
     const page=new URL(value);if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))return null;
@@ -29,6 +29,16 @@ function requestSabrRelay(tabId){
   sabrRelayTabs.add(tabId);
   api.tabs.sendMessage(tabId,{action:'relaySabr'}).catch(()=>sabrRelayTabs.delete(tabId));
 }
+// Each navigation or video change starts a new generation; a relay from an earlier one is void.
+const sabrGeneration=tabId=>sabrGenerations.get(tabId)||0;
+// The page is untrusted, so its body becomes the session only for a request webRequest saw this tab send in its
+// current generation, and only once webRequest saw the server accept that request.
+function promoteRelayedSabr(requestId){
+  const entry=sabrRelayPending.get(requestId);
+  if(!entry?.accepted||!entry.requestBody)return;
+  sabrRelayPending.delete(requestId);
+  if(entry.generation===sabrGeneration(entry.tabId))rememberSabrCapture(entry.tabId,{tabId:entry.tabId,url:entry.url,requestBody:entry.requestBody});
+}
 async function sabrCapture(tabId){
   const live=youtubeSabrObserved.get(tabId);
   if(live)return live;
@@ -44,12 +54,17 @@ function clearSabrCapture(tabId){
   youtubeSabrObserved.delete(tabId);
   for(const [id,seed] of youtubeSabrSeed)if(seed.tabId===tabId)youtubeSabrSeed.delete(id);
   updateSession(SABR_KEY,map=>{delete map[tabId];}).catch(()=>{});
+  sabrGenerations.set(tabId,sabrGeneration(tabId)+1);
 }
 function bytesBase64(bytes){let binary='';const view=new Uint8Array(bytes);for(let i=0;i<view.length;i+=8192)binary+=String.fromCharCode(...view.subarray(i,i+8192));return btoa(binary);}
 api.webRequest.onBeforeRequest?.addListener(details=>{
   const url=globalThis.youtubeMedia?.sabrUrl(details.url), body=details.requestBody, raw=body?.raw;
   if(!url||details.tabId<0||!body)return;
-  if(body.error||!Array.isArray(raw)||!raw.length||raw.some(part=>!part.bytes)){requestSabrRelay(details.tabId);return;}
+  if(body.error||!Array.isArray(raw)||!raw.length||raw.some(part=>!part.bytes)){
+    sabrRelayPending.set(details.requestId,{tabId:details.tabId,frameId:details.frameId,url,generation:sabrGeneration(details.tabId)});
+    if(sabrRelayPending.size>100)sabrRelayPending.delete(sabrRelayPending.keys().next().value);
+    requestSabrRelay(details.tabId);return;
+  }
   let size=0;for(const part of raw)size+=part.bytes.byteLength;if(!size||size>262144)return;
   const bytes=new Uint8Array(size);let offset=0;for(const part of raw){bytes.set(new Uint8Array(part.bytes),offset);offset+=part.bytes.byteLength;}
   youtubeSabrSeed.set(details.requestId,{tabId:details.tabId,url,requestBody:bytesBase64(bytes)});
@@ -159,6 +174,11 @@ api.webRequest.onHeadersReceived.addListener(details => {
   const mime = details.responseHeaders?.find(h => h.name.toLowerCase() === 'content-type')?.value || '';
   const captured=globalThis.youtubeMedia?.mediaUrl(details.url);
   const capturedSabr=globalThis.youtubeMedia?.sabrUrl(details.url);
+  const relayed=capturedSabr&&sabrRelayPending.get(details.requestId);
+  if(relayed){
+    if(relayed.tabId===details.tabId&&relayed.url===capturedSabr&&[200,206].includes(details.statusCode)){relayed.accepted=true;promoteRelayedSabr(details.requestId);}
+    else sabrRelayPending.delete(details.requestId);
+  }
   if(capturedSabr && details.tabId>=0 && [200,206].includes(details.statusCode)){
     const seed=youtubeSabrSeed.get(details.requestId);
     if(seed?.tabId===details.tabId&&seed.url===capturedSabr)rememberSabrCapture(details.tabId,seed);
@@ -175,7 +195,7 @@ api.webRequest.onHeadersReceived.addListener(details => {
   }
   if(/\.m3u8(?:[?#]|$)/i.test(details.url)||/mpegurl/i.test(mime))discoverHls(details.tabId,details.url);
 }, {urls: ['http://*/*', 'https://*/*']}, ['responseHeaders']);
-api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
+api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);sabrGenerations.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
 api.tabs.onUpdated.addListener((tabId, change) => {
   if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});return;}
   // An in-page switch to another video changes the URL without a reload, and can stream before its player arrives.
@@ -218,12 +238,15 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
     }
     if(message.action==='sabrRequest' && sender.tab) {
       const page=new URL(sender.url || sender.tab.url || 'https://invalid.local');
-      if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname)||!sabrRelayTabs.has(sender.tab.id))throw new Error('Invalid SABR source.');
+      if(!['www.youtube.com','youtube.com','m.youtube.com'].includes(page.hostname))throw new Error('Invalid SABR source.');
       const url=globalThis.youtubeMedia.sabrUrl(message.url),requestBody=message.requestBody;
       // Decoded size, so the limit matches the 256 KiB webRequest captures are held to.
       const size=typeof requestBody==='string'&&requestBody.length%4===0&&/^[A-Za-z0-9+/]+={0,2}$/.test(requestBody)?requestBody.length/4*3-/=*$/.exec(requestBody)[0].length:0;
       if(!url||!size||size>262144)throw new Error('Invalid SABR request.');
-      rememberSabrCapture(sender.tab.id,{tabId:sender.tab.id,url,requestBody});
+      const generation=sabrGeneration(sender.tab.id);
+      const match=[...sabrRelayPending].find(([,entry])=>entry.tabId===sender.tab.id&&entry.frameId===sender.frameId&&entry.url===url&&entry.generation===generation&&!entry.requestBody);
+      if(!match)throw new Error('Unobserved SABR request.');
+      match[1].requestBody=requestBody;promoteRelayedSabr(match[0]);
       return {ok:true};
     }
     if (message.action === 'remember' && sender.tab) { await remember(sender.tab.id, message.items || []); return {ok: true}; }
