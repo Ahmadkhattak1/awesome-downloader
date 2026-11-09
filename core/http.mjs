@@ -2,6 +2,12 @@ import http from 'node:http';
 import https from 'node:https';
 import { setTimeout as delay } from 'node:timers/promises';
 
+// Reuse TCP/TLS connections between chunks. Opening a fresh TLS handshake for
+// every range request is a major cause of slow starts and uneven throughput.
+const agentOptions = { keepAlive: true, keepAliveMsecs: 15000, maxSockets: 64, maxFreeSockets: 32 };
+const httpAgent = new http.Agent(agentOptions);
+const httpsAgent = new https.Agent(agentOptions);
+
 export function validUrl(value) {
   if (typeof value !== 'string' || value.length > 16384) throw new Error('Invalid download URL.');
   const url = new URL(value);
@@ -23,7 +29,7 @@ export async function request(url, { method = 'GET', headers = {}, signal, redir
   url = validUrl(url);
   if (redirects > 10) throw new Error('Too many redirects.');
   const response = await new Promise((resolve, reject) => {
-    const req = (url.startsWith('https:') ? https : http).request(url, { method, headers, signal }, resolve);
+    const req = (url.startsWith('https:') ? https : http).request(url, { method, headers, signal, agent: url.startsWith('https:') ? httpsAgent : httpAgent }, resolve);
     req.on('error', reject);
     req.setTimeout(30000, () => req.destroy(new Error('Connection timed out.')));
     req.end();

@@ -9,6 +9,7 @@ import { youtubeUrl, downloadYoutube } from './youtube.mjs';
 import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 
+const CHUNK_BYTES = 30 * 1024 * 1024;
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
 const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
 export function safeFilename(value) {
@@ -38,6 +39,8 @@ function suggestedName(url, disposition) {
   }
   return 'download';
 }
+// Exponential moving average so the displayed speed does not jump with every tick.
+export const smoothSpeed = (previous, instant) => !(previous > 0) ? Math.max(0, instant) : Math.max(0, previous * 0.7 + instant * 0.3);
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 // Marks a transfer failure that another attempt cannot fix, or the wait the server asked for.
 const failure = (message, retryable = false, retryDelay = null) => Object.assign(new Error(message), { retryable, retryDelay });
@@ -56,6 +59,7 @@ export class DownloadEngine extends EventEmitter {
     this.closing = false;
     this.rateTail = Promise.resolve();
     this.rateNext = 0;
+    this.activeSegments = new WeakSet();
   }
   async init() {
     await fs.mkdir(this.partsDirectory, { recursive: true });
@@ -72,7 +76,7 @@ export class DownloadEngine extends EventEmitter {
   snapshot() {
     return { downloads: this.downloads.map(({ segments, headers, validator, sabr, ...d }) => ({ ...d,
       streamProgress: d.kind==='hls'?streamProgress(segments||[]):undefined,
-      connectionsProgress: (segments || []).map(s => ({ start: s.start, end: s.end, downloaded: s.downloaded,
+      connectionsProgress: (segments || []).filter(s => !(segments.length > this.settings.connections && d.kind === undefined) || this.activeSegments.has(s)).map(s => ({ start: s.start, end: s.end, downloaded: s.downloaded,
         total: s.end === null ? null : s.end - s.start + 1,
         status: s.done || (s.end !== null && s.downloaded === s.end - s.start + 1) ? 'complete' : d.status })) })), settings: { ...this.settings } };
   }
@@ -242,7 +246,11 @@ export class DownloadEngine extends EventEmitter {
     }
     d.total = info.total; d.validator = info.validator;
     d.resumable = Boolean(info.ranges && info.validator);
-    const count = info.ranges && info.total > 1024 * 1024 ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024))) : 1;
+    // Download in chunks of at most 30 MB; a worker pool pulls the next chunk as soon as
+    // one finishes, so no connection sits idle (steady speed). Small files are still split
+    // across the available connections so they download in parallel.
+    const count = info.ranges && info.total > 1024 * 1024
+      ? Math.max(Math.ceil(info.total / CHUNK_BYTES), Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024)))) : 1;
     if (!d.segments.length) {
       d.segments = Array.from({ length: count }, (_, i) => ({ start: info.total === null ? 0 : Math.floor(info.total * i / count),
         end: info.total === null ? null : Math.floor(info.total * (i + 1) / count) - 1, downloaded: 0 }));
@@ -255,16 +263,26 @@ export class DownloadEngine extends EventEmitter {
       s.downloaded = size;
     }
     d.downloaded = d.segments.reduce((n, s) => n + s.downloaded, 0);
-    d.connections = d.segments.length; d.status = 'downloading'; await this.persist(); this.changed();
+    d.connections = Math.min(this.settings.connections, d.segments.length); d.status = 'downloading'; await this.persist(); this.changed();
     let lastBytes = d.downloaded, lastAt = Date.now();
     const progress = setInterval(() => {
-      const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / (now - lastAt);
+      const now = Date.now(); d.speed = smoothSpeed(d.speed, (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastAt));
       lastBytes = d.downloaded; lastAt = now; this.changed();
     }, this.tickMs);
     const siblings = new AbortController();
     const transferSignal = AbortSignal.any([signal, siblings.signal]);
     try {
-      const outcomes = await Promise.allSettled(d.segments.map((segment, i) => this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers, transferSignal).catch(error => { siblings.abort(); throw error; })));
+      const pending = d.segments.map((_, i) => i).filter(i => { const s = d.segments[i]; return s.end === null || s.downloaded < s.end - s.start + 1; });
+      const worker = async () => {
+        while (pending.length) {
+          transferSignal.throwIfAborted();
+          const i = pending.shift(), segment = d.segments[i];
+          this.activeSegments.add(segment);
+          try { await this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers, transferSignal); }
+          finally { this.activeSegments.delete(segment); }
+        }
+      };
+      const outcomes = await Promise.allSettled(Array.from({ length: Math.min(d.connections, Math.max(1, pending.length)) }, () => worker().catch(error => { siblings.abort(); throw error; })));
       const failure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
       if (failure) throw failure.reason;
     } finally { clearInterval(progress); }
@@ -329,7 +347,7 @@ export class DownloadEngine extends EventEmitter {
     d.connections = Math.min(this.settings.connections, d.segments.length);
     d.status = 'downloading'; await this.persist(); this.changed();
     let index = 0, lastBytes = d.downloaded, lastTime = Date.now();
-    const progress = setInterval(() => { const now = Date.now(); d.speed = (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastTime); lastBytes = d.downloaded; lastTime = now; this.changed(); }, this.tickMs);
+    const progress = setInterval(() => { const now = Date.now(); d.speed = smoothSpeed(d.speed, (d.downloaded - lastBytes) * 1000 / Math.max(1, now - lastTime)); lastBytes = d.downloaded; lastTime = now; this.changed(); }, this.tickMs);
     const siblings = new AbortController(), groupSignal = AbortSignal.any([signal, siblings.signal]);
     const worker = async () => {
       while (index < d.segments.length) {
@@ -380,7 +398,7 @@ export class DownloadEngine extends EventEmitter {
     d.kind='paired';d.resumable=false;d.downloaded=0;d.total=infos.every(i=>i.total!==null)?infos.reduce((n,i)=>n+i.total,0):null;
     d.segments=infos.map(i=>({start:0,end:i.total===null?null:i.total-1,downloaded:0}));
     d.status='downloading';d.connections=2;this.changed();
-    let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(d.downloaded-last)*1000/Math.max(1,now-at);last=d.downloaded;at=now;this.changed();},this.tickMs);
+    let last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=smoothSpeed(d.speed,(d.downloaded-last)*1000/Math.max(1,now-at));last=d.downloaded;at=now;this.changed();},this.tickMs);
     const siblings=new AbortController(),group=AbortSignal.any([signal,siblings.signal]);
     try {
       const outcomes=await Promise.allSettled(urls.map(async(url,i)=>{try{const file=path.join(dir,i+'.part');await fs.writeFile(file,Buffer.alloc(0));await this.transfer(d,infos[i],d.segments[i],file,trackHeaders[i],group,url);}catch(error){siblings.abort();throw error;}}));
@@ -400,7 +418,7 @@ export class DownloadEngine extends EventEmitter {
     d.total=picked.every(f=>Number(f.contentLength)>0)?picked.reduce((sum,f)=>sum+Number(f.contentLength),0):null;
     d.segments=picked.map(f=>({start:0,end:Number(f.contentLength)>0?Number(f.contentLength)-1:null,downloaded:0}));
     d.connections=picked.length;d.status='downloading';await this.persist();this.changed();
-    let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(networkDownloaded-last)*1000/Math.max(1,now-at);last=networkDownloaded;at=now;this.changed();},this.tickMs);
+    let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=smoothSpeed(d.speed,(networkDownloaded-last)*1000/Math.max(1,now-at));last=networkDownloaded;at=now;this.changed();},this.tickMs);
     let result;
     try{
       result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,onProgress:progress=>{
@@ -419,10 +437,23 @@ export class DownloadEngine extends EventEmitter {
   async transfer(d, info, segment, file, headers, signal, url=d.url) {
     const expected = segment.end === null ? null : segment.end - segment.start + 1;
     if (expected !== null && segment.downloaded === expected) { await fs.appendFile(file, Buffer.alloc(0)); return; }
-    for (let attempt = 0; attempt < 4; attempt++) {
+    // Flaky connections get many more tries, but only consecutive failures that
+    // made no progress count against the budget.
+    let attempt = 0;
+    const ranged = info.ranges && info.total !== null;
+    // A non-resumable stream restarts from byte 0 on every try, so it keeps the short budget.
+    const maxAttempts = ranged ? 8 : 4;
+    for (;;) {
       signal.throwIfAborted();
+      const before = segment.downloaded;
       try {
-        const ranged = info.ranges && info.total !== null;
+        if (ranged) {
+          // Resync with what is really on disk (a write may have been cut short).
+          let onDisk = 0;
+          try { onDisk = (await fs.stat(file)).size; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+          if (onDisk !== segment.downloaded && (expected === null || onDisk <= expected)) { d.downloaded += onDisk - segment.downloaded; segment.downloaded = onDisk; }
+          if (expected !== null && segment.downloaded === expected) return;
+        }
         if (!ranged && segment.downloaded) { d.downloaded -= segment.downloaded; segment.downloaded = 0; await fs.writeFile(file, Buffer.alloc(0)); }
         const start = segment.start + segment.downloaded;
         const h = { ...headers };
@@ -447,15 +478,17 @@ export class DownloadEngine extends EventEmitter {
             await out.writeFile(chunk); segment.downloaded += chunk.length; d.downloaded += chunk.length;
           }
           await out.sync();
-        } finally { await out.close(); response.destroy(); }
+        } finally { await out.close(); if (!response.complete) response.destroy(); }
         if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
         return;
       } catch (error) {
-        if (signal.aborted || attempt === 3 || error.retryable === false) throw error;
+        if (ranged && segment.downloaded > before) attempt = 0;
+        if (signal.aborted || attempt >= maxAttempts - 1 || error.retryable === false) throw error;
         // Never shorten the server's requested cooldown. Long waits release
         // the active job instead of consuming a download slot indefinitely.
         if (error.retryDelay > 60000) throw failure('The server requested a longer cooldown. Retry after ' + Math.ceil(error.retryDelay / 1000) + ' seconds. Partial data has been kept.');
-        await delay(error.retryDelay ?? 250 * 2 ** attempt, undefined, { signal });
+        await delay(error.retryDelay ?? Math.min(8000, 250 * 2 ** attempt), undefined, { signal });
+        attempt++;
       }
     }
   }
