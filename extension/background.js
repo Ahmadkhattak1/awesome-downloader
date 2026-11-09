@@ -15,13 +15,27 @@ function tabVideoId(value){
     return /^[\w-]{11}$/.test(id||'')?id:null;
   }catch{return null;}
 }
+const decodeBase64=value=>{try{return atob(String(value).replace(/-/g,'+').replace(/_/g,'/'));}catch{return '';}};
+// A SABR request carries the streaming config of the player that made it, and works only with that player. Other
+// players on the page stream too, and a player can refresh its config, so a few of each are kept and paired here.
+function sabrSession(player,captures){
+  for(const capture of captures||[]){
+    const body=decodeBase64(capture.requestBody);
+    for(const candidate of player?.players||[]){
+      const config=decodeBase64(candidate.ustreamerConfig);
+      if(config&&body.includes(config))return {capture,player:candidate};
+    }
+  }
+  return null;
+}
 function rememberSabrCapture(tabId,seed){
-  const fresh=!youtubeSabrObserved.has(tabId);
-  youtubeSabrObserved.set(tabId,seed);
+  const previous=youtubeSabrObserved.get(tabId)||[],usable=sabrSession(youtubePlayers.get(tabId),previous);
+  const captures=[{url:seed.url,requestBody:seed.requestBody},...previous.filter(capture=>capture.requestBody!==seed.requestBody)].slice(0,3);
+  youtubeSabrObserved.set(tabId,captures);
   if(youtubeSabrObserved.size>50)youtubeSabrObserved.delete(youtubeSabrObserved.keys().next().value);
-  updateSession(SABR_KEY,map=>{map[tabId]={url:seed.url,requestBody:seed.requestBody};}).catch(()=>{});
-  // A menu still waiting for this session refills without being reopened.
-  if(fresh)api.tabs.sendMessage(tabId,{action:'sabrCaptured'}).catch(()=>{});
+  updateSession(SABR_KEY,map=>{map[tabId]=captures;}).catch(()=>{});
+  // A menu still waiting for a usable session refills without being reopened.
+  if(!usable)api.tabs.sendMessage(tabId,{action:'sabrCaptured'}).catch(()=>{});
 }
 // Only a tab whose SABR body webRequest could not read is asked to relay it from the page.
 function requestSabrRelay(tabId){
@@ -39,16 +53,16 @@ function promoteRelayedSabr(requestId){
   sabrRelayPending.delete(requestId);
   if(entry.generation===sabrGeneration(entry.tabId))rememberSabrCapture(entry.tabId,{tabId:entry.tabId,url:entry.url,requestBody:entry.requestBody});
 }
-async function sabrCapture(tabId){
+async function sabrCaptures(tabId){
   const live=youtubeSabrObserved.get(tabId);
   if(live)return live;
   await serial;
   try{
     const data=await api.storage.session.get(SABR_KEY),stored=data[SABR_KEY]?.[tabId];
-    if(stored&&typeof stored.url==='string'&&typeof stored.requestBody==='string'){
-      const capture={...stored,tabId};youtubeSabrObserved.set(tabId,capture);return capture;
-    }
+    const captures=(Array.isArray(stored)?stored:[stored]).filter(capture=>typeof capture?.url==='string'&&typeof capture.requestBody==='string').slice(0,3);
+    if(captures.length){youtubeSabrObserved.set(tabId,captures);return captures;}
   }catch{}
+  return [];
 }
 function clearSabrCapture(tabId){
   youtubeSabrObserved.delete(tabId);
@@ -119,13 +133,14 @@ function nativeSend(payload) {
 async function enqueue(item, tabId) {
   let sabr;
   if(item.sabrSelection){
-    const player=youtubePlayers.get(tabId), selection=item.sabrSelection;
+    const selection=item.sabrSelection;
     const videoItag=selection.videoItag===undefined?undefined:Number(selection.videoItag), audioItag=Number(selection.audioItag);
-    if(!player||!Number.isSafeInteger(audioItag)||audioItag<=0||videoItag!==undefined&&(!Number.isSafeInteger(videoItag)||videoItag<=0))throw new Error('The captured YouTube session expired. Reopen the menu.');
+    if(!youtubePlayers.get(tabId)||!Number.isSafeInteger(audioItag)||audioItag<=0||videoItag!==undefined&&(!Number.isSafeInteger(videoItag)||videoItag<=0))throw new Error('The captured YouTube session expired. Reopen the menu.');
+    const session=sabrSession(youtubePlayers.get(tabId),await sabrCaptures(tabId));
+    if(!session)throw new Error('Play this YouTube video briefly so its streaming session can be captured, then try again.');
+    const {capture:captured,player}=session;
     const audio=player.formats.find(f=>f.itag===audioItag&&/^audio\/mp4/i.test(f.mimeType));
     const video=videoItag===undefined?undefined:player.formats.find(f=>f.itag===videoItag&&/^video\/mp4/i.test(f.mimeType));
-    const captured=await sabrCapture(tabId);
-    if(!captured)throw new Error('Play this YouTube video briefly so its streaming session can be captured, then try again.');
     const serverAbrStreamingUrl=captured.url;
     if(!audio||videoItag!==undefined&&!video||!globalThis.youtubeMedia.sabrUrl(serverAbrStreamingUrl)||!player.ustreamerConfig)throw new Error('The captured YouTube SABR session is incomplete. Play the video briefly and reopen the menu.');
     // Native messaging is limited to 1 MiB. The desktop only needs the two
@@ -232,7 +247,8 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       if(clean&&(!shown||clean.videoId===shown)){
         const previous=youtubePlayers.get(sender.tab.id);
         if(previous&&previous.videoId!==clean.videoId){clearSabrCapture(sender.tab.id);youtubeObserved.delete(sender.tab.id);}
-        youtubePlayers.set(sender.tab.id,clean);if(youtubePlayers.size>50)youtubePlayers.delete(youtubePlayers.keys().next().value);
+        const players=[clean,...(previous?.videoId===clean.videoId?previous.players:[]).filter(entry=>entry.ustreamerConfig!==clean.ustreamerConfig)].slice(0,3);
+        youtubePlayers.set(sender.tab.id,{...clean,players});if(youtubePlayers.size>50)youtubePlayers.delete(youtubePlayers.keys().next().value);
       }
       return {ok:true};
     }
@@ -267,10 +283,10 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
         await api.tabs.sendMessage(sender.tab.id,{action:'refreshPlayer'}).catch(()=>{});
         const player=youtubePlayers.get(sender.tab.id);
         if(player?.videoId!==id)return {ok:true,items:[]};
-        const capture=player.sabr?await sabrCapture(sender.tab.id):undefined;
-        const active={...player,sabrUrl:capture?.url||player.sabrUrl};
+        const session=player.sabr?sabrSession(player,await sabrCaptures(sender.tab.id)):null;
+        const active={...(session?.player||player),sabrUrl:session?.capture.url||player.sabrUrl};
         let items=globalThis.youtubeMedia.choices(active,youtubeObserved.get(sender.tab.id)||[]);
-        if(!capture&&items.some(item=>item.sabrSelection)){
+        if(!session&&items.some(item=>item.sabrSelection)){
           items=items.filter(item=>!item.sabrSelection);
           if(!items.length)return {ok:true,items,notice:'Play this video for a few seconds so its streaming session can be captured. This menu updates once it is.'};
         }
