@@ -176,7 +176,11 @@ api.webRequest.onHeadersReceived.addListener(details => {
   if(/\.m3u8(?:[?#]|$)/i.test(details.url)||/mpegurl/i.test(mime))discoverHls(details.tabId,details.url);
 }, {urls: ['http://*/*', 'https://*/*']}, ['responseHeaders']);
 api.tabs.onRemoved.addListener(tabId => {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});});
-api.tabs.onUpdated.addListener((tabId, change) => { if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});} });
+api.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.status === 'loading') {youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);sabrRelayTabs.delete(tabId);requestContext.delete(tabId);hlsSeen.delete(tabId);updateCache(map => { delete map[tabId]; }).catch(() => {});return;}
+  // An in-page switch to another video changes the URL without a reload, and can stream before its player arrives.
+  if(change.url&&youtubePlayers.has(tabId)&&tabVideoId(change.url)!==youtubePlayers.get(tabId).videoId){youtubePlayers.delete(tabId);youtubeObserved.delete(tabId);clearSabrCapture(tabId);}
+});
 api.runtime.onInstalled.addListener(async () => {
   try {
     await api.contextMenus.removeAll();

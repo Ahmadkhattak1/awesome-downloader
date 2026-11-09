@@ -111,6 +111,23 @@ test('another video\'s player on the page keeps the tab\'s captured session, and
  await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);
  assert.equal((await h.request({action:'listForFrame'},moved)).items.length,0);
 });
+const watchPage='https://www.youtube.com/watch?v=wLdZWyLOJCI';
+const sabrResponse=(h,{requestId,tabId,url=sabrStream,statusCode=200})=>h.events.response({requestId,tabId,url,statusCode,type:'xmlhttprequest',responseHeaders:[]});
+const hasSession=async(h,sender)=>(await h.request({action:'listForFrame'},sender)).items.some(value=>value.quality==='1080p');
+test('an in-page switch to another video keeps the session it streams before its player arrives',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:36,url:watchPage}},other='https://www.youtube.com/watch?v=abcdefghijk',moved={...sender,tab:{...sender.tab,url:other}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ h.events.beforeRequest({requestId:'first',tabId:36,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+ sabrResponse(h,{requestId:'first',tabId:36});
+ h.events.updated(36,{url:other});
+ assert.equal(await hasSession(h,sender),false);
+ h.events.beforeRequest({requestId:'next',tabId:36,url:sabrStream+'&rn=2',requestBody:{raw:[{bytes:Uint8Array.from([4,5,6]).buffer}]}});
+ sabrResponse(h,{requestId:'next',tabId:36,url:sabrStream+'&rn=2'});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk'}},moved);
+ const item=(await h.request({action:'listForFrame'},moved)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},moved);
+ assert.equal(h.nativeRequests[0].sabr.videoId,'abcdefghijk');assert.equal(h.nativeRequests[0].sabr.requestBody,'BAUG');
+});
 test('a SABR body the browser hides is relayed by the page, accepted only from a tab asked for it',async()=>{
  const page='https://www.youtube.com/watch?v=wLdZWyLOJCI',h=harness(),sender={id:'extension-id',url:page,tab:{id:32,url:page}};
  await h.request({action:'playerResponse',data:sabrPlayer},sender);
