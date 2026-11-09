@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import ffmpegPath from 'ffmpeg-static';
 import { DownloadEngine, safeFilename } from '../core/engine.mjs';
 import { startBridge } from '../core/bridge.mjs';
 import { probe, retryAfter, transientStatus } from '../core/http.mjs';
@@ -155,6 +159,45 @@ async function until(check, timeout = 8000) {
   while (!check()) { if (Date.now() > deadline) throw new Error('Timed out waiting for download state.'); await delay(15); }
 }
 const digest = b => createHash('sha256').update(b).digest('hex');
+
+test('paired tracks keep ranged transfers and skip the unranged fallback', async t => {
+  const f = await fixture(t);
+  const [id] = await f.engine.add({ url: `${f.url}/video.bin`, audioUrl: `${f.url}/audio.bin`, queueOnly: true });
+  const d = f.engine.downloads.find(item => item.id === id);
+  const modes = [];
+  f.engine.transfer = async (_download, info, _segment, _file, _headers, _signal, _url, allowUnrangedFallback) => {
+    modes.push({ ranges: info.ranges, allowUnrangedFallback: Boolean(allowUnrangedFallback) });
+    throw new Error('stop after inspecting paired-track transfer mode');
+  };
+  await assert.rejects(
+    f.engine.runPairedTracks(d, {}, new AbortController().signal),
+    /stop after inspecting paired-track transfer mode/
+  );
+  assert.deepEqual(modes, [
+    { ranges: true, allowUnrangedFallback: false },
+    { ranges: true, allowUnrangedFallback: false }
+  ]);
+});
+
+test('fallback response is destroyed when resetting the parts directory fails', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-cleanup-test-'));
+  const engine = new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads') });
+  const response = Readable.from([Buffer.from('payload')]);
+  response.statusCode = 200;
+  response.headers = { 'content-length': '7' };
+  const originalRm = fs.rm;
+  fs.rm = async () => { throw Object.assign(new Error('directory is locked'), { code: 'EPERM' }); };
+  try {
+    await assert.rejects(
+      engine.downloadUnranged({ segments: [] }, path.join(root, 'parts'), {}, new AbortController().signal, response, 'http://example.test/file'),
+      { code: 'EPERM' }
+    );
+    assert.equal(response.destroyed, true);
+  } finally {
+    fs.rm = originalRm;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test('parallel ranged transfers reconstruct exact bytes and preserve existing filenames', async t => {
   const f = await fixture(t);
@@ -421,11 +464,37 @@ test('restart recovers paused offsets from actual disk files', async t => {
   } finally { await restored.close(); }
 });
 
-test('server ignoring ranges fails without publishing corrupt files', async t => {
+test('server ignoring ranges falls back to its full response and preserves exact bytes', async t => {
   const f = await fixture(t);
-  await f.engine.add({ url: `${f.url}/ignore-range` }); const d = f.engine.downloads[0];
-  await until(() => d.status === 'error'); assert.match(d.error, /instead of a byte range/);
-  assert.equal(d.path, null);
+  await f.engine.add({ url: `${f.url}/ignore-range` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('HTTP 416 on a ranged request retries as one plain GET', async t => {
+  let rangedRequests = 0, plainRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (req.headers.range) {
+      rangedRequests++;
+      res.writeHead(416);
+      res.end();
+      return true;
+    }
+    plainRequests++;
+    return false;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.ok(rangedRequests > 0);
+  assert.equal(plainRequests, 1);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
 
 test('permanent HTTP failures on byte ranges fail without retrying', async t => {
@@ -549,4 +618,276 @@ test('request credentials are excluded from history and UI snapshots', async t =
   await f.engine.add({ url: `${f.url}/file.bin`, reviewOnly: true, headers: { cookie: 'session=private-fixture', authorization: 'Bearer private-fixture' } });
   assert.doesNotMatch(JSON.stringify(f.engine.snapshot()), /private-fixture/);
   assert.doesNotMatch(await fs.readFile(path.join(f.root, 'state', 'downloads.json'), 'utf8'), /private-fixture/);
+});
+
+test('plain fallback after a cross-origin redirect never forwards request credentials', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-two-origin-test-'));
+  const data = randomBytes(3 * 1024 * 1024 + 37);
+  const credentials = { cookie: 'session=synthetic-fixture', authorization: 'Bearer synthetic-fixture', origin: 'https://origin-a.example', referer: 'https://origin-a.example/private?page=1' };
+  const seen = { head: null, ranged: null, plain: null };
+  let plainRequests = 0;
+  const target = http.createServer((req, res) => {
+    if (req.method === 'HEAD') {
+      seen.head = { ...req.headers };
+      res.writeHead(200, { 'accept-ranges': 'bytes', 'content-length': data.length, etag: '"two-origin-1"' });
+      return res.end();
+    }
+    if (req.headers.range) {
+      seen.ranged = { ...req.headers };
+      res.writeHead(416);
+      return res.end();
+    }
+    plainRequests++;
+    seen.plain = { ...req.headers };
+    res.writeHead(200, { 'content-length': data.length });
+    res.end(data);
+  });
+  await new Promise(resolve => target.listen(0, '127.0.0.1', resolve));
+  const seenAtRedirector = [];
+  const redirector = http.createServer((req, res) => {
+    seenAtRedirector.push({ ...req.headers });
+    res.writeHead(302, { location: `http://127.0.0.1:${target.address().port}/file.bin` });
+    res.end();
+  });
+  await new Promise(resolve => redirector.listen(0, '127.0.0.1', resolve));
+  const engine = await new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads'), tickMs: 30 }).init();
+  t.after(async () => {
+    await engine.close();
+    for (const server of [target, redirector]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  await engine.add({ url: `http://127.0.0.1:${redirector.address().port}/file.bin`, headers: credentials });
+  const d = engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.ok(seenAtRedirector.length > 0);
+  assert.ok(seenAtRedirector.every(h => h.authorization === credentials.authorization && h.cookie === credentials.cookie));
+  assert.ok(seen.head && seen.ranged && seen.plain);
+  assert.equal(plainRequests, 1);
+  for (const phase of ['head', 'ranged', 'plain']) {
+    assert.equal(seen[phase].authorization, undefined, `${phase} request leaked authorization to the redirected origin`);
+    assert.equal(seen[phase].cookie, undefined, `${phase} request leaked cookie to the redirected origin`);
+    assert.equal(seen[phase].origin, undefined, `${phase} request leaked origin to the redirected origin`);
+    assert.equal(seen[phase].referer, undefined, `${phase} request leaked referer to the redirected origin`);
+  }
+  assert.equal(digest(await fs.readFile(d.path)), digest(data));
+});
+
+// Holds a full-response fallback body until every sibling range worker has been
+// served its failure, so mixed-outcome tests cannot pass on siblings that were
+// silently aborted before requesting. Bounded: on deadline the held headers are
+// flushed and the body is cut instead of released (a mid-stream server failure),
+// and the timer is always cleared.
+function heldFallbackBody(data, res, state) {
+  const deadline = Date.now() + 2000;
+  let timer = null;
+  const stop = () => { if (timer !== null) { clearTimeout(timer); timer = null; } };
+  res.on('close', stop);
+  const poll = () => {
+    if (state.siblingsForbidden >= state.expectedSiblings) { stop(); res.end(data); return; }
+    if (Date.now() > deadline) {
+      stop();
+      res.flushHeaders();
+      timer = setTimeout(() => { timer = null; res.destroy(); }, 20);
+      return;
+    }
+    timer = setTimeout(poll, 5);
+  };
+  poll();
+}
+
+test('a full-response fallback completes exact bytes when sibling range workers fail', async t => {
+  const state = { siblingsForbidden: 0, expectedSiblings: 0 };
+  let fullResponses = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const start = Number(/^bytes=(\d+)-/.exec(req.headers.range)[1]);
+    if (start === 0) {
+      fullResponses++;
+      res.writeHead(200, { 'content-length': f.data.length });
+      heldFallbackBody(f.data, res, state);
+      return true;
+    }
+    state.siblingsForbidden++;
+    res.writeHead(403);
+    res.end();
+    return true;
+  } });
+  // One worker per segment; every non-first worker must actually be served a 403.
+  state.expectedSiblings = Math.min(f.engine.settings.connections, Math.ceil(f.data.length / (512 * 1024))) - 1;
+  assert.ok(state.expectedSiblings > 0);
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(fullResponses, 1);
+  assert.equal(state.siblingsForbidden, state.expectedSiblings);
+  assert.equal(d.connections, 1);
+  assert.equal(d.error, null);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  await assert.rejects(fs.stat(path.join(f.root, 'state', 'parts', id)), { code: 'ENOENT' });
+});
+
+test('a fallback body held for a missing sibling is destroyed on deadline, never released', async t => {
+  const state = { siblingsForbidden: 0, expectedSiblings: 0 };
+  let fullResponses = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const start = Number(/^bytes=(\d+)-/.exec(req.headers.range)[1]);
+    if (start === 0) {
+      fullResponses++;
+      res.writeHead(200, { 'content-length': f.data.length });
+      heldFallbackBody(f.data, res, state);
+      return true;
+    }
+    state.siblingsForbidden++;
+    res.writeHead(403);
+    res.end();
+    return true;
+  } });
+  // Demand one more sibling failure than the segments can produce: the barrier
+  // must time out and cut the response instead of hanging or completing.
+  state.expectedSiblings = Math.min(f.engine.settings.connections, Math.ceil(f.data.length / (512 * 1024)));
+  const started = Date.now();
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => d.status === 'error');
+  assert.ok(Date.now() - started < 6000, `held fallback took ${Date.now() - started}ms to fail`);
+  assert.match(d.error, /aborted/);
+  assert.equal(fullResponses, 1);
+  assert.equal(state.siblingsForbidden, state.expectedSiblings - 1);
+  assert.equal(d.path, null);
+  const leftover = await fs.readdir(path.join(f.root, 'downloads')).catch(e => e.code === 'ENOENT' ? [] : Promise.reject(e));
+  assert.deepEqual(leftover, []);
+});
+
+test('cancelling while the full-response fallback streams leaves no completed file', async t => {
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const start = Number(/^bytes=(\d+)-/.exec(req.headers.range)[1]);
+    if (start !== 0) { res.writeHead(403); res.end(); return true; }
+    res.writeHead(200, { 'content-length': f.data.length });
+    let offset = 0;
+    const interval = setInterval(() => {
+      if (offset >= f.data.length) { clearInterval(interval); res.end(); return; }
+      const until = Math.min(f.data.length, offset + 16384);
+      res.write(f.data.subarray(offset, until));
+      offset = until;
+    }, 5);
+    res.on('close', () => clearInterval(interval));
+    return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 100000);
+  await f.engine.action(id, 'cancel');
+  assert.equal(d.status, 'cancelled');
+  assert.equal(d.path, null);
+  await assert.rejects(fs.stat(path.join(f.root, 'state', 'parts', id)), { code: 'ENOENT' });
+  const leftover = await fs.readdir(path.join(f.root, 'downloads')).catch(e => e.code === 'ENOENT' ? [] : Promise.reject(e));
+  assert.deepEqual(leftover, []);
+});
+
+test('a truncated full-response fallback fails instead of saving a partial file', async t => {
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (req.headers.range) { res.writeHead(416); res.end(); return true; }
+    res.writeHead(200, { 'content-length': f.data.length });
+    // Advertise the full length, then cut the connection halfway through.
+    res.write(f.data.subarray(0, f.data.length >> 1), () => res.socket.destroy());
+    return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => d.status === 'error');
+  assert.match(d.error, /aborted/);
+  assert.equal(d.path, null);
+  const leftover = await fs.readdir(path.join(f.root, 'downloads')).catch(e => e.code === 'ENOENT' ? [] : Promise.reject(e));
+  assert.deepEqual(leftover, []);
+});
+
+test('restarting mid-fallback discards the partial body and resumes to exact bytes', async t => {
+  let slow = true;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (req.headers.range) { res.writeHead(416); res.end(); return true; }
+    res.writeHead(200, { 'content-length': f.data.length });
+    if (!slow) { res.end(f.data); return true; }
+    let offset = 0;
+    const interval = setInterval(() => {
+      if (offset >= f.data.length) { clearInterval(interval); res.end(); return; }
+      const until = Math.min(f.data.length, offset + 16384);
+      res.write(f.data.subarray(offset, until));
+      offset = until;
+    }, 5);
+    res.on('close', () => clearInterval(interval));
+    return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  await until(() => f.engine.downloads[0].downloaded > 100000);
+  await f.engine.action(id, 'pause');
+  assert.equal(f.engine.downloads[0].status, 'paused');
+  const partial = f.engine.downloads[0].downloaded;
+  assert.ok(partial > 0 && partial < f.data.length);
+  await f.engine.close();
+  slow = false;
+  const restored = await new DownloadEngine({ dataDirectory: path.join(f.root, 'state'), downloadDirectory: path.join(f.root, 'downloads'), tickMs: 30 }).init();
+  try {
+    assert.equal(restored.downloads[0].status, 'paused');
+    await restored.action(id, 'resume');
+    await until(() => ['complete', 'error'].includes(restored.downloads[0].status));
+    const d = restored.downloads[0];
+    assert.equal(d.status, 'complete', d.error);
+    assert.match(d.notice, /changed on the server; restarted from the beginning/);
+    assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  } finally { await restored.close(); }
+});
+
+const execFileAsync = promisify(execFile);
+// Tiny valid tracks generated with the bundled ffmpeg, so the paired-download
+// fixture muxes real media instead of empty or synthetic byte strings.
+test('paired tracks mux real media from a range-only server', async t => {
+  const mediaDir = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-media-'));
+  const videoPath = path.join(mediaDir, 'video.mp4'), audioPath = path.join(mediaDir, 'audio.m4a');
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=128x96:rate=5', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', videoPath]);
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'aac', audioPath]);
+  const video = await fs.readFile(videoPath), audio = await fs.readFile(audioPath);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-paired-test-'));
+  const seen = { videoRanges: 0, audioRanges: 0 };
+  // Range-only tracks: a valid 206 for the requested range, HTTP 403 without one.
+  const serve = (body, tag, counter) => (req, res) => {
+    res.setHeader('etag', tag);
+    res.setHeader('accept-ranges', 'bytes');
+    if (req.method === 'HEAD') { res.setHeader('content-length', body.length); return res.end(); }
+    const match = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '');
+    if (!match) { res.statusCode = 403; return res.end('Range header required'); }
+    const start = Number(match[1]), end = Number(match[2]);
+    counter();
+    res.statusCode = 206;
+    res.setHeader('content-range', `bytes ${start}-${end}/${body.length}`);
+    res.setHeader('content-length', end - start + 1);
+    res.end(body.subarray(start, end + 1));
+  };
+  const videoServer = http.createServer(serve(video, '"pair-video-1"', () => seen.videoRanges++));
+  const audioServer = http.createServer(serve(audio, '"pair-audio-1"', () => seen.audioRanges++));
+  for (const server of [videoServer, audioServer]) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const engine = await new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads'), tickMs: 30 }).init();
+  t.after(async () => {
+    await engine.close();
+    for (const server of [videoServer, audioServer]) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(mediaDir, { recursive: true, force: true });
+  });
+  await engine.add({ url: `http://127.0.0.1:${videoServer.address().port}/video.mp4`, audioUrl: `http://127.0.0.1:${audioServer.address().port}/audio.m4a` });
+  const d = engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  // Paired tracks must keep ranged transfers: this server rejects plain GETs.
+  assert.ok(seen.videoRanges > 0, 'video track must use a ranged request');
+  assert.ok(seen.audioRanges > 0, 'audio track must use a ranged request');
+  // Both tracks must be fully consumed; a zero-byte part used to reach FFmpeg.
+  assert.equal(d.segments[0].downloaded, video.length);
+  assert.equal(d.segments[1].downloaded, audio.length);
+  // The muxed output must decode: an empty video part used to fail this step.
+  await execFileAsync(ffmpegPath, ['-nostdin', '-v', 'error', '-i', d.path, '-f', 'null', '-']);
 });
