@@ -14,6 +14,8 @@
     position();
   },{threshold:[0,0.01]});
   const direct = value => { try { const u = new URL(value, location.href); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; } };
+  // Magnet links found on a page are handed to the desktop's BitTorrent engine.
+  const magnetLink = value => { try { const u = new URL(value, location.href); return u.protocol === 'magnet:' ? u.href : null; } catch { return null; } };
   const mediaIdentity = video => JSON.stringify([location.href,video.currentSrc||'',video.src||'',video.poster||'']);
   function shutdown() {
     if(stopped)return;
@@ -201,7 +203,7 @@
   addEventListener('scroll', onScroll, {capture:true,signal:listeners.signal}); addEventListener('resize', position, {signal:listeners.signal});addEventListener('popstate',position,{signal:listeners.signal});addEventListener('hashchange',position,{signal:listeners.signal}); document.addEventListener('fullscreenchange',position,{signal:listeners.signal});document.addEventListener('yt-navigate-finish',position,{signal:listeners.signal});
   function onMessage(message, sender, respond) {
     if (!connected() || sender.id !== api.runtime.id || message.action !== 'collectLinks') return;
-    const items = Array.from(document.querySelectorAll('a[href]')).slice(0, 1000).map(a => ({url:direct(a.href), title:a.textContent.trim()})).filter(item => item.url);
+    const items = Array.from(document.querySelectorAll('a[href]')).slice(0, 1000).map(a => ({url:direct(a.href) || magnetLink(a.href), title:a.textContent.trim()})).filter(item => item.url);
     send({action:'remember', items:items.slice(0, 100)}).then(respond,error=>{try{respond({ok:false,error:error.message});}catch{}}).catch(()=>{});
     return true;
   }

@@ -12,3 +12,11 @@ test('choices keep only the matching tweet and deduplicate paired audio',()=>{
   assert.equal(choices.filter(i=>i.format==='MP3').length,1);
   assert.equal(choices.filter(i=>i.audioState==='Video + audio').length,2);
 });
+test('a magnet link is offered as a torrent choice without media audio metadata',()=>{
+  const magnet='magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Sample';
+  const choices=mediaChoices([{url:magnet,format:'Torrent',title:'Sample'},{url:'https://example.com/a.m4s'}],{});
+  assert.equal(choices.length,1);
+  assert.equal(choices[0].url,magnet);
+  assert.equal(choices[0].format,'Torrent');
+  assert.equal(choices[0].audioState,'BitTorrent');
+});

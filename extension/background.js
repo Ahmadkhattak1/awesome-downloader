@@ -166,9 +166,10 @@ async function remember(scope, items) {
   await updateCache(map => {
     const prior = map[scope] || [];
     for (const item of items.slice(0, 100)) {
-      const url = httpUrl(item.url);
+      const magnet = magnetUrl(item.url);
+      const url = magnet || httpUrl(item.url);
       if (!url || isFragment(url)) continue;
-      const value={url, mime: String(item.mime || '').slice(0, 100), title: String(item.title || '').slice(0, 180), quality:String(item.quality||'').slice(0,40),bitrate:Number(item.bitrate)||0,format:String(item.format||'').slice(0,20),separateAudio:!!item.separateAudio,reason:String(item.reason||'').slice(0,180),unsupported: unsupported(url, item.mime)||!!item.unsupported};
+      const value={url, mime: String(item.mime || '').slice(0, 100), title: String(item.title || '').slice(0, 180), quality:String(item.quality||'').slice(0,40),bitrate:Number(item.bitrate)||0,format:magnet?'Torrent':String(item.format||'').slice(0,20),separateAudio:!!item.separateAudio,reason:String(item.reason||'').slice(0,180),unsupported: unsupported(url, item.mime)||!!item.unsupported};
       value.audioUrl=httpUrl(item.audioUrl)||undefined;
       value.codecs=String(item.codecs||'').slice(0,200);
       value.masterUrl=httpUrl(item.masterUrl)||undefined;
@@ -274,7 +275,7 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
       }
       await serial;
       const data = await api.storage.session.get(CACHE_KEY);
-      return {ok:true, items:(scope && data[CACHE_KEY]?.[scope] || []).filter(item => item.unsupported || item.format==='HLS' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url))};
+      return {ok:true, items:(scope && data[CACHE_KEY]?.[scope] || []).filter(item => item.unsupported || item.format==='HLS' || item.format==='Torrent' || /^(video|audio)\//i.test(item.mime) || /\.(m3u8|mp4|webm|mov|m4v|mp3|m4a|ogg|wav)(?:[?#]|$)/i.test(item.url))};
     }
     throw new Error('Unsupported extension request.');
   };

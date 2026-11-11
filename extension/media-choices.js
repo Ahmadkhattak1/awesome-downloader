@@ -17,7 +17,7 @@
     const seen=new Set(), choices=[];
     for(const item of list.sort((a,b)=>(b.bitrate||0)-(a.bitrate||0))) {
       const hls=item.format==='HLS';
-      const audioState=item.audioUrl||/mp4a|ac-3|ec-3|opus/i.test(item.codecs||'')?'Video + audio':item.codecs?'Video only (silent)':'Audio not verified';
+      const audioState=item.format==='Torrent'?'BitTorrent':item.audioUrl||/mp4a|ac-3|ec-3|opus/i.test(item.codecs||'')?'Video + audio':item.codecs?'Video only (silent)':'Audio not verified';
       const video={...item,format:hls?'MP4':item.format,outputFormat:hls?'mp4':item.outputFormat,audioState,asset:assetKey(item.url)};
       const variants=[video];
       if(item.audioUrl)variants.push({...item,url:item.audioUrl,audioUrl:undefined,format:'MP3',outputFormat:'mp3',quality:'',bitrate:0,audioState:'Audio only',asset:assetKey(item.url)});

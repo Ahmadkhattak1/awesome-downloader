@@ -105,6 +105,17 @@ test('a magnet link from the page is handed to the desktop as a torrent',async()
   const rejected=await h.request({action:'download',item:{url:'magnet:?xt=urn:btih:nope'}},{id:'extension-id',tab:{id:5}});
   assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,1);
 });
+test('a magnet link collected from a page stays available to the format menu',async()=>{
+  const h=harness(),sender={id:'extension-id',tab:{id:6}},hash='89abcdef0123456789abcdef0123456789abcdef',magnet=`magnet:?xt=urn:btih:${hash}&dn=Sample`;
+  await h.request({action:'remember',items:[{url:magnet,title:'Sample torrent'},{url:'https://example.com/page'}]},sender);
+  const result=await h.request({action:'listForFrame'},sender);
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].url,magnet);
+  assert.equal(result.items[0].format,'Torrent');
+  assert.equal(result.items[0].title,'Sample torrent');
+  await h.request({action:'download',item:result.items[0]},sender);
+  assert.equal(h.nativeRequests[0].url,magnet);
+});
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
   const url='https://example.com/video.m3u8';
