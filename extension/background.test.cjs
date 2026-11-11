@@ -4,7 +4,7 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness({initialData={},webRequest={}}={}) {
-  const events={},specs={},nativeRequests=[],downloadCalls=[];
+  const events={},specs={},nativeRequests=[],downloadCalls=[],tabMessages=[];
   const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
   const data=structuredClone(initialData),downloads=new Map();
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
@@ -14,9 +14,9 @@ function harness({initialData={},webRequest={}}={}) {
     async resume(id){downloadCalls.push(['resume',id]);downloads.get(id).state='in_progress';},
     async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);}
   });
-  browser.tabs.sendMessage=async()=>({ok:true});
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  browser.tabs.sendMessage=async(tabId,message)=>{tabMessages.push([tabId,message.action]);return {ok:true};};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),atob:value=>Buffer.from(value,'base64').toString('binary'),youtubeMedia:require('./youtube-media.js')});
+  return {events,specs,data,nativeRequests,downloadCalls,tabMessages,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -66,7 +66,7 @@ test('large YouTube format catalogs stay below the native messaging limit',async
  const formats=Array.from({length:148},(_,index)=>({itag:2000+index,mimeType:'video/mp4; codecs="avc1"',height:144,qualityLabel:'144p',bitrate:100000,lastModified:'1',approxDurationMs:'10000',sourceUrl:'https://example.com/'+('x'.repeat(12000))+index}));
  formats.push({itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'});
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats}},sender);
- h.events.beforeRequest({requestId:'large',tabId:18,url:stream,requestBody:{raw:[{bytes:new Uint8Array(200000).buffer}]}});
+ h.events.beforeRequest({requestId:'large',tabId:18,url:stream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer},{bytes:new Uint8Array(200000).buffer}]}});
  h.events.response({requestId:'large',tabId:18,url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
  const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
  await h.request({action:'download',item:{...item,startNow:true}},sender);
@@ -89,6 +89,139 @@ test('SABR choices are hidden until the browser captures a usable session',async
  const h=harness(),sender={id:'extension-id',tab:{id:29,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999',ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4',height:1080,qualityLabel:'1080p',bitrate:3000000},{itag:140,mimeType:'audio/mp4',bitrate:128000}]}},sender);
  const result=await h.request({action:'listForFrame'},sender);assert.equal(result.items.length,0);assert.match(result.notice,/captured/i);
+});
+const sabrPlayer={videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000,lastModified:'1',approxDurationMs:'10000'},{itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000,lastModified:'1',approxDurationMs:'10000'}]};
+const sabrStream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+test('another video\'s player on the page keeps the tab\'s captured session, and the waiting menu is told once',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:31,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ for(const requestId of ['first','second']){
+  h.events.beforeRequest({requestId,tabId:31,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+  h.events.response({requestId,tabId:31,url:sabrStream,statusCode:200,type:'xmlhttprequest',responseHeaders:[]});
+ }
+ // A related video's player, reported by the same page while the tab still shows the first video.
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},sender);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.videoId,'wLdZWyLOJCI');assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='sabrCaptured'),[[31,'sabrCaptured']]);
+ assert.equal(h.tabMessages.some(([,action])=>action==='relaySabr'),false);
+ // Once the tab itself shows the other video, its player takes over and the old session is dropped.
+ const moved={...sender,tab:{...sender.tab,url:'https://www.youtube.com/watch?v=abcdefghijk'}};
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',title:'Up next'}},moved);
+ assert.equal((await h.request({action:'listForFrame'},moved)).items.length,0);
+});
+const watchPage='https://www.youtube.com/watch?v=wLdZWyLOJCI';
+const sabrResponse=(h,{requestId,tabId,url=sabrStream,statusCode=200})=>h.events.response({requestId,tabId,url,statusCode,type:'xmlhttprequest',responseHeaders:[]});
+const hasSession=async(h,sender)=>(await h.request({action:'listForFrame'},sender)).items.some(value=>value.quality==='1080p');
+test('an in-page switch to another video keeps the session it streams before its player arrives',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:36,url:watchPage}},other='https://www.youtube.com/watch?v=abcdefghijk',moved={...sender,tab:{...sender.tab,url:other}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ h.events.beforeRequest({requestId:'first',tabId:36,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from([1,2,3]).buffer}]}});
+ sabrResponse(h,{requestId:'first',tabId:36});
+ h.events.updated(36,{url:other});
+ assert.equal(await hasSession(h,sender),false);
+ h.events.beforeRequest({requestId:'next',tabId:36,url:sabrStream+'&rn=2',requestBody:{raw:[{bytes:Uint8Array.from([4,5,6]).buffer}]}});
+ sabrResponse(h,{requestId:'next',tabId:36,url:sabrStream+'&rn=2'});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk',ustreamerConfig:'BAUG'}},moved);
+ const item=(await h.request({action:'listForFrame'},moved)).items.find(value=>value.quality==='1080p');assert.ok(item);
+ await h.request({action:'download',item:{...item,startNow:true}},moved);
+ assert.equal(h.nativeRequests[0].sabr.videoId,'abcdefghijk');assert.equal(h.nativeRequests[0].sabr.requestBody,'BAUG');
+});
+const capturedBody=(h,{requestId,tabId,bytes})=>{h.events.beforeRequest({requestId,tabId,url:sabrStream,requestBody:{raw:[{bytes:Uint8Array.from(bytes).buffer}]}});sabrResponse(h,{requestId,tabId});};
+test('a session is offered and sent only with the player whose streaming config its request carries',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:37,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ // Another player on the page streamed under its own config (7,7,7); nothing usable yet.
+ capturedBody(h,{requestId:'stray',tabId:37,bytes:[7,7,7]});
+ assert.equal(await hasSession(h,sender),false);
+ capturedBody(h,{requestId:'own',tabId:37,bytes:[1,2,3]});
+ capturedBody(h,{requestId:'stray-later',tabId:37,bytes:[8,8,8]});
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');assert.equal(h.nativeRequests[0].sabr.videoPlaybackUstreamerConfig,'AQID');
+ assert.equal(h.tabMessages.filter(([,action])=>action==='sabrCaptured').length,2);
+});
+test('a refreshed player config for the same video keeps the session made under the earlier one',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:38,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ capturedBody(h,{requestId:'own',tabId:38,bytes:[1,2,3]});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,ustreamerConfig:'BAUG'}},sender);
+ let item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');assert.equal(h.nativeRequests[0].sabr.videoPlaybackUstreamerConfig,'AQID');
+ capturedBody(h,{requestId:'refreshed',tabId:38,bytes:[4,5,6]});
+ item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[1].sabr.requestBody,'BAUG');assert.equal(h.nativeRequests[1].sabr.videoPlaybackUstreamerConfig,'BAUG');
+});
+test('only the three newest captures are kept for a tab',async()=>{
+ const h=harness(),sender={id:'extension-id',tab:{id:39,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ capturedBody(h,{requestId:'own',tabId:39,bytes:[1,2,3]});
+ for(const [index,byte] of [7,8].entries())capturedBody(h,{requestId:'stray'+index,tabId:39,bytes:[byte,byte,byte]});
+ assert.equal(await hasSession(h,sender),true);
+ capturedBody(h,{requestId:'stray2',tabId:39,bytes:[9,9,9]});
+ assert.equal(await hasSession(h,sender),false);
+});
+const hiddenSabr=(h,{requestId,tabId,frameId=0,url=sabrStream})=>h.events.beforeRequest({requestId,tabId,frameId,url,requestBody:{error:'Unknown error.'}});
+const relay=(h,sender,{url=sabrStream,requestBody='AQID'}={})=>h.request({action:'sabrRequest',url,requestBody},sender);
+test('a relayed SABR body is accepted only for a request this tab and frame sent, once the server accepted it',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:32,url:watchPage}},first=sabrStream+'&rn=1';
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ assert.equal((await relay(h,sender,{url:first})).ok,false);
+ hiddenSabr(h,{requestId:'one',tabId:32,url:first});hiddenSabr(h,{requestId:'two',tabId:32,url:sabrStream+'&rn=2'});
+ assert.deepEqual(h.tabMessages.filter(([,action])=>action==='relaySabr'),[[32,'relaySabr']]);
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=9'})).ok,false);
+ assert.equal((await relay(h,{...sender,tab:{...sender.tab,id:33}},{url:first})).ok,false);
+ assert.equal((await relay(h,{...sender,frameId:4},{url:first})).ok,false);
+ assert.equal((await relay(h,{...sender,url:'https://example.com/'},{url:first})).ok,false);
+ assert.equal((await relay(h,sender,{url:first,requestBody:'AQI'})).ok,false);
+ assert.equal((await relay(h,sender,{url:first})).ok,true);
+ // Not yet a session: only webRequest's own view of the response says the server accepted the request.
+ assert.equal(await hasSession(h,sender),false);
+ sabrResponse(h,{requestId:'one',tabId:32,url:first});
+ assert.equal(await hasSession(h,sender),true);
+ assert.equal((await relay(h,sender,{url:first,requestBody:'BAUG'})).ok,false);
+ const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+ await h.request({action:'download',item:{...item,startNow:true}},sender);
+ assert.equal(h.nativeRequests[0].sabr.requestBody,'AQID');
+});
+test('a relayed SABR body for a request the server rejected never becomes the session',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:35,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ hiddenSabr(h,{requestId:'early',tabId:35});
+ assert.equal((await relay(h,sender)).ok,true);
+ sabrResponse(h,{requestId:'early',tabId:35,statusCode:403});
+ hiddenSabr(h,{requestId:'late',tabId:35,url:sabrStream+'&rn=2'});
+ sabrResponse(h,{requestId:'late',tabId:35,url:sabrStream+'&rn=2',statusCode:403});
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=2'})).ok,false);
+ assert.equal(await hasSession(h,sender),false);
+ assert.equal(h.tabMessages.some(([,action])=>action==='sabrCaptured'),false);
+});
+test('navigating the tab while a relayed capture is pending voids it',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:34,url:watchPage}};
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ // Reloaded before the page relayed the body.
+ hiddenSabr(h,{requestId:'reloaded',tabId:34});
+ h.events.updated(34,{status:'loading'});
+ assert.equal((await relay(h,sender)).ok,false);
+ // Switched to another video in the page after the body was relayed but before the response arrived.
+ await h.request({action:'playerResponse',data:sabrPlayer},sender);
+ hiddenSabr(h,{requestId:'switched',tabId:34,url:sabrStream+'&rn=2'});
+ assert.equal((await relay(h,sender,{url:sabrStream+'&rn=2'})).ok,true);
+ const other='https://www.youtube.com/watch?v=abcdefghijk',moved={...sender,url:other,tab:{...sender.tab,url:other}};
+ h.events.updated(34,{url:other});
+ sabrResponse(h,{requestId:'switched',tabId:34,url:sabrStream+'&rn=2'});
+ await h.request({action:'playerResponse',data:{...sabrPlayer,videoId:'abcdefghijk'}},moved);
+ assert.equal(await hasSession(h,moved),false);
+ assert.equal(h.tabMessages.some(([,action])=>action==='sabrCaptured'),false);
+});
+test('a relayed SABR body is held to the same 256 KiB limit as a webRequest capture',async()=>{
+ const h=harness(),sender={id:'extension-id',url:watchPage,frameId:0,tab:{id:33,url:watchPage}};
+ hiddenSabr(h,{requestId:'hidden',tabId:33});
+ assert.equal((await relay(h,sender,{requestBody:Buffer.alloc(262145).toString('base64')})).ok,false);
+ assert.equal((await relay(h,sender,{requestBody:Buffer.alloc(262144).toString('base64')})).ok,true);
 });
 test('duplicate browser downloads share one native handoff',async()=>{
  const h=harness();
