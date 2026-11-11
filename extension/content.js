@@ -112,7 +112,10 @@
               const details=[format,item.audioState,item.bitrate?rate(Number(item.bitrate)):''].filter(Boolean);
               for(const text of details){const piece=document.createElement('span');piece.textContent=text;meta.append(piece);}
               main.append(titleNode,meta);row.append(badge,main);
-              row.setAttribute('aria-label',`${badge.textContent}, ${details.join(', ')}`);
+              // The badge already names the format when no resolution is known, so never
+              // announce it twice ("MP4, MP4, Audio not verified").
+              const spoken=[badge.textContent,...details.filter(text=>text!==badge.textContent)];
+              row.setAttribute('aria-label',spoken.join(', '));
               row.onclick=async event=>{
                 event.preventDefault();event.stopPropagation();row.disabled=true;
                 setHint('Opening download options…','loading');
