@@ -145,6 +145,29 @@ test('individual HLS media fragments are not listed as complete videos',async()=
   const result=await h.request({action:'listForFrame'},sender);
   assert.equal(result.items.length,1);assert.equal(result.items[0].url,'https://example.com/movie.mp4');
 });
+test('an installed PWA window reuses the tab capture reported with tabId -1',async()=>{
+  const h=harness();
+  // A PWA window messages as a tab but its network requests arrive without one.
+  const sender={id:'extension-id',tab:{id:12,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'},documentId:'pwa-document-1'};
+  const stream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'PWA video',sabr:true,sabrUrl:stream,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[
+    {itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000},
+    {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000}
+  ]}},sender);
+  // The playback request from the PWA is reported with tabId -1.
+  h.events.beforeRequest({requestId:'pwa-seed',tabId:-1,documentId:'pwa-document-1',url:stream,requestBody:{raw:[{bytes:Uint8Array.from([7,8,9]).buffer}]}});
+  h.events.response({requestId:'pwa-seed',tabId:-1,documentId:'pwa-document-1',url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[{name:'Content-Type',value:'application/vnd.yt-ump'}]});
+  const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+  assert.ok(item,'the PWA capture should keep SABR formats selectable');
+  await h.request({action:'download',item:{...item,startNow:true}},sender);
+  assert.equal(h.nativeRequests[0].sabr.requestBody,'BwgJ');
+  assert.equal(h.nativeRequests[0].sabr.videoItag,137);
+  // Another app window must not inherit this capture.
+  const other={...sender,tab:{...sender.tab,id:13},documentId:'pwa-document-2'};
+  const missed=await h.request({action:'listForFrame'},other);
+  assert.equal(missed.items.length,0);
+});
+
 test('media cache is bounded, deduplicated, and cleared on navigation',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:9}};
   const items=Array.from({length:120},(_,i)=>({url:`https://example.com/${i}.mp4`}));
