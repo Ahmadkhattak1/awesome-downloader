@@ -40,7 +40,9 @@ function suggestedName(url, disposition) {
 }
 const categoryFor = name => Object.entries(CATEGORY).find(([, re]) => re.test(name))?.[0] || 'Other';
 // Marks a transfer failure that another attempt cannot fix, or the wait the server asked for.
-const failure = (message, retryable = false, retryDelay = null) => Object.assign(new Error(message), { retryable, retryDelay });
+const failure = (message, retryable = false, retryDelay = null, httpStatus = null) =>
+  Object.assign(new Error(message), { retryable, retryDelay, httpStatus });
+const connectionLimitFailure = error => [403, 429, 503].includes(error?.httpStatus);
 
 export class DownloadEngine extends EventEmitter {
   constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
@@ -56,6 +58,7 @@ export class DownloadEngine extends EventEmitter {
     this.closing = false;
     this.rateTail = Promise.resolve();
     this.rateNext = 0;
+    this.originConnectionLimits = new Map();
   }
   async init() {
     await fs.mkdir(this.partsDirectory, { recursive: true });
@@ -242,7 +245,9 @@ export class DownloadEngine extends EventEmitter {
     }
     d.total = info.total; d.validator = info.validator;
     d.resumable = Boolean(info.ranges && info.validator);
-    const count = info.ranges && info.total > 1024 * 1024 ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024))) : 1;
+    const origin = new URL(info.url).origin;
+    const connectionLimit = Math.min(this.settings.connections, this.originConnectionLimits.get(origin) || this.settings.connections);
+    const count = info.ranges && info.total > 1024 * 1024 ? Math.min(connectionLimit, Math.ceil(info.total / (512 * 1024))) : 1;
     if (!d.segments.length) {
       d.segments = Array.from({ length: count }, (_, i) => ({ start: info.total === null ? 0 : Math.floor(info.total * i / count),
         end: info.total === null ? null : Math.floor(info.total * (i + 1) / count) - 1, downloaded: 0 }));
@@ -262,9 +267,13 @@ export class DownloadEngine extends EventEmitter {
       lastBytes = d.downloaded; lastAt = now; this.changed();
     }, this.tickMs);
     const workerControllers = d.segments.map(() => new AbortController());
+    const successfulRanges = new Set();
+    const nonzeroRangeRejections = new Set();
     let fallbackResponse = null, fallbackIndex = -1, retryWithoutRange = false;
     try {
       const outcomes = await Promise.allSettled(d.segments.map(async (segment, i) => {
+        const expected = segment.end === null ? null : segment.end - segment.start + 1;
+        const alreadyComplete = expected !== null && segment.downloaded === expected;
         try {
           const result = await this.transfer(d, info, segment, path.join(dir, `${i}.part`), headers,
             AbortSignal.any([signal, workerControllers[i].signal]), undefined, true);
@@ -276,10 +285,16 @@ export class DownloadEngine extends EventEmitter {
               workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
             }
           } else if (result?.retryWithoutRange) {
-            retryWithoutRange = true;
-            workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
-          }
+            if (segment.start === 0) {
+              retryWithoutRange = true;
+              workerControllers.forEach((controller, index) => { if (index !== i) controller.abort(); });
+            } else nonzeroRangeRejections.add(i);
+          } else if (!alreadyComplete) successfulRanges.add(i);
         } catch (error) {
+          // A mixed round of valid ranges and capacity-style rejections can be
+          // retried safely after the other workers finish. Do not turn those
+          // rejections into sibling AbortErrors before the coordinator sees them.
+          if (d.segments.length > 1 && connectionLimitFailure(error)) throw error;
           // Do not abort the worker whose full 200 response is being consumed.
           if (fallbackIndex >= 0) {
             workerControllers.forEach((controller, index) => {
@@ -295,14 +310,49 @@ export class DownloadEngine extends EventEmitter {
           throw error;
         }
       }));
-      if (fallbackResponse || retryWithoutRange) {
+      if (fallbackResponse) {
         await this.downloadUnranged(d, dir, headers, signal, fallbackResponse, d.url);
       } else {
-        const transferFailure = outcomes.find(r => r.status === 'rejected' && r.reason.name !== 'AbortError') || outcomes.find(r => r.status === 'rejected');
-        if (transferFailure) throw transferFailure.reason;
+        const transferFailures = outcomes.filter(r => r.status === 'rejected');
+        const capacityFailuresOnly = transferFailures.every(r => connectionLimitFailure(r.reason));
+        const zeroSegment = d.segments.findIndex(segment => segment.start === 0);
+        const validRangeSucceeded = successfulRanges.size > 0;
+        const zeroRangeSucceeded = successfulRanges.has(zeroSegment);
+        const hasAdaptiveFailure = transferFailures.length > 0 || nonzeroRangeRejections.size > 0;
+        const restartSingleRange = hasAdaptiveFailure && capacityFailuresOnly &&
+          (nonzeroRangeRejections.size > 0 ? zeroRangeSucceeded : validRangeSucceeded);
+        if (retryWithoutRange) {
+          await this.downloadUnranged(d, dir, headers, signal, null, d.url);
+        } else if (restartSingleRange) {
+          const requestedDelay = Math.max(0, ...transferFailures.map(r => r.reason.retryDelay).filter(Number.isFinite));
+          if (requestedDelay) await delay(requestedDelay, undefined, { signal });
+          signal.throwIfAborted();
+          await this.downloadSingleRanged(d, info, dir, headers, signal);
+          this.originConnectionLimits.set(origin, 1);
+        } else if (nonzeroRangeRejections.size > 0) {
+          await this.downloadUnranged(d, dir, headers, signal, null, d.url);
+        } else {
+          const transferFailure = transferFailures.find(r => r.reason.name !== 'AbortError') || transferFailures[0];
+          if (transferFailure) throw transferFailure.reason;
+        }
       }
     } finally { clearInterval(progress); }
     await this.assemble(d, dir, signal);
+  }
+  async downloadSingleRanged(d, info, dir, headers, signal) {
+    signal.throwIfAborted();
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.mkdir(dir, { recursive: true });
+    const segment = { start: 0, end: info.total - 1, downloaded: 0 };
+    d.segments = [segment];
+    d.downloaded = 0;
+    d.connections = 1;
+    await this.persist();
+    this.changed();
+    const result = await this.transfer(d, info, segment, path.join(dir, '0.part'), headers, signal, undefined, true);
+    if (result?.fallbackResponse || result?.retryWithoutRange) {
+      await this.downloadUnranged(d, dir, headers, signal, result.fallbackResponse, d.url);
+    }
   }
   async downloadUnranged(d, dir, headers, signal, response, url) {
     if (!response) response = await request(url, { headers, signal });
@@ -535,7 +585,7 @@ export class DownloadEngine extends EventEmitter {
         if ((ranged && response.statusCode !== 206) || (!ranged && response.statusCode !== 200)) {
           const status = response.statusCode; response.destroy();
           throw failure(`Server returned HTTP ${status}${ranged ? ' instead of a byte range' : ''}.`, transientStatus(status),
-            status === 429 || status === 503 ? retryAfter(response.headers['retry-after']) : null);
+            status === 429 || status === 503 ? retryAfter(response.headers['retry-after']) : null, status);
         }
         if (ranged) {
           const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers['content-range'] || '');
@@ -555,10 +605,11 @@ export class DownloadEngine extends EventEmitter {
         if (expected !== null && segment.downloaded !== expected) throw new Error('Connection ended before the segment finished.');
         return;
       } catch (error) {
-        if (signal.aborted || attempt === 3 || error.retryable === false) throw error;
+        if (signal.aborted || error.retryable === false) throw error;
         // Never shorten the server's requested cooldown. Long waits release
         // the active job instead of consuming a download slot indefinitely.
         if (error.retryDelay > 60000) throw failure('The server requested a longer cooldown. Retry after ' + Math.ceil(error.retryDelay / 1000) + ' seconds. Partial data has been kept.');
+        if (attempt === 3) throw error;
         await delay(error.retryDelay ?? 250 * 2 ** attempt, undefined, { signal });
       }
     }
