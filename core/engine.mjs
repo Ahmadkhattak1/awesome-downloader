@@ -8,6 +8,8 @@ import { resolveHls, scopedHeaders } from './hls.mjs';
 import { youtubeUrl, downloadYoutube } from './youtube.mjs';
 import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
+import { torrentSource } from './torrent.mjs';
+import { downloadTorrent, destroySharedTorrentClient } from './torrent-download.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
 const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
@@ -45,7 +47,7 @@ const failure = (message, retryable = false, retryDelay = null, httpStatus = nul
 const connectionLimitFailure = error => [403, 429, 503].includes(error?.httpStatus);
 
 export class DownloadEngine extends EventEmitter {
-  constructor({ dataDirectory, downloadDirectory, tickMs = 500 }) {
+  constructor({ dataDirectory, downloadDirectory, tickMs = 500, torrentClient = null }) {
     super();
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
@@ -59,6 +61,8 @@ export class DownloadEngine extends EventEmitter {
     this.rateTail = Promise.resolve();
     this.rateNext = 0;
     this.originConnectionLimits = new Map();
+    // Injected by tests; production lazily creates one shared BitTorrent client.
+    this.torrentClient = torrentClient;
   }
   async init() {
     await fs.mkdir(this.partsDirectory, { recursive: true });
@@ -116,10 +120,26 @@ export class DownloadEngine extends EventEmitter {
     this.settings = next;
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });
   }
-  async add({ urls, url, audioUrl, outputFormat, youtubeFormat, sabr, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
+  async add({ urls, url, magnet, torrent, audioUrl, outputFormat, youtubeFormat, sabr, filename, scheduledAt, referer, headers, directory, category, description, queueOnly = false, reviewOnly = false, reuseActive = false } = {}) {
     const source = urls || (url ? [url] : []);
-    if (!Array.isArray(source) || !source.length || source.length > 500) throw new Error('Add between 1 and 500 download URLs.');
-    const normalized = source.map(validUrl);
+    if (!Array.isArray(source) || source.length > 500 || (!source.length && magnet === undefined && torrent === undefined)) throw new Error('Add between 1 and 500 download URLs.');
+    // BitTorrent sources sit beside HTTP ones: a magnet link, or a .torrent file
+    // supplied inline (base64 or data URL) the way MDXP's download/add accepts it.
+    const torrents = [], web = [];
+    for (const value of source) {
+      const candidate = torrentSource(value);
+      if (candidate) torrents.push(candidate); else web.push(validUrl(value));
+    }
+    const inlineTorrent = value => {
+      if (typeof value !== 'string' || /^magnet:\?/i.test(value.trim()) || /^data:/i.test(value.trim())) return torrentSource(value);
+      // A bare payload is the base64 .torrent body an MDXP client sends.
+      return torrentSource(Buffer.from(value.trim(), 'base64'));
+    };
+    if (magnet !== undefined) torrents.push(inlineTorrent(magnet));
+    if (torrent !== undefined) torrents.push(inlineTorrent(torrent));
+    if (torrents.some(item => !item)) throw new Error('That torrent source is not valid.');
+    if (torrents.length > 50) throw new Error('Add at most 50 torrents at once.');
+    const normalized = web;
     if(youtubeFormat!==undefined&&(!/^(?:audio:)?[\w-]+(?:\+[\w-]+)?$/.test(youtubeFormat)||youtubeFormat.length>80||normalized.some(u=>!youtubeUrl(u))))throw new Error('Invalid YouTube format.');
     if(outputFormat!==undefined&&!['mp4','mp3'].includes(outputFormat))throw new Error('Invalid output format.');
     const sabrSession=sabr===undefined?undefined:normalizeSabrSession(sabr);
@@ -137,6 +157,10 @@ export class DownloadEngine extends EventEmitter {
         (sabrSession ? d.sabr?.videoId===sabrSession.videoId && d.sabr?.videoItag===sabrSession.videoItag && d.sabr?.audioItag===sabrSession.audioItag : !d.sabr && d.url===normalized[0] && d.audioUrl===audio && d.youtubeFormat===youtubeFormat));
       if(existing)return [existing.id];
     }
+    if (reuseActive && !normalized.length && torrents.length === 1) {
+      const existing = this.downloads.find(d => d.kind === 'torrent' && d.infoHash === torrents[0].infoHash && !['complete','cancelled','error'].includes(d.status));
+      if (existing) return [existing.id];
+    }
     const added = normalized.map(u => {
       const name = safeFilename(filename || suggestedName(u));
       const selectedCategory = category || categoryFor(name);
@@ -146,6 +170,16 @@ export class DownloadEngine extends EventEmitter {
         directory: directory || this.settings.categoryDirectories[selectedCategory] || this.settings.defaultDirectory, createdAt: new Date().toISOString(), segments: [], validator: null,
         headers: cleanHeaders({ ...headers, ...(referer ? { referer } : {}) }) };
     });
+    added.push(...torrents.map(t => ({
+      id: randomUUID(), url: t.magnet, magnet: t.magnet, infoHash: t.infoHash, kind: 'torrent', torrentName: t.name,
+      filename: safeFilename(filename || t.name), explicitFilename: Boolean(filename),
+      category: category || categoryFor(safeFilename(t.name)), explicitCategory: Boolean(category), description: description || '',
+      status: queueOnly || reviewOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued', needsReview: reviewOnly,
+      scheduledAt: when ? new Date(when).toISOString() : null,
+      downloaded: 0, total: t.length, speed: 0, connections: 0, progress: 0, error: null, path: null,
+      directory: directory || this.settings.categoryDirectories[categoryFor(safeFilename(t.name))] || this.settings.defaultDirectory,
+      createdAt: new Date().toISOString(), segments: [], validator: null, headers: cleanHeaders({})
+    })));
     this.downloads.push(...added);
     await this.persist();
     this.changed(); this.tick();
@@ -215,6 +249,7 @@ export class DownloadEngine extends EventEmitter {
   async run(d, signal) {
     d.status = 'probing'; d.error = null; d.notice = null; this.changed();
     if(d.sabr){await this.runSabr(d,cleanHeaders(d.headers),signal);return;}
+    if(d.kind==='torrent'||d.magnet){await this.runTorrent(d,signal);return;}
     if(youtubeUrl(d.url)) {
       const dir=path.join(this.partsDirectory,d.id);await fs.mkdir(dir,{recursive:true});
       d.kind='youtube';d.resumable=true;d.connections=1;
@@ -406,6 +441,42 @@ export class DownloadEngine extends EventEmitter {
     segment.end = received > 0 ? received - 1 : null;
     await this.persist();
     this.changed();
+  }
+  async runTorrent(d, signal) {
+    d.kind = 'torrent';
+    d.status = 'probing'; d.error = null; d.notice = null; d.resumable = false;
+    this.changed();
+    const result = await downloadTorrent({
+      source: d.magnet || d.url,
+      directory: d.directory,
+      signal,
+      client: this.torrentClient,
+      onMetadata: metadata => {
+        if (metadata.length) d.total = metadata.length;
+        if (metadata.files?.length) d.files = metadata.files.length;
+        if (!d.explicitFilename && metadata.name) {
+          d.filename = safeFilename(metadata.name);
+          if (!d.explicitCategory) d.category = categoryFor(d.filename);
+        }
+        this.changed();
+      },
+      onProgress: progress => {
+        d.status = 'downloading';
+        d.downloaded = progress.downloaded;
+        if (progress.length) d.total = progress.length;
+        d.speed = progress.speed; d.connections = progress.peers; d.progress = progress.progress;
+        this.changed();
+      }
+    });
+    d.total = result.length || d.total;
+    d.downloaded = d.total; d.speed = 0; d.connections = 0; d.progress = 1;
+    // Single-file torrents land at <dir>/<file>; multi-file ones keep their folder.
+    const first = result.files[0];
+    d.path = first ? path.join(d.directory, first.path) : d.directory;
+    await this.persist();
+    d.status = 'complete';
+    this.changed();
+    this.emit('complete', { ...d });
   }
   async assemble(d, dir, signal, files = d.segments.map((_,i) => path.join(dir, `${i}.part`)), converted = false) {
     signal.throwIfAborted();
@@ -624,5 +695,7 @@ export class DownloadEngine extends EventEmitter {
     for (const job of this.jobs.values()) job.controller.abort();
     await Promise.allSettled([...this.jobs.values()].map(j => j.promise));
     await this.persist();
+    // An injected client belongs to the caller (tests); only dispose our own.
+    if (!this.torrentClient) await destroySharedTorrentClient();
   }
 }

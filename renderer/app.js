@@ -288,7 +288,7 @@ $('#add-form').addEventListener('submit',async event => {
   const filename = $('#download-filename').value.trim(), scheduled = $('#download-schedule').value;
   try {
     if (!urls.length) throw new Error('Enter at least one download address.');
-    for (const url of urls) { let parsed; try { parsed = new URL(url); } catch { throw new Error(`Invalid address: ${url}`); } if (!['http:','https:'].includes(parsed.protocol)) throw new Error('Download addresses must begin with http:// or https://.'); }
+    for (const url of urls) { let parsed; try { parsed = new URL(url); } catch { throw new Error(`Invalid address: ${url}`); } if (parsed.protocol === 'magnet:') { if (!/xt=urn:btih:/i.test(url)) throw new Error('That magnet link has no BitTorrent info hash.'); continue; } if (!['http:','https:'].includes(parsed.protocol)) throw new Error('Download addresses must begin with http://, https:// or magnet:?.'); }
     if (filename && urls.length !== 1) throw new Error('A custom file name can only be used for a single address.');
     const scheduledAt = scheduled ? new Date(scheduled).toISOString() : undefined;
     if (scheduledAt && new Date(scheduledAt).getTime() <= Date.now()) throw new Error('Choose a future start time or leave Start at empty.');

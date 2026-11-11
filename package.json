@@ -128,7 +128,8 @@
   "dependencies": {
     "electron-updater": "6.8.12",
     "ffmpeg-static": "^5.3.0",
-    "googlevideo": "^5.0.1"
+    "googlevideo": "^5.0.1",
+    "webtorrent": "^1.9.7"
   },
   "overrides": {
     "app-builder-lib": {

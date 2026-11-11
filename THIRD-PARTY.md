@@ -14,6 +14,14 @@ Corresponding source/build material for this exact binary and its linked librari
 must be prepared before a public binary release; upstream links here alone are not
 a completed redistribution audit. See docs/RELEASING.md.
 
+# BitTorrent transport
+
+Torrent downloads use WebTorrent 2.6.9 (MIT). Awesome Downloader supplies its own
+magnet/.torrent parsing, engine integration, progress reporting, and user interface;
+WebTorrent handles peer connections, piece verification, and file writing.
+
+Source and license: https://github.com/webtorrent/webtorrent
+
 # YouTube SABR transport
 
 The browser-capture download path uses `googlevideo` 5.0.1, an MIT-licensed library for YouTube's UMP/SABR transport. Awesome Downloader supplies its own browser-session capture, format selection, desktop handoff, file writing, muxing, and user interface.
