@@ -98,6 +98,13 @@ test('explicit context-menu downloads still hand off exactly once',async()=>{
  assert.equal(h.nativeRequests[0].referer,'https://example.com/downloads');
 });
 
+test('a magnet link from the page is handed to the desktop as a torrent',async()=>{
+  const h=harness(),hash='0123456789abcdef0123456789abcdef01234567',magnet=`magnet:?xt=urn:btih:${hash}&dn=Sample`;
+  await h.events.context({menuItemId:'awesome-link',linkUrl:magnet},{id:5,url:'https://example.com/torrents'});
+  assert.equal(h.nativeRequests.length,1);assert.equal(h.nativeRequests[0].url,magnet);
+  const rejected=await h.request({action:'download',item:{url:'magnet:?xt=urn:btih:nope'}},{id:'extension-id',tab:{id:5}});
+  assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,1);
+});
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
   const url='https://example.com/video.m3u8';

@@ -234,6 +234,15 @@ if (process.argv.includes('--native-host')) {
           return result.canceled ? null : result.filePaths[0];
         },
         clipboard: () => clipboard.readText(),
+        // The engine accepts the .torrent body directly; the renderer never sees a
+        // filesystem path from a browser-style caller, only this explicit pick.
+        pickTorrent: async (_data, senderWindow) => {
+          const result = await dialog.showOpenDialog(senderWindow || window, { properties: ['openFile'], filters: [{ name: 'Torrent files', extensions: ['torrent'] }] });
+          if (result.canceled || !result.filePaths[0]) return null;
+          const file = result.filePaths[0];
+          if ((await fs.stat(file)).size > 10 * 1024 * 1024) throw new Error('That torrent file is larger than 10 MiB.');
+          return { name: path.basename(file), base64: (await fs.readFile(file)).toString('base64') };
+        },
         integration,
         openIntegration: openIntegrationWindow,
         openOptions: openOptionsWindow,

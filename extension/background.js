@@ -83,6 +83,16 @@ api.webRequest.onBeforeSendHeaders?.addListener(rememberRequest,{urls:['http://*
 function httpUrl(value) {
   try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : null; } catch { return null; }
 }
+// A magnet link has no HTTP origin; the desktop resolves it through BitTorrent.
+function magnetUrl(value) {
+  if (typeof value !== 'string') return null;
+  const uri = value.trim();
+  if (!/^magnet:\?/i.test(uri) || uri.length > 8192) return null;
+  try {
+    const hashes = new URLSearchParams(uri.slice(uri.indexOf('?') + 1)).getAll('xt');
+    return hashes.some(entry => /^urn:btih:(?:[a-f0-9]{40}|[a-z2-7]{32})$/i.test(entry)) ? uri : null;
+  } catch { return null; }
+}
 function unsupported(url, mime = '') { return /\.mpd(?:[?#]|$)/i.test(url) || /dash\+xml/i.test(mime); }
 function isFragment(url) { return /\.(m4s|ts|aac)(?:[?#]|$)/i.test(url) || /\/init[^/]*\.mp4(?:[?#]|$)/i.test(url); }
 const hlsSeen=new Map(); let hlsActive=0;
@@ -130,8 +140,9 @@ async function enqueue(item, scope) {
     // selected tracks, not every format advertised by YouTube's player.
     sabr={videoId:player.videoId,serverAbrStreamingUrl,videoPlaybackUstreamerConfig:player.ustreamerConfig,clientInfo:{clientName:player.clientName,clientVersion:player.clientVersion},formats:[video,audio].filter(Boolean),videoItag,audioItag,requestBody:captured.requestBody};
   }
-  const url = httpUrl(sabr?.serverAbrStreamingUrl||item.url);
-  if (!url) throw new Error('Only direct HTTP and HTTPS links are supported.');
+  const source = sabr?.serverAbrStreamingUrl||item.url;
+  const url = magnetUrl(source) || httpUrl(source);
+  if (!url) throw new Error('Only HTTP, HTTPS and magnet links are supported.');
   if (unsupported(url, item.mime) || item.unsupported) throw new Error(item.reason || 'DASH streams are unsupported.');
   const requestHeaders=requestContext.get(scope)?.get(url);
   return nativeSend({action: 'download', url, youtubeFormat:item.youtubeFormat, sabr, startNow:item.startNow===true, audioUrl:httpUrl(item.audioUrl)||undefined, outputFormat:item.outputFormat, filename: item.filename, referer: httpUrl(requestHeaders?.referer || item.referer) || undefined,requestHeaders});
