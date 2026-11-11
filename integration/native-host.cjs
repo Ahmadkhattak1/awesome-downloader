@@ -35,6 +35,16 @@ function validateUrl(value) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only HTTP(S) URLs without embedded credentials are supported.');
   return url.href;
 }
+// A magnet link has no transfer path, only an info hash; the desktop resolves it
+// through BitTorrent, so it is accepted as a download source beside HTTP URLs.
+function isMagnet(value) { return typeof value === 'string' && /^magnet:\?/i.test(value.trim()); }
+function validateMagnet(value) {
+  if (typeof value !== 'string' || value.length > 8192 || !isMagnet(value)) throw new Error('Invalid magnet link.');
+  const uri = value.trim();
+  const hashes = new URLSearchParams(uri.slice(uri.indexOf('?') + 1)).getAll('xt');
+  if (!hashes.some(entry => /^urn:btih:(?:[a-f0-9]{40}|[a-z2-7]{32})$/i.test(entry))) throw new Error('Magnet link has no valid BitTorrent info hash.');
+  return uri;
+}
 function boundedInteger(value, max = Number.MAX_SAFE_INTEGER) {
   const number=Number(value);
   if(!Number.isSafeInteger(number)||number<0||number>max)throw new Error('Invalid SABR number.');
@@ -78,7 +88,7 @@ function sanitizeSabr(value,downloadUrl) {
 }
 function sanitizeRequest(message) {
   if (!message || !['download','formats'].includes(message.action)) throw new Error('Unsupported native action.');
-  const result = {url:validateUrl(message.url)};
+  const result = {url:isMagnet(message.url) ? validateMagnet(message.url) : validateUrl(message.url)};
   if(message.action==='formats') {
     const u=new URL(result.url);
     if(u.protocol!=='https:'||!['www.youtube.com','youtube.com','m.youtube.com'].includes(u.hostname)||u.pathname!=='/watch'||!/^[\w-]{11}$/.test(u.searchParams.get('v')||''))throw new Error('A YouTube watch URL is required.');

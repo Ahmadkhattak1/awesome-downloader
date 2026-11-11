@@ -98,6 +98,24 @@ test('explicit context-menu downloads still hand off exactly once',async()=>{
  assert.equal(h.nativeRequests[0].referer,'https://example.com/downloads');
 });
 
+test('a magnet link from the page is handed to the desktop as a torrent',async()=>{
+  const h=harness(),hash='0123456789abcdef0123456789abcdef01234567',magnet=`magnet:?xt=urn:btih:${hash}&dn=Sample`;
+  await h.events.context({menuItemId:'awesome-link',linkUrl:magnet},{id:5,url:'https://example.com/torrents'});
+  assert.equal(h.nativeRequests.length,1);assert.equal(h.nativeRequests[0].url,magnet);
+  const rejected=await h.request({action:'download',item:{url:'magnet:?xt=urn:btih:nope'}},{id:'extension-id',tab:{id:5}});
+  assert.equal(rejected.ok,false);assert.equal(h.nativeRequests.length,1);
+});
+test('a magnet link collected from a page stays available to the format menu',async()=>{
+  const h=harness(),sender={id:'extension-id',tab:{id:6}},hash='89abcdef0123456789abcdef0123456789abcdef',magnet=`magnet:?xt=urn:btih:${hash}&dn=Sample`;
+  await h.request({action:'remember',items:[{url:magnet,title:'Sample torrent'},{url:'https://example.com/page'}]},sender);
+  const result=await h.request({action:'listForFrame'},sender);
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].url,magnet);
+  assert.equal(result.items[0].format,'Torrent');
+  assert.equal(result.items[0].title,'Sample torrent');
+  await h.request({action:'download',item:result.items[0]},sender);
+  assert.equal(h.nativeRequests[0].url,magnet);
+});
 test('observing a video-only leaf never erases its master audio pairing',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
   const url='https://example.com/video.m3u8';
@@ -145,6 +163,29 @@ test('individual HLS media fragments are not listed as complete videos',async()=
   const result=await h.request({action:'listForFrame'},sender);
   assert.equal(result.items.length,1);assert.equal(result.items[0].url,'https://example.com/movie.mp4');
 });
+test('an installed PWA window reuses the tab capture reported with tabId -1',async()=>{
+  const h=harness();
+  // A PWA window messages as a tab but its network requests arrive without one.
+  const sender={id:'extension-id',tab:{id:12,url:'https://www.youtube.com/watch?v=wLdZWyLOJCI'},documentId:'pwa-document-1'};
+  const stream='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999';
+  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'PWA video',sabr:true,sabrUrl:stream,ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[
+    {itag:137,mimeType:'video/mp4; codecs="avc1"',height:1080,qualityLabel:'1080p',bitrate:3000000},
+    {itag:140,mimeType:'audio/mp4; codecs="mp4a.40.2"',audioQuality:'AUDIO_QUALITY_MEDIUM',bitrate:128000}
+  ]}},sender);
+  // The playback request from the PWA is reported with tabId -1.
+  h.events.beforeRequest({requestId:'pwa-seed',tabId:-1,documentId:'pwa-document-1',url:stream,requestBody:{raw:[{bytes:Uint8Array.from([7,8,9]).buffer}]}});
+  h.events.response({requestId:'pwa-seed',tabId:-1,documentId:'pwa-document-1',url:stream,statusCode:200,type:'xmlhttprequest',responseHeaders:[{name:'Content-Type',value:'application/vnd.yt-ump'}]});
+  const item=(await h.request({action:'listForFrame'},sender)).items.find(value=>value.quality==='1080p');
+  assert.ok(item,'the PWA capture should keep SABR formats selectable');
+  await h.request({action:'download',item:{...item,startNow:true}},sender);
+  assert.equal(h.nativeRequests[0].sabr.requestBody,'BwgJ');
+  assert.equal(h.nativeRequests[0].sabr.videoItag,137);
+  // Another app window must not inherit this capture.
+  const other={...sender,tab:{...sender.tab,id:13},documentId:'pwa-document-2'};
+  const missed=await h.request({action:'listForFrame'},other);
+  assert.equal(missed.items.length,0);
+});
+
 test('media cache is bounded, deduplicated, and cleared on navigation',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:9}};
   const items=Array.from({length:120},(_,i)=>({url:`https://example.com/${i}.mp4`}));

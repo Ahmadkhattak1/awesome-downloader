@@ -464,6 +464,30 @@ test('restart recovers paused offsets from actual disk files', async t => {
   } finally { await restored.close(); }
 });
 
+test('a chunked response without a declared length downloads once and completes', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'awesome-download-chunked-test-'));
+  const parts = [randomBytes(70000), randomBytes(30000)];
+  const data = Buffer.concat(parts);
+  let bodies = 0;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
+    // No content-length and no accept-ranges: the size is unknowable up front.
+    res.writeHead(200);
+    if (!req.headers.range) bodies++;
+    for (const part of parts) res.write(part);
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const engine = await new DownloadEngine({ dataDirectory: path.join(root, 'state'), downloadDirectory: path.join(root, 'downloads'), tickMs: 30 }).init();
+  t.after(async () => { await engine.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await fs.rm(root, { recursive: true, force: true }); });
+  await engine.add({ url: `http://127.0.0.1:${server.address().port}/chunked.bin` });
+  const d = engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(digest(await fs.readFile(d.path)), digest(data));
+  assert.equal(bodies, 1, 'an unknown-length stream must not be requested twice');
+});
+
 test('server ignoring ranges falls back to its full response and preserves exact bytes', async t => {
   const f = await fixture(t);
   await f.engine.add({ url: `${f.url}/ignore-range` });

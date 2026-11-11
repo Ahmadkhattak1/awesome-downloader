@@ -18,6 +18,14 @@ test('default bridge location is shared with browsers outside AppData virtualiza
   await fs.writeFile(path.join(root,'.awesome-downloader','bridge.json'),JSON.stringify(config));
   assert.deepEqual(readBridge(),config);
 });
+test('magnet links are accepted for a browser-initiated torrent',()=>{
+  const hash='0123456789abcdef0123456789abcdef01234567', magnet=`magnet:?xt=urn:btih:${hash}&dn=Test`;
+  assert.equal(sanitizeRequest({action:'download',url:magnet}).url,magnet);
+  assert.throws(()=>sanitizeRequest({action:'download',url:'magnet:?dn=no-hash'}),/info hash/);
+  assert.throws(()=>sanitizeRequest({action:'download',url:'magnet:?xt=urn:btih:nothex'}),/info hash/);
+  assert.throws(()=>sanitizeRequest({action:'download',url:`magnet:?xt=urn:btih:${hash}`,filename:'../x'}));
+  assert.throws(()=>sanitizeRequest({action:'formats',url:magnet}));
+});
 test('one-click intent is preserved only for an explicit boolean',()=>{
   const request={action:'download',url:'https://example.com/video.mp4'};
   assert.equal(sanitizeRequest({...request,startNow:true}).startNow,true);
