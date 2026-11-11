@@ -497,6 +497,275 @@ test('HTTP 416 on a ranged request retries as one plain GET', async t => {
   assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
 });
 
+test('connection-limited hosts restart once and remember one connection for that origin', async t => {
+  let active = 0, rejected = 0, fullRangeRestarts = 0, firstComplete = false;
+  const rangesByPath = new Map();
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    const seen = rangesByPath.get(req.url) || [];
+    seen.push([start, end]);
+    rangesByPath.set(req.url, seen);
+    if (!firstComplete && req.url === '/file.bin' && active >= 2) {
+      rejected++;
+      res.writeHead(403);
+      res.end();
+      return true;
+    }
+    if (!firstComplete && req.url === '/file.bin' && start === 0 && end === f.data.length - 1) fullRangeRestarts++;
+    active++;
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    if (firstComplete) {
+      res.end(f.data.subarray(start, end + 1));
+      active--;
+      return true;
+    }
+    let offset = start, released = false;
+    const release = () => { if (!released) { released = true; active--; } };
+    const interval = setInterval(() => {
+      if (offset > end) { clearInterval(interval); res.end(); return; }
+      const until = Math.min(end + 1, offset + 16384);
+      res.write(f.data.subarray(offset, until));
+      offset = until;
+    }, 5);
+    res.on('close', () => { clearInterval(interval); release(); });
+    return true;
+  } });
+
+  const [firstId] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const first = f.engine.downloads.find(d => d.id === firstId);
+  await until(() => ['complete', 'error'].includes(first.status));
+  assert.equal(first.status, 'complete', first.error);
+  assert.ok(rejected > 0, 'fixture must reject excess parallel connections');
+  assert.equal(fullRangeRestarts, 1);
+  assert.equal(first.connections, 1);
+  assert.equal(digest(await fs.readFile(first.path)), digest(f.data));
+
+  firstComplete = true;
+  const [secondId] = await f.engine.add({ url: `${f.url}/second.bin` });
+  const second = f.engine.downloads.find(d => d.id === secondId);
+  await until(() => ['complete', 'error'].includes(second.status));
+  assert.equal(second.status, 'complete', second.error);
+  assert.equal(second.connections, 1);
+  assert.deepEqual(rangesByPath.get('/second.bin'), [[0, f.data.length - 1]]);
+  assert.equal(digest(await fs.readFile(second.path)), digest(f.data));
+
+  const otherRanges = [];
+  const other = http.createServer((req, res) => {
+    res.setHeader('accept-ranges', 'bytes');
+    res.setHeader('content-length', f.data.length);
+    if (req.method === 'HEAD') return res.end();
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    otherRanges.push([start, end]);
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    res.end(f.data.subarray(start, end + 1));
+  });
+  await new Promise(resolve => other.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { other.closeAllConnections(); await new Promise(resolve => other.close(resolve)); });
+  const [thirdId] = await f.engine.add({ url: `http://127.0.0.1:${other.address().port}/third.bin` });
+  const third = f.engine.downloads.find(d => d.id === thirdId);
+  await until(() => ['complete', 'error'].includes(third.status));
+  assert.equal(third.status, 'complete', third.error);
+  assert.ok(third.connections > 1);
+  assert.ok(otherRanges.length > 1, 'a different origin must keep configured concurrency');
+  assert.equal(digest(await fs.readFile(third.path)), digest(f.data));
+});
+
+test('adaptive restart honours the final Retry-After from mixed 429 and 503 failures', async t => {
+  const statuses = new Set(), statusByRange = new Map();
+  let lastRejectedAt = 0, fullRangeStartedAt = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    if (start === 0 && end === f.data.length - 1) {
+      fullRangeStartedAt = Date.now();
+      res.writeHead(206, {
+        'accept-ranges': 'bytes',
+        'content-range': `bytes ${start}-${end}/${f.data.length}`,
+        'content-length': f.data.length
+      });
+      res.end(f.data);
+      return true;
+    }
+    if (start !== 0) {
+      if (!statusByRange.has(req.headers.range)) statusByRange.set(req.headers.range, statusByRange.size % 2 ? 429 : 503);
+      const status = statusByRange.get(req.headers.range);
+      statuses.add(status);
+      lastRejectedAt = Date.now();
+      res.writeHead(status, { 'retry-after': '1' });
+      res.end();
+      return true;
+    }
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    let offset = start;
+    const interval = setInterval(() => {
+      if (offset > end) { clearInterval(interval); res.end(); return; }
+      const until = Math.min(end + 1, offset + 8192);
+      res.write(f.data.subarray(offset, until));
+      offset = until;
+    }, 60);
+    res.on('close', () => clearInterval(interval));
+    return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status), 12000);
+  assert.equal(d.status, 'complete', d.error);
+  assert.deepEqual([...statuses].sort(), [429, 503]);
+  assert.ok(fullRangeStartedAt - lastRejectedAt >= 900, `adaptive retry waited ${fullRangeStartedAt - lastRejectedAt}ms`);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('a server that accepts ranges only from byte zero restarts as one full range', async t => {
+  let fullRangeRestarts = 0, plainRequests = 0, rejected = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (!req.headers.range) { plainRequests++; return false; }
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    if (start !== 0) {
+      rejected++;
+      res.writeHead(403);
+      res.end();
+      return true;
+    }
+    if (end === f.data.length - 1) fullRangeRestarts++;
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    res.end(f.data.subarray(start, end + 1));
+    return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.ok(rejected > 0);
+  assert.equal(fullRangeRestarts, 1);
+  assert.equal(plainRequests, 0);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('a range-required server can reject nonzero starts with HTTP 416', async t => {
+  let fullRangeRestarts = 0, plainRequests = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET') return false;
+    if (!req.headers.range) {
+      plainRequests++;
+      res.writeHead(403);
+      res.end();
+      return true;
+    }
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    if (start !== 0) {
+      res.writeHead(416, { 'content-range': `bytes */${f.data.length}` });
+      res.end();
+      return true;
+    }
+    if (end === f.data.length - 1) fullRangeRestarts++;
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    res.end(f.data.subarray(start, end + 1));
+    return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(fullRangeRestarts, 1);
+  assert.equal(plainRequests, 0);
+  assert.equal(d.connections, 1);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('a failed one-connection restart surfaces the HTTP error without publishing a file', async t => {
+  let fullRangeAttempts = 0;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    if (start === 0 && end !== f.data.length - 1) {
+      res.writeHead(206, {
+        'accept-ranges': 'bytes',
+        'content-range': `bytes ${start}-${end}/${f.data.length}`,
+        'content-length': end - start + 1
+      });
+      res.end(f.data.subarray(start, end + 1));
+      return true;
+    }
+    if (start === 0) fullRangeAttempts++;
+    res.writeHead(403);
+    res.end();
+    return true;
+  } });
+  await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => d.status === 'error');
+  assert.match(d.error, /HTTP 403/);
+  assert.equal(fullRangeAttempts, 1);
+  assert.equal(d.path, null);
+  const outputs = await fs.readdir(path.join(f.root, 'downloads')).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(outputs, []);
+});
+
+test('cancelling the adaptive one-connection restart removes its partial output', async t => {
+  let fullRangeStarted = false;
+  const f = await fixture(t, { intercept: (req, res) => {
+    if (req.method !== 'GET' || !req.headers.range) return false;
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range).map(Number);
+    if (start !== 0) {
+      res.writeHead(403);
+      res.end();
+      return true;
+    }
+    res.writeHead(206, {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${end}/${f.data.length}`,
+      'content-length': end - start + 1
+    });
+    if (end !== f.data.length - 1) {
+      res.end(f.data.subarray(start, end + 1));
+      return true;
+    }
+    fullRangeStarted = true;
+    let offset = 0;
+    const interval = setInterval(() => {
+      if (offset >= f.data.length) { clearInterval(interval); res.end(); return; }
+      const until = Math.min(f.data.length, offset + 16384);
+      res.write(f.data.subarray(offset, until));
+      offset = until;
+    }, 5);
+    res.on('close', () => clearInterval(interval));
+    return true;
+  } });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => fullRangeStarted && d.segments.length === 1 && d.downloaded > 100000);
+  await f.engine.action(id, 'cancel');
+  assert.equal(d.status, 'cancelled');
+  assert.equal(d.path, null);
+  await assert.rejects(fs.stat(path.join(f.root, 'state', 'parts', id)), { code: 'ENOENT' });
+  const outputs = await fs.readdir(path.join(f.root, 'downloads')).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  assert.deepEqual(outputs, []);
+});
+
 test('permanent HTTP failures on byte ranges fail without retrying', async t => {
   const requests = new Map();
   const f = await fixture(t, { intercept: (req, res) => {
@@ -507,6 +776,7 @@ test('permanent HTTP failures on byte ranges fail without retrying', async t => 
   await f.engine.add({ url: `${f.url}/file.bin` }); const d = f.engine.downloads[0];
   await until(() => d.status === 'error'); assert.match(d.error, /HTTP 403/);
   assert.ok(requests.size > 0); assert.deepEqual([...requests.values()].filter(n => n > 1), []);
+  assert.equal(requests.has(`bytes=0-${f.data.length - 1}`), false, 'all-403 failures must not be mistaken for a connection limit');
 });
 
 test('503 with Retry-After waits as instructed, then completes the range', async t => {
