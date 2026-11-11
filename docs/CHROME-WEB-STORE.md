@@ -20,7 +20,8 @@ option you choose to the desktop app.
 
 - Choose a detected video or audio quality from the page.
 - Send links, video, and audio from the right-click menu.
-- Hand normal browser downloads to the desktop download manager.
+- Leave normal browser downloads in the browser; send a link to Awesome
+  Downloader only when you choose one of the extension's download actions.
 - Keep detection and download history on your computer; no project analytics or
   advertising service receives your browsing activity.
 
@@ -51,9 +52,6 @@ Awesome Downloader desktop application.
   video, audio, and the current page.
 - **webRequest:** Observes media responses and captures only the request context
   needed to reproduce a transfer the user selects.
-- **downloads:** Pauses a new browser download during handoff to the desktop app,
-  cancels the browser copy only after the desktop app accepts it, and resumes it
-  if handoff fails.
 - **http://*/* and https://*/*:** Downloadable files and media can be hosted on
   any website or content-delivery domain. The extension needs page access to
   locate media and display its user-activated download control.
