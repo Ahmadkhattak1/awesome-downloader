@@ -995,6 +995,7 @@ test('a full-response fallback completes exact bytes when sibling range workers 
   assert.equal(d.connections, 1);
   assert.equal(d.error, null);
   assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+  await until(() => !f.engine.jobs.has(id));
   await assert.rejects(fs.stat(path.join(f.root, 'state', 'parts', id)), { code: 'ENOENT' });
 });
 
