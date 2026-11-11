@@ -4,19 +4,14 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 function harness({initialData={},webRequest={}}={}) {
-  const events={},specs={},nativeRequests=[],downloadCalls=[];
+  const events={},specs={},nativeRequests=[];
   const event=name=>({addListener(fn,filter,spec){events[name]=fn;specs[name]=spec;}});
-  const data=structuredClone(initialData),downloads=new Map();
+  const data=structuredClone(initialData);
   const storage={async get(key){return structuredClone({[key]:data[key]});},async set(value){Object.assign(data,structuredClone(value));},async remove(key){delete data[key];}};
-  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},downloads:{onCreated:event('download')},action:{}};
-  Object.assign(browser.downloads,{
-    async pause(id){downloadCalls.push(['pause',id]);downloads.get(id).state='paused';},
-    async resume(id){downloadCalls.push(['resume',id]);downloads.get(id).state='in_progress';},
-    async cancel(id){downloadCalls.push(['cancel',id]);downloads.delete(id);}
-  });
+  const browser={runtime:{id:'extension-id',onMessage:event('message'),onInstalled:event('installed'),async sendNativeMessage(host,payload){nativeRequests.push(structuredClone(payload));return {ok:true};}},storage:{session:storage,local:storage},webRequest:{...webRequest,onHeadersReceived:event('response'),onBeforeRequest:event('beforeRequest'),onBeforeSendHeaders:event('requestHeaders')},tabs:{onRemoved:event('removed'),onUpdated:event('updated')},contextMenus:{onClicked:event('context'),async removeAll(){},create(){}},action:{async setBadgeText(){}}};
   browser.tabs.sendMessage=async()=>({ok:true});
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'background.js'),'utf8'),{browser,URL,URLSearchParams,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),youtubeMedia:require('./youtube-media.js')});
-  return {events,specs,data,nativeRequests,downloadCalls,createDownload(item){const value={state:'in_progress',tabId:-1,filename:'',referrer:'',...item};downloads.set(value.id,value);return structuredClone(value);},download:id=>downloads.get(id),request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
+  return {events,specs,data,nativeRequests,request(message,sender){return new Promise(resolve=>{const accepted=events.message(message,sender,resolve);if(accepted!==true)resolve(undefined);});}};
 }
 test('video selection forwards explicit one-click download intent',async()=>{
   const h=harness(),sender={id:'extension-id',tab:{id:3}};
@@ -90,20 +85,17 @@ test('SABR choices are hidden until the browser captures a usable session',async
  await h.request({action:'playerResponse',data:{videoId:'wLdZWyLOJCI',title:'Captured',sabr:true,sabrUrl:'https://r1.googlevideo.com/videoplayback?id=asset&sabr=1&expire=9999999999',ustreamerConfig:'AQID',clientName:1,clientVersion:'2.20261022.00.00',formats:[{itag:137,mimeType:'video/mp4',height:1080,qualityLabel:'1080p',bitrate:3000000},{itag:140,mimeType:'audio/mp4',bitrate:128000}]}},sender);
  const result=await h.request({action:'listForFrame'},sender);assert.equal(result.items.length,0);assert.match(result.notice,/captured/i);
 });
-test('duplicate browser downloads share one native handoff',async()=>{
+test('ordinary browser downloads are never intercepted',()=>{
  const h=harness();
- const first=h.createDownload({id:1,url:'https://example.com/file.bin',filename:'C:\\Downloads\\file.bin'}),second=h.createDownload({id:2,url:first.url,filename:first.filename});
- await Promise.all([h.events.download(first),h.events.download(second)]);
- assert.equal(h.nativeRequests.length,1);assert.equal(h.download(1),undefined);assert.equal(h.download(2),undefined);
- assert.deepEqual(h.downloadCalls.filter(([name])=>name==='pause').length,2);assert.deepEqual(h.downloadCalls.filter(([name])=>name==='cancel').length,2);
+ assert.equal(h.events.download,undefined);
+ assert.equal(h.nativeRequests.length,0);
 });
-test('identical URLs from different tabs do not share a credential-bearing handoff',async()=>{
+test('explicit context-menu downloads still hand off exactly once',async()=>{
  const h=harness();
- const url='https://example.com/file.bin';
- for(const tabId of [3,4])h.events.requestHeaders({tabId,url,requestHeaders:[{name:'Cookie',value:'session='+tabId}]});
- await Promise.all([3,4].map(tabId=>h.events.download(h.createDownload({id:tabId,tabId,url}))));
- assert.equal(h.nativeRequests.length,2);
- assert.deepEqual(h.nativeRequests.map(r=>r.requestHeaders.cookie).sort(),['session=3','session=4']);
+ await h.events.context({menuItemId:'awesome-link',linkUrl:'https://example.com/file.bin'},{id:3,url:'https://example.com/downloads'});
+ assert.equal(h.nativeRequests.length,1);
+ assert.equal(h.nativeRequests[0].url,'https://example.com/file.bin');
+ assert.equal(h.nativeRequests[0].referer,'https://example.com/downloads');
 });
 
 test('observing a video-only leaf never erases its master audio pairing',async()=>{

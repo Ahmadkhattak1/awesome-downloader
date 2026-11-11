@@ -43,6 +43,7 @@ test('extension manifests reference only files that exist', () => {
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifests[0].version, pkg.version);
   for (const [index, manifest] of manifests.entries()) {
+    assert.equal(manifest.permissions.includes('downloads'), false, `manifest ${index} must not intercept ordinary browser downloads`);
     for (const file of manifestFiles(manifest)) {
       const full = path.join(root, 'extension', file);
       assert.ok(existsSync(full), `manifest ${index} references missing file: ${file}`);

@@ -229,24 +229,3 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   task().then(respond, error => respond({ok: false, error: error.message}));
   return true;
 });
-const pendingHandoffs=new Map();
-function sharedHandoff(url,item){
-  const key=JSON.stringify([item.tabId,item.referrer||'',url]);
-  let pending=pendingHandoffs.get(key);if(pending)return pending;
-  pending=enqueue({url,filename:item.filename?.split(/[\\/]/).pop(),referer:item.referrer},item.tabId).finally(()=>pendingHandoffs.delete(key));
-  pendingHandoffs.set(key,pending);pending.catch(()=>{});return pending;
-}
-api.downloads.onCreated.addListener(async item => {
-  const url=item.finalUrl||item.url;
-  let paused=false,accepted=false;
-  try {
-    if (!httpUrl(url) || item.state==='complete') return;
-    // IDM's observed ownership model: pause during handoff, resume on failure.
-    await api.downloads.pause(item.id); paused=true;
-    await sharedHandoff(url,item);accepted=true;
-    await api.downloads.cancel(item.id);
-  } catch (e) {
-    if(paused&&!accepted)await api.downloads.resume(item.id).catch(()=>{});
-    await api.storage.local.set({lastError:accepted?`The browser download could not be canceled; Awesome Downloader continues the transfer: ${e.message}`:`Browser download was kept: ${e.message}`});
-  }
-});

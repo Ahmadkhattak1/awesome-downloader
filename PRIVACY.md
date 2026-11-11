@@ -1,6 +1,6 @@
 # Awesome Downloader privacy policy
 
-Effective date: October 29, 2026
+Effective date: November 11, 2026
 
 Awesome Downloader is a local desktop download manager with a companion browser
 extension. The project does not operate an analytics, advertising, account, or
@@ -10,7 +10,7 @@ download-proxy service.
 
 To show download choices and complete downloads selected by the user, the
 extension processes the current page address and title, media addresses and
-metadata, browser download events, and a small set of request headers needed by
+metadata, and a small set of request headers needed by
 some sites (`Referer`, `Origin`, `User-Agent`, cookies, or authorization headers).
 For YouTube playback it may also process bounded player and streaming-session
 metadata. This is browsing activity and may include authentication information.
