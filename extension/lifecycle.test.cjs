@@ -88,6 +88,24 @@ test('SPA navigation resets dismissal and closes choices for the previous video'
   assert.equal(host.style.display,'block');
 });
 
+test('format rows show a resolution badge, supporting metadata and a truncated title',async()=>{
+  const h=harness('content.js','success'),host=h.hosts[0];
+  await host.shadow.download.trigger('click');
+  const chooser=host.shadow.chooser,rows=chooser.children.filter(node=>node.className==='row');
+  assert.equal(rows.length,3);
+  const [first,,unavailable]=rows;
+  const badge=first.children[0],main=first.children[1];
+  assert.equal(badge.className,'badge');assert.equal(badge.textContent,'720p');
+  assert.equal(main.className,'row-main');
+  assert.equal(main.children[0].className,'row-title');
+  assert.equal(main.children[0].textContent,'Video');
+  assert.equal(main.children[1].className,'row-meta');
+  assert.deepEqual(main.children[1].children.map(node=>node.textContent),['MP4','Audio']);
+  assert.match(first.getAttribute('aria-label'),/^720p, MP4, Audio$/);
+  assert.equal(unavailable.disabled,true);assert.equal(unavailable.getAttribute('aria-disabled'),'true');
+  assert.equal(chooser.getAttribute('data-tone'),'');
+});
+
 test('format choices support arrow navigation and Escape restores button focus',async()=>{
   const h=harness('content.js','success'),host=h.hosts[0],button=host.shadow.download;
   await button.trigger('click');

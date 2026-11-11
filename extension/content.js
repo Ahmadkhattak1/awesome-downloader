@@ -47,14 +47,14 @@
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;z-index:2147483647;display:none;pointer-events:auto';
       const shadow = host.attachShadow({mode:'closed'});
-      shadow.innerHTML = '<style>:host{font:12px "Segoe UI",Tahoma,sans-serif;color:#17364b}.bar{display:flex;justify-content:flex-end;align-items:stretch}.download,.dismiss{font:12px "Segoe UI",Tahoma,sans-serif;background:linear-gradient(#f7fcff,#c6e2f5);color:#17364b;border:1px solid #719ab7;cursor:default;box-shadow:0 1px 3px #0003;height:27px}.download{border-radius:3px 0 0 3px;padding:3px 9px}.dismiss{width:24px;padding:0;border-left:0;border-radius:0 3px 3px 0;font-size:16px;line-height:20px}.download:hover,.dismiss:hover{background:linear-gradient(#fff,#acd4ef)}.dismiss:hover{color:#8d1c18}.download:disabled{opacity:.65}.chooser{position:fixed;background:#fafafa;color:#222;padding:5px;border:1px solid #8b8b8b;border-radius:2px;width:min(410px,calc(100vw - 10px));box-shadow:2px 3px 8px #0005;max-height:min(330px,55vh);overflow:auto}.chooser p{margin:4px 6px 7px;line-height:1.4}.row{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:0;box-shadow:none;padding:5px 7px;font:12px "Segoe UI",Tahoma,sans-serif;color:#001845;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row:hover:not(:disabled),.row:focus-visible{background:#dceeff;outline:1px dotted #315b75;outline-offset:-2px}.row:disabled{color:#8a8a8a}</style><div class="bar"><button class="download" type="button">↓ Download this video ▾</button><button class="dismiss" type="button" title="Hide this download panel" aria-label="Hide this download panel">×</button></div>';
+      shadow.innerHTML = '<style>:host{font:12px/1.45 "Segoe UI",Tahoma,sans-serif;color:#14202b}.bar{display:flex;justify-content:flex-end;align-items:stretch}.download,.dismiss{font:12px "Segoe UI",Tahoma,sans-serif;background:linear-gradient(#f7fcff,#c6e2f5);color:#17364b;border:1px solid #719ab7;cursor:default;box-shadow:0 1px 3px #0003;height:27px}.download{border-radius:4px 0 0 4px;padding:3px 10px}.dismiss{width:24px;padding:0;border-left:0;border-radius:0 4px 4px 0;font-size:16px;line-height:20px}.download:hover,.dismiss:hover{background:linear-gradient(#fff,#acd4ef)}.dismiss:hover{color:#8d1c18}.download:disabled{opacity:.65}.chooser{position:fixed;z-index:1;box-sizing:border-box;padding:8px;background:#fff;color:#14202b;border:1px solid #d7dde4;border-radius:10px;box-shadow:0 16px 38px #0f172a30,0 2px 6px #0f172a14;width:min(400px,calc(100vw - 12px));max-height:min(360px,60vh);overflow:auto;overscroll-behavior:contain}.hint{display:block;margin:0 0 6px;padding:2px 6px;line-height:1.45;color:#5c6875;font-size:11.5px}.chooser[data-tone=loading] .hint{display:flex;align-items:center;gap:7px}.chooser[data-tone=loading] .hint:before{content:"";width:11px;height:11px;flex:0 0 auto;border:2px solid #c9d6e4;border-top-color:#1f6feb;border-radius:50%;animation:awesome-spin .7s linear infinite}.chooser[data-tone=error] .hint{color:#a12a24}.chooser[data-tone=success] .hint{color:#1c6b3a}@keyframes awesome-spin{to{transform:rotate(1turn)}}.row{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;text-align:left;border:1px solid transparent;border-radius:8px;background:transparent;padding:8px 9px;font:12px "Segoe UI",Tahoma,sans-serif;color:#14202b}.row+.row{margin-top:2px}.row:hover:not(:disabled){background:#eff5fd;border-color:#d3e3f8}.row:active:not(:disabled){background:#e2eefc}.row:focus-visible{outline:2px solid #1f6feb;outline-offset:-2px}.row:disabled{opacity:.55;color:#7b8794}.badge{flex:0 0 auto;min-width:52px;padding:3px 8px;border-radius:7px;background:#e9f1fc;color:#1b4f8f;font-weight:700;font-size:11.5px;text-align:center;font-variant-numeric:tabular-nums}.row:disabled .badge{background:#eceff2;color:#7b8794}.row-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}.row-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.row-meta{display:flex;flex-wrap:wrap;gap:4px 8px;font-size:11px;color:#5f6b78}.row-meta span{white-space:nowrap}@media(max-width:420px){.chooser{width:calc(100vw - 12px);padding:6px}.row{padding:7px;gap:8px}.badge{min-width:46px}}</style><div class="bar"><button class="download" type="button">↓ Download this video ▾</button><button class="dismiss" type="button" title="Hide this download panel" aria-label="Hide this download panel">×</button></div>';
       const button = shadow.querySelector('.download');
       const dismiss = shadow.querySelector('.dismiss');
       const record = {video, host, shadow, button, dismissed:false, identity:mediaIdentity(video)}; records.add(record);
       resizeObserver.observe(video);
       intersectionObserver.observe(video);
       document.documentElement.appendChild(host);
-      button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','false');
+      button.setAttribute('aria-haspopup','dialog');button.setAttribute('aria-expanded','false');
       const syncIdentity=()=>{
         const identity=mediaIdentity(video);if(identity===record.identity)return false;
         record.identity=identity;record.dismissed=false;closeChooser(record);return true;
@@ -80,36 +80,49 @@
         {
           const old = shadow.querySelector('.chooser'); if(old) { closeChooser(record); position(); return; }
           closeChoosers(record);
-          const chooser=document.createElement('div'); chooser.className='chooser';chooser.setAttribute('role','menu');
-          const hint=document.createElement('p'); hint.textContent='Checking available video formats…';
+          const chooser=document.createElement('div'); chooser.className='chooser';chooser.setAttribute('role','dialog');chooser.setAttribute('aria-label','Choose a video format');
+          const hint=document.createElement('p'); hint.className='hint';hint.setAttribute('role','status');hint.textContent='Checking available video formats…';
+          const setHint=(text,tone='')=>{hint.textContent=text;chooser.setAttribute('data-tone',tone);};
+          chooser.setAttribute('data-tone','loading');
           chooser.append(hint); shadow.append(chooser);button.setAttribute('aria-expanded','true'); position();
           try {
             const result=await send({action:'listForFrame'});
             if(!result?.ok)throw new Error(result?.error||'Could not list video formats.');
-            hint.textContent='Choose a format to download';
+            setHint('Choose a format to download');
             const candidates=result?.items||[];
             const youtube=/(^|\.)youtube\.com$/.test(location.hostname);
             if(!youtube&&url&&!candidates.some(item=>item.url===url)) candidates.unshift({url,title:document.title});
-            if (!candidates.length) { hint.textContent=result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'); return; }
+            if (!candidates.length) { setHint(result.notice || (youtube?'Play the video briefly, then reopen this menu. No complete video with audio has been captured yet.':'No direct media links detected. Play the video and try again.'),'error'); return; }
             const choices=globalThis.mediaChoices(candidates,{url,poster:video.poster});
-            if(!choices.length){hint.textContent='No complete formats detected for this video yet. Play it briefly, then try again.';return;}
-            choices.forEach((item,index)=>{
-              const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;row.setAttribute('role','menuitem');
+            if(!choices.length){setHint('No complete formats detected for this video yet. Play it briefly, then try again.','error');return;}
+            const rate=value=>value>=1e6?`${(value/1e6).toFixed(1)} Mbps`:`${Math.round(value/1000)} kbps`;
+            choices.forEach(item=>{
+              const row=document.createElement('button');row.className='row';row.type='button';row.disabled=item.unsupported;
+              if(item.unsupported)row.setAttribute('aria-disabled','true');
               row.title=/https?:\/\//i.test(item.reason||'')?'':item.reason||'';
-              const format=item.format||(/\.m3u8(?:[?#]|$)/i.test(item.url)?'HLS':/\.(mp4|webm|mp3|m4a|mov)(?:[?#]|$)/i.exec(item.url)?.[1]?.toUpperCase()||'Media');
+              const format=item.format||(/\.m3u8(?:[?#]|$)/i.test(item.url)?'HLS':/\.(mp4|webm|mp3|m4a|mov)(?:[?#]|$)/.exec(item.url)?.[1]?.toUpperCase()||'Media');
               const title = item.asset ? `Video ${item.asset}` : item.title || document.title || 'Video';
-              row.textContent = `${index+1}. ${item.quality || format} · ${format} · ${item.audioState}${item.bitrate ? ' · '+Math.round(item.bitrate/1000)+' kbps' : ''} — ${title}`;
+              // The resolution is the scan anchor; format, audio state and bitrate
+              // stay readable beside it while a long title truncates.
+              const badge=document.createElement('span');badge.className='badge';
+              badge.textContent=(item.quality||format).replace(/\s+/g,' ').trim();
+              const main=document.createElement('span');main.className='row-main';
+              const titleNode=document.createElement('span');titleNode.className='row-title';titleNode.textContent=title;
+              const meta=document.createElement('span');meta.className='row-meta';
+              const details=[format,item.audioState,item.bitrate?rate(Number(item.bitrate)):''].filter(Boolean);
+              for(const text of details){const piece=document.createElement('span');piece.textContent=text;meta.append(piece);}
+              main.append(titleNode,meta);row.append(badge,main);
+              row.setAttribute('aria-label',`${badge.textContent}, ${details.join(', ')}`);
               row.onclick=async event=>{
                 event.preventDefault();event.stopPropagation();row.disabled=true;
-                hint.textContent='Opening download options…';
+                setHint('Opening download options…','loading');
                 try{
                   const response=await send({action:'download',item:{...item,startNow:false}});
                   globalThis.awesomeMenuResult(response,{
                     accepted:()=>{closeChooser(record);position();},
-                    rejected:message=>{hint.textContent=friendlyError(message);}
+                    rejected:message=>{setHint(friendlyError(message),'error');row.disabled=false;}
                   });
-                }catch(error){hint.textContent=friendlyError(error.message);}
-                row.disabled=!!item.unsupported;
+                }catch(error){setHint(friendlyError(error.message),'error');row.disabled=false;}
               };chooser.append(row);
             });
             chooser.addEventListener('keydown',event=>{
@@ -121,7 +134,7 @@
               event.preventDefault();event.stopPropagation();rows[next].focus();
             });
             chooser.querySelector('.row:not(:disabled)')?.focus();position();
-          } catch(error) {hint.textContent=error.message;}
+          } catch(error) {setHint(error.message,'error');}
           return;
         }
       });
@@ -160,7 +173,7 @@
       record.host.style.left = `${Math.max(5, Math.min(innerWidth - width - 5, visibleRect.right - width - 8))}px`;
       const chooser=record.shadow.querySelector('.chooser');
       if(chooser){
-        const chooserWidth=Math.min(410,innerWidth-10), chooserHeight=Math.min(chooser.scrollHeight||330,Math.min(330,innerHeight*.55));
+        const chooserWidth=Math.min(400,innerWidth-12), chooserHeight=Math.min(chooser.scrollHeight||360,Math.min(360,innerHeight*.6));
         const hostRect=record.host.getBoundingClientRect();
         chooser.style.left=`${Math.max(5,Math.min(innerWidth-chooserWidth-5,hostRect.right-chooserWidth))}px`;
         const below=hostRect.bottom+4, aboveMenu=hostRect.top-chooserHeight-4;
