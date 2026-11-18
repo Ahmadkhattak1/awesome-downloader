@@ -1,10 +1,24 @@
-// Observes only player responses consumed by this YouTube page. Never initiates downloads.
+// Observes only player responses, and SABR requests when asked, made by this YouTube page. Never initiates downloads.
 (() => {
   const publish=value=>{ const data=globalThis.youtubeMedia.playerData(value); if(data)window.postMessage({type:'awesome-player-response',data},location.origin); };
   const playerEndpoint=value=>{try{const u=new URL(value,location.href);return u.origin===location.origin && /^\/youtubei\/v1\/player$/.test(u.pathname);}catch{return false;}};
+  // Off until the extension reports that webRequest could not read a SABR request body.
+  let relaySabr=false;addEventListener('awesome-relay-sabr',()=>{relaySabr=true;});
+  const sabrRequest=(input,init)=>{
+    try{
+      const url=globalThis.youtubeMedia.sabrUrl(String(input?.url||input));
+      if(!url || String(init?.method||input?.method||'GET').toUpperCase()!=='POST' || init?.body instanceof ReadableStream)return null;
+      // A body can be read only once; reading a clone keeps YouTube's own request usable.
+      const copy=init?.body===undefined&&input instanceof Request?input.clone():new Request(url,{method:'POST',body:init?.body});
+      return copy.arrayBuffer().then(buffer=>buffer.byteLength&&buffer.byteLength<=262144?{url,body:new Uint8Array(buffer)}:null,()=>null);
+    }catch{return null;}
+  };
   const originalFetch=window.fetch;
   window.fetch=function(...args){
+    const sabr=relaySabr?sabrRequest(args[0],args[1]):null;
     const result=Reflect.apply(originalFetch,this,args);
+    // Only a request the server accepted becomes the captured session, as with webRequest.
+    if(sabr)Promise.all([sabr,result]).then(([request,response])=>{if(request&&[200,206].includes(response.status))window.postMessage({type:'awesome-sabr-request',...request},location.origin);},()=>{});
     if(playerEndpoint(args[0]?.url || args[0]))result.then(async response=>{
       if(!response.ok || Number(response.headers.get('content-length'))>2097152)return;
       const reader=response.clone().body?.getReader();if(!reader)return;
