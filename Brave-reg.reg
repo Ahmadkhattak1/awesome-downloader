@@ -1,0 +1,4 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\SOFTWARE\Google\Chrome\NativeMessagingHosts\com.awesome.downloader]
+@="C:\\Users\\A\\.awesome-downloader\\NativeMessaging\\Brave.json"
