@@ -10,8 +10,6 @@ TODO.md
 tests/QA.md
 .playwright-cli/
 integration/native-host.cmd
-.env
-.env.*
 !.env.example
 *.pem
 *.pfx
@@ -23,3 +21,4 @@ coverage/
 test-results/
 output/
 build/browser-setup-helper.exe
+config.bat

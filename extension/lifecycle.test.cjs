@@ -4,10 +4,10 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const path=require('node:path');
 
-function harness(file,mode){
-  const events=new Map(),observers=[],intersections=[],hosts=[],callbacks=new Set(),messages=[];
+function harness(file,mode,{listForFrame}={}){
+  const events=new Map(),observers=[],intersections=[],hosts=[],callbacks=new Set(),messages=[],dispatched=[];
   let calls=0,id='test-extension',removed=0,document;
-  const runtime={get id(){return id;},sendMessage(message){calls++;messages.push(message);if(mode==='throw')throw new Error('Extension context invalidated.');if(mode==='reject')return Promise.reject(new Error('Extension context invalidated.'));if(message.action==='listForFrame')return Promise.resolve({ok:true,items:[{url:'https://example.test/video.mp4',quality:'720p',format:'MP4',audioState:'Audio'},{url:'https://example.test/video-low.mp4',quality:'480p',format:'MP4',audioState:'Audio'},{url:'https://example.test/video-private.mp4',quality:'Private',format:'MP4',audioState:'Audio',unsupported:true,reason:'Expired https://cdn.example.test/video?signature=secret'}]});return Promise.resolve({ok:true});},onMessage:{addListener(fn){callbacks.add(fn);},removeListener(fn){callbacks.delete(fn);}}};
+  const runtime={get id(){return id;},sendMessage(message){calls++;messages.push(message);if(mode==='throw')throw new Error('Extension context invalidated.');if(mode==='reject')return Promise.reject(new Error('Extension context invalidated.'));if(message.action==='listForFrame')return listForFrame?listForFrame():Promise.resolve({ok:true,items:[{url:'https://example.test/video.mp4',quality:'720p',format:'MP4',audioState:'Audio'},{url:'https://example.test/video-low.mp4',quality:'480p',format:'MP4',audioState:'Audio'},{url:'https://example.test/video-private.mp4',quality:'Private',format:'MP4',audioState:'Audio',unsupported:true,reason:'Expired https://cdn.example.test/video?signature=secret'}]});return Promise.resolve({ok:true});},onMessage:{addListener(fn){callbacks.add(fn);},removeListener(fn){callbacks.delete(fn);}}};
   const addEventListener=(name,fn,options={})=>{events.set(name,fn);options.signal?.addEventListener('abort',()=>events.delete(name));};
   class Observer{constructor(fn){this.fn=fn;observers.push(this);}observe(){}unobserve(){}disconnect(){this.disconnected=true;}}
   class Intersection extends Observer{constructor(fn){super(fn);intersections.push(this);}emit(target,intersectionRect,isIntersecting=true){this.fn([{target,intersectionRect,isIntersecting}]);}}
@@ -29,9 +29,9 @@ function harness(file,mode){
   document={title:'Video',activeElement:null,documentElement:{appendChild(host){host.parentNode=this;}},querySelectorAll(selector){return selector==='video'?[video]:[];},addEventListener,
     createElement(tag){const element=new Element(tag);if(tag==='div'&&!hosts.length)hosts.push(element);return element;}};
   const location={href:'https://www.youtube.com/watch?v=wLdZWyLOJCI',origin:'https://www.youtube.com',hostname:'www.youtube.com'};
-  const context={chrome:{runtime},document,location,window:{},URL,AbortController,ResizeObserver:Observer,IntersectionObserver:Intersection,MutationObserver:Observer,addEventListener,removeEventListener(name){events.delete(name);},requestAnimationFrame(){return 1;},cancelAnimationFrame(){},setTimeout,clearTimeout,dispatchEvent(){},Event,innerHeight:800,innerWidth:1200,mediaChoices:items=>items,awesomeMenuResult:(response,handlers)=>response?.ok===false?handlers.rejected(response.error):handlers.accepted()};
+  const context={chrome:{runtime},document,location,window:{},URL,AbortController,ResizeObserver:Observer,IntersectionObserver:Intersection,MutationObserver:Observer,addEventListener,removeEventListener(name){events.delete(name);},requestAnimationFrame(){return 1;},cancelAnimationFrame(){},setTimeout,clearTimeout,dispatchEvent(event){dispatched.push(event.type);},Event,Uint8Array,btoa:value=>Buffer.from(value,'binary').toString('base64'),innerHeight:800,innerWidth:1200,mediaChoices:items=>items,awesomeMenuResult:(response,handlers)=>response?.ok===false?handlers.rejected(response.error):handlers.accepted()};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,file),'utf8'),context);
-  return {context,events,observers,intersections,callbacks,hosts,video,messages,get calls(){return calls;},get removed(){return removed;},invalidate(){id=undefined;}};
+  return {context,events,observers,intersections,callbacks,hosts,video,messages,dispatched,get calls(){return calls;},get removed(){return removed;},invalidate(){id=undefined;}};
 }
 for(const mode of ['throw','reject']){
   test(`content script cleans up after ${mode} from invalidated messaging`,async()=>{
@@ -51,6 +51,77 @@ for(const mode of ['throw','reject']){
     assert.equal(h.calls,1);assert.equal(h.callbacks.size,0);assert.equal(h.events.size,0);assert.equal(reply.ok,false);
   });
 }
+test('YouTube relay turns on page SABR relaying only when asked, and forwards the body as base64',async()=>{
+  const h=harness('youtube-relay.js','success'),callback=[...h.callbacks][0];
+  assert.deepEqual(h.dispatched,['awesome-request-player']);
+  let reply;callback({action:'relaySabr'},{id:'test-extension'},value=>{reply=value;});
+  assert.deepEqual(h.dispatched,['awesome-request-player','awesome-relay-sabr']);assert.equal(reply.ok,true);
+  const url='https://r1.googlevideo.com/videoplayback?id=asset&sabr=1';
+  await h.events.get('message')({source:h.context.window,origin:h.context.location.origin,data:{type:'awesome-sabr-request',url,body:Uint8Array.from([1,2,3])}});
+  await h.events.get('message')({source:h.context.window,origin:h.context.location.origin,data:{type:'awesome-sabr-request',url,body:new Uint8Array(262145)}});
+  assert.equal(JSON.stringify(h.messages),JSON.stringify([{action:'sabrRequest',url,requestBody:'AQID'}]));
+});
+const waitFor=async check=>{for(let i=0;i<100&&!check();i++)await new Promise(resolve=>setImmediate(resolve));assert.ok(check());};
+// Each listForFrame call waits until the test answers it, the way a slow worker would.
+function deferredListing(){
+  const pending=[];
+  return {pending,listForFrame:()=>new Promise(resolve=>pending.push(resolve)),answer(items,notice){pending.shift()({ok:true,items,notice});}};
+}
+const listed=[{url:'https://example.test/video.mp4',quality:'720p',format:'MP4',audioState:'Audio'}];
+const listings=h=>h.messages.filter(message=>message.action==='listForFrame').length;
+const capture=h=>[...h.callbacks][0]({action:'sabrCaptured'},{id:'test-extension'},()=>{});
+test('a session captured while the menu is still listing is shown instead of the waiting notice',async()=>{
+  const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0];
+  const opened=host.shadow.download.trigger('click');
+  capture(h);
+  list.answer([],'Play this video for a few seconds');
+  await waitFor(()=>list.pending.length===1);
+  list.answer(listed);await opened;
+  assert.equal(host.shadow.chooser.querySelectorAll('.row:not(:disabled)').length,1);assert.equal(listings(h),2);
+});
+test('a waiting menu lists the formats once the session is captured, without being reopened',async()=>{
+  const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0];
+  const opened=host.shadow.download.trigger('click');
+  list.answer([],'Play this video for a few seconds');await opened;
+  assert.equal(host.shadow.chooser.children[0].textContent,'Play this video for a few seconds');
+  capture(h);
+  await waitFor(()=>list.pending.length===1);
+  list.answer(listed);
+  await waitFor(()=>host.shadow.chooser.querySelectorAll('.row:not(:disabled)').length===1);
+});
+test('a menu closed before its listing returns is neither filled nor refilled',async()=>{
+  const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0];
+  const opened=host.shadow.download.trigger('click'),closed=host.shadow.chooser;
+  h.events.get('scroll')({composedPath:()=>[]});
+  assert.equal(host.shadow.chooser,undefined);
+  list.answer([],'Play this video for a few seconds');await opened;
+  capture(h);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(listings(h),1);assert.equal(closed.children[0].textContent,'Checking available video formats…');
+});
+test('a waiting menu closed by scrolling or by its button is not refilled when the session arrives',async()=>{
+  for(const close of [h=>h.events.get('scroll')({composedPath:()=>[]}),h=>h.hosts[0].shadow.download.trigger('click')]){
+    const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0];
+    const opened=host.shadow.download.trigger('click'),waiting=host.shadow.chooser;
+    list.answer([],'Play this video for a few seconds');await opened;
+    await close(h);
+    assert.equal(host.shadow.chooser,undefined);
+    capture(h);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(listings(h),1);assert.equal(waiting.children[0].textContent,'Play this video for a few seconds');
+  }
+});
+test('a late listing for a replaced menu never fills the menu that replaced it',async()=>{
+  const list=deferredListing(),h=harness('content.js','success',list),host=h.hosts[0],button=host.shadow.download;
+  const first=button.trigger('click'),replaced=host.shadow.chooser;
+  await button.trigger('click');
+  const second=button.trigger('click'),current=host.shadow.chooser;
+  assert.notEqual(current,replaced);
+  list.answer(listed);await first;
+  assert.equal(replaced.querySelectorAll('.row:not(:disabled)').length,0);assert.equal(current.querySelectorAll('.row:not(:disabled)').length,0);
+  list.answer([{...listed[0],quality:'480p'}]);await second;
+  assert.equal(current.querySelectorAll('.row:not(:disabled)').length,1);
+});
 test('missing runtime ID retires page scripts without sending again',()=>{
   const h=harness('content.js','success');h.invalidate();h.events.get('scroll')();
   assert.equal(h.calls,1);assert.equal(h.removed,1);assert.equal(h.callbacks.size,0);
